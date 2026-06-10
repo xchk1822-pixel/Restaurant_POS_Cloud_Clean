@@ -459,6 +459,33 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
 
   return (
     <div style={embedded ? {} : styles.container}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '12px',
+        background: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: '12px',
+        padding: '12px 16px',
+        marginBottom: '12px',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+        flexShrink: 0,
+      }}>
+        <div>
+          <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '4px' }}>交班对账</div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827' }}>
+            本次合计 C$ {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+        <button
+          style={{ ...styles.btnSave(saveStatus), minWidth: '140px', padding: '14px 18px' }}
+          onClick={handleSubmitHandover}
+          disabled={saveStatus === 'saving'}
+        >
+          {saveStatus === 'saving' ? '保存中...' : saveStatus === 'saved' ? '已提交' : '保存提交'}
+        </button>
+      </div>
       {/* 主网格 */}
       <div style={{ flex: 1, overflow: 'hidden', marginBottom: '10px' }}>
         <div style={embedded ? { ...styles.mainGrid, minHeight: 'auto' } : styles.mainGrid}>
