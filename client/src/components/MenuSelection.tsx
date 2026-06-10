@@ -123,7 +123,6 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 }}
               >
               {/* 菜品图片 */}
-              {(item.imageThumbUrl || item.imageUrl || item.image || item.imageUpdatedAt || item.imageUploadPending) && (
                 <div style={{
                   width: '100%',
                   height: '60px',
@@ -145,7 +144,6 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                     }}
                   />
                 </div>
-              )}
               
               {/* 类型标签 */}
               <div style={{

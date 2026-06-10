@@ -23,10 +23,13 @@ const MenuImage: React.FC<MenuImageProps> = ({
   placeholder
 }) => {
   const [cachedSrc, setCachedSrc] = useState<string | undefined>();
-  const displaySrc = src || cachedSrc || legacySrc;
+  const [remoteFailed, setRemoteFailed] = useState(false);
+  const displaySrc = remoteFailed ? (cachedSrc || legacySrc) : (src || cachedSrc || legacySrc);
 
   useEffect(() => {
     let cancelled = false;
+    setRemoteFailed(false);
+    setCachedSrc(undefined);
 
     if (!menuId) return;
 
@@ -55,6 +58,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
       alt={name}
       loading="lazy"
       decoding="async"
+      onError={() => setRemoteFailed(true)}
       style={style}
     />
   );
