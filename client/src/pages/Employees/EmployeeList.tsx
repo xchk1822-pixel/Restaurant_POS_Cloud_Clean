@@ -118,6 +118,15 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       // 删除成功后，更新本地状态
       setEmployees(updated.filter((emp: any) => !emp?.isDeleted));
       saveData('employees', updated); // ✅ 保留 localStorage 保存
+      const existingDeletions = dataService.getData('employee_deletions');
+      dataService.saveData('employee_deletions', [
+        ...existingDeletions.filter((record: any) => String(record.employeeId || record.id) !== String(id)),
+        {
+          id,
+          employeeId: id,
+          deletedAt: deletedEmployee.deletedAt,
+        }
+      ]);
     } catch (error) {
       console.error('❌ 删除 Firestore 数据失败:', error);
       alert('删除失败，请重试');

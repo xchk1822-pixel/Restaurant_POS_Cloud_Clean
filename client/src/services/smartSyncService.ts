@@ -6,6 +6,7 @@ import {
   deleteDoc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   query,
   where,
   onSnapshot,
@@ -509,12 +510,15 @@ export const smartIncrementField = async (
  * - 在线：从Firestore读取（实时监听）
  * - 离线：从localStorage读取
  */
-export const smartGetDocuments = async (collectionName: string) => {
+export const smartGetDocuments = async (collectionName: string, forceServer = false) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
 
   if (isOnline) {
     try {
-      const querySnapshot = await getDocs(collection(db, storeCollectionPath));
+      const collectionRef = collection(db, storeCollectionPath);
+      const querySnapshot = forceServer
+        ? await getDocsFromServer(collectionRef)
+        : await getDocs(collectionRef);
       const docs = querySnapshot.docs.map(doc => {
         const rawData = {
           id: doc.id,

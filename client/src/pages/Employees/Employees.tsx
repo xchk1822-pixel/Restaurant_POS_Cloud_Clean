@@ -118,12 +118,12 @@ const EmployeesModule: React.FC = () => {
         loanData,
         cashFlowData,
       ] = await Promise.all([
-        smartGetDocuments('employees'),
-        smartGetDocuments('employee_deletions'),
-        smartGetDocuments('attendance_records'),
-        smartGetDocuments('salary_records'),
-        smartGetDocuments('loan_records'),
-        smartGetDocuments('cash_flow_records'),
+        smartGetDocuments('employees', true),
+        smartGetDocuments('employee_deletions', true),
+        smartGetDocuments('attendance_records', true),
+        smartGetDocuments('salary_records', true),
+        smartGetDocuments('loan_records', true),
+        smartGetDocuments('cash_flow_records', true),
       ]);
 
       const deletedEmployeeIds = new Set(
