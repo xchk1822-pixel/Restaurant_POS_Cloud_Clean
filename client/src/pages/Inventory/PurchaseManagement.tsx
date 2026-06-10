@@ -243,10 +243,9 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
         createdAt: getLocalDateString(), // 🔥 使用本地时间
       };
       
-      dataManager.addData('expenses', purchaseExpense);
-      smartAddDocument('expenses', purchaseExpense).catch(error => {
-        console.error('同步采购支出到 Firestore 失败:', error);
-      });
+      const nextExpenses = [...dataManager.getData('expenses'), purchaseExpense];
+      await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+      await smartAddDocument('expenses', purchaseExpense);
       console.log('💰 已创建采购开支记录:', purchaseExpense);
     }
 
