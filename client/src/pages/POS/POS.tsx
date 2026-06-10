@@ -2509,7 +2509,7 @@ const POS: React.FC = () => {
   };
 
   // Cancel Modal Component
-  const CancelModal = () => (
+  const renderCancelModal = () => (
     <div
       onClick={(e) => e.stopPropagation()}
       style={{
@@ -2563,7 +2563,6 @@ const POS: React.FC = () => {
           </div>
           <input
             type="password"
-            autoFocus
             value={cancelPassword}
             onChange={(e) => setCancelPassword(e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -3542,7 +3541,7 @@ const POS: React.FC = () => {
           )}
         </div>
         </div>
-        {showCancelModal && <CancelModal />}
+        {showCancelModal && renderCancelModal()}
       </>
     );
   }
@@ -4422,7 +4421,7 @@ const POS: React.FC = () => {
         {showTableActionModal && tableActionData && <TableActionModal />}
 
       </div>
-      {showCancelModal && <CancelModal />}
+      {showCancelModal && renderCancelModal()}
 
       {/* 椤惧閫夋嫨妯℃€佹 - 鏀惧湪鏈€澶栧眰锛屾墍鏈夎鍥鹃兘鍙互璁块棶 */}
       {showCustomerModal && (
