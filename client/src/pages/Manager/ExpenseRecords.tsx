@@ -216,11 +216,31 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     reader.readAsDataURL(file);
   };
 
-  const filteredExpenses = expenses.filter(exp => {
-    if (filterCategory !== 'all' && exp.categoryId !== filterCategory) return false;
-    if (filterDate && exp.date !== filterDate) return false;
-    return true;
-  });
+  const getExpenseDateTime = (expense: any): number => {
+    const dateTime = Date.parse(expense.date || '');
+    return Number.isFinite(dateTime) ? dateTime : 0;
+  };
+
+  const getExpenseCreatedTime = (expense: any): number => {
+    const createdTime = Date.parse(expense.createdAt || expense.updatedAt || '');
+    const idTime = Number(String(expense.id || '').match(/\d{10,}/)?.[0] || 0);
+    return Math.max(
+      Number.isFinite(createdTime) ? createdTime : 0,
+      Number.isFinite(idTime) ? idTime : 0
+    );
+  };
+
+  const filteredExpenses = expenses
+    .filter(exp => {
+      if (filterCategory !== 'all' && exp.categoryId !== filterCategory) return false;
+      if (filterDate && exp.date !== filterDate) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const dateDiff = getExpenseDateTime(b) - getExpenseDateTime(a);
+      if (dateDiff !== 0) return dateDiff;
+      return getExpenseCreatedTime(b) - getExpenseCreatedTime(a);
+    });
 
   // 计算统计
   const totalAmount = filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0);
