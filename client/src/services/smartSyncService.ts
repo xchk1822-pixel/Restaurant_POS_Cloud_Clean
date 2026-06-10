@@ -656,6 +656,7 @@ export const manualSyncToFirestore = async () => {
       'stores',
       'users',
       'employees',
+      'employee_deletions',
       'attendance_records',
       'salary_records',
       'loan_records',

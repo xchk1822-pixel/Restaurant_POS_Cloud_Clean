@@ -108,6 +108,11 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     // 🔥 先从 Firestore 删除
     try {
       await smartUpdateDocument('employees', id, deletedEmployee);
+      await smartUpdateDocument('employee_deletions', id, {
+        id,
+        employeeId: id,
+        deletedAt: deletedEmployee.deletedAt,
+      });
       console.log('✅ 已从 Firestore 删除员工:', id);
       
       // 删除成功后，更新本地状态

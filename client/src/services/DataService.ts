@@ -501,6 +501,7 @@ class DataService {
       'expenses',
       'purchase_orders',
       'employees',
+      'employee_deletions',
       'fridges',
       'fridge_inventory',
       'suppliers',
@@ -639,7 +640,8 @@ class DataService {
       'pos_orders',
       'expenses',
       'purchase_orders',
-      'employees'
+      'employees',
+      'employee_deletions'
     ];
 
     let syncedCount = 0;

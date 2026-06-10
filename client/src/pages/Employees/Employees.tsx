@@ -112,19 +112,26 @@ const EmployeesModule: React.FC = () => {
 
       const [
         employeesData,
+        employeeDeletionsData,
         attendanceData,
         salaryData,
         loanData,
         cashFlowData,
       ] = await Promise.all([
         smartGetDocuments('employees'),
+        smartGetDocuments('employee_deletions'),
         smartGetDocuments('attendance_records'),
         smartGetDocuments('salary_records'),
         smartGetDocuments('loan_records'),
         smartGetDocuments('cash_flow_records'),
       ]);
 
-      setEmployees(employeesData.filter((employee: any) => !employee?.isDeleted));
+      const deletedEmployeeIds = new Set(
+        employeeDeletionsData.map((record: any) => String(record.employeeId || record.id))
+      );
+      setEmployees(employeesData.filter((employee: any) =>
+        !employee?.isDeleted && !deletedEmployeeIds.has(String(employee.id))
+      ));
       setAttendanceRecords(attendanceData);
       setSalaryRecords(salaryData);
       setLoanRecords(loanData);
@@ -139,14 +146,6 @@ const EmployeesModule: React.FC = () => {
 
   useEffect(() => {
     loadEmployeeModuleData();
-  }, [loadEmployeeModuleData]);
-
-  useEffect(() => {
-    const handleDataSynced = () => {
-      loadEmployeeModuleData();
-    };
-    window.addEventListener('dataSynced', handleDataSynced);
-    return () => window.removeEventListener('dataSynced', handleDataSynced);
   }, [loadEmployeeModuleData]);
 
   const styles = {
