@@ -170,6 +170,7 @@ const MenuManagement: React.FC = () => {
           <button
             onClick={() => {
               setSelectedImageFile(null);
+              setIsProcessingImage(false);
               setEditingMenu({
                 name: '',
                 price: 0,
@@ -283,6 +284,7 @@ const MenuManagement: React.FC = () => {
                     <button
                       onClick={() => {
                         setSelectedImageFile(null);
+                        setIsProcessingImage(false);
                         setEditingMenu({ ...menu });
                         setShowMenuModal(true);
                       }}
@@ -681,6 +683,7 @@ const MenuManagement: React.FC = () => {
               <button
                 onClick={() => {
                   setSelectedImageFile(null);
+                  setIsProcessingImage(false);
                   setShowMenuModal(false);
                   setEditingMenu({
                     name: '',
@@ -724,66 +727,66 @@ const MenuManagement: React.FC = () => {
                     return;
                   }
                   
-                  setIsProcessingImage(true);
-                  let imageFields: Partial<MenuItem> = {};
-                  const menuIdForSave = editingMenu.id || `menu-${Date.now()}`;
                   try {
+                    setIsProcessingImage(true);
+                    let imageFields: Partial<MenuItem> = {};
+                    const menuIdForSave = editingMenu.id || `menu-${Date.now()}`;
+
                     if (selectedImageFile) {
                       imageFields = await processAndUploadMenuImage(menuIdForSave, selectedImageFile);
                       if (imageFields.imageUploadPending) {
                         alert('图片已压缩并保存在本机，但还没有上传到云端。当前终端可显示，其他终端需要等网络/权限恢复后自动同步。');
                       }
                     }
+
+                    if (editingMenu.id) {
+                      const updatedMenu = {
+                        ...menuItems.find(m => m.id === editingMenu.id),
+                        ...editingMenu,
+                        ...imageFields,
+                        image: selectedImageFile ? undefined : editingMenu.image,
+                        lastModified: Date.now()
+                      } as MenuItem;
+                      setMenuItems(menuItems.map(m =>
+                        m.id === editingMenu.id ? updatedMenu : m
+                      ));
+                      await smartUpdateDocument('menu_items', editingMenu.id, updatedMenu);
+                    } else {
+                      const now = Date.now();
+                      const newMenu: MenuItem = {
+                        id: menuIdForSave,
+                        name: editingMenu.name!,
+                        price: editingMenu.price!,
+                        category: editingMenu.category || '主食',
+                        type: editingMenu.type || 'direct',
+                        stockItemId: editingMenu.stockItemId,
+                        available: editingMenu.available !== false,
+                        ingredients: editingMenu.ingredients || [],
+                        ...imageFields,
+                        lastModified: now
+                      } as MenuItem;
+
+                      setMenuItems([...menuItems, newMenu]);
+                      await smartSetDocument('menu_items', newMenu.id, newMenu);
+                    }
+
+                    setShowMenuModal(false);
+                    setSelectedImageFile(null);
+                    setEditingMenu({
+                      name: '',
+                      price: 0,
+                      category: categories[0] || '主食',
+                      type: 'direct',
+                      stockItemId: undefined,
+                      available: true,
+                      ingredients: []
+                    });
                   } catch (error: any) {
-                    console.error('处理菜品图片失败:', error);
-                    alert(error?.message || '图片处理失败，请换一张图片重试');
+                    console.error('保存菜品失败:', error);
+                    alert(error?.message || '保存失败，请检查网络后重试');
+                  } finally {
                     setIsProcessingImage(false);
-                    return;
-                  }
-
-                  if (editingMenu.id) {
-                    const updatedMenu = {
-                      ...menuItems.find(m => m.id === editingMenu.id),
-                      ...editingMenu,
-                      ...imageFields,
-                      image: selectedImageFile ? undefined : editingMenu.image,
-                      lastModified: Date.now()
-                    } as MenuItem;
-                    setMenuItems(menuItems.map(m =>
-                      m.id === editingMenu.id ? updatedMenu : m
-                    ));
-                    await smartUpdateDocument('menu_items', editingMenu.id, updatedMenu);
-                  } else {
-                    const now = Date.now();
-                    const newMenu: MenuItem = {
-                      id: menuIdForSave,
-                      name: editingMenu.name!,
-                      price: editingMenu.price!,
-                      category: editingMenu.category || '主食',
-                      type: editingMenu.type || 'direct',
-                      stockItemId: editingMenu.stockItemId,
-                      available: editingMenu.available !== false,
-                      ingredients: editingMenu.ingredients || [],
-                      ...imageFields,
-                      lastModified: now
-                    } as MenuItem;
-
-                    setMenuItems([...menuItems, newMenu]);
-                    await smartSetDocument('menu_items', newMenu.id, newMenu);
-                  }
-                  setShowMenuModal(false);
-                  setSelectedImageFile(null);
-                  setIsProcessingImage(false);
-                  setEditingMenu({
-                    name: '',
-                    price: 0,
-                    category: categories[0] || '主食',
-                    type: 'direct',
-                    stockItemId: undefined,
-                    available: true,
-                    ingredients: []
-                  });
-                }}
+                  }                }}
                 style={{
                   padding: '0.6rem 1.2rem',
                   backgroundColor: '#10b981',

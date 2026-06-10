@@ -61,6 +61,15 @@ const uploadImageSet = async (
   };
 };
 
+const withUploadTimeout = async <T,>(promise: Promise<T>, timeoutMs = 8000): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error('图片云端上传超时，已先保存到本机缓存')), timeoutMs);
+    })
+  ]);
+};
+
 export const uploadCachedMenuImage = async (
   menuId: string,
   imageUpdatedAt?: number
@@ -71,7 +80,7 @@ export const uploadCachedMenuImage = async (
   }
 
   const uploadTime = imageUpdatedAt || cache.imageUpdatedAt || Date.now();
-  const uploaded = await uploadImageSet(getCurrentStoreId(), menuId, {
+  const uploaded = await withUploadTimeout(uploadImageSet(getCurrentStoreId(), menuId, {
     thumb: {
       blob: cache.thumbBlob,
       dataUrl: cache.thumbDataUrl || '',
@@ -86,7 +95,7 @@ export const uploadCachedMenuImage = async (
       height: 0,
       size: cache.mediumBlob.size
     }
-  }, uploadTime);
+  }, uploadTime));
 
   return {
     ...uploaded,
@@ -113,7 +122,7 @@ export const processAndUploadMenuImage = async (
   }
 
   try {
-    const uploaded = await uploadImageSet(getCurrentStoreId(), menuId, images, imageUpdatedAt);
+    const uploaded = await withUploadTimeout(uploadImageSet(getCurrentStoreId(), menuId, images, imageUpdatedAt));
 
     return {
       ...uploaded,
