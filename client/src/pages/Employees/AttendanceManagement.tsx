@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
-import { dataService } from '../../services/DataService';
 
 interface Employee {
   id: string;
@@ -40,9 +39,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   const [activeTab, setActiveTab] = useState<'checkin' | 'records'>('checkin');
   const [selectedDate, setSelectedDate] = useState(getLocalDateString());
 
-  const saveData = (key: string, data: any) => {
-    dataService.saveData(key, data);
-  };
+
 
   const handleCheckIn = (employeeId: string, type: 'in' | 'out') => {
     const now = new Date();
@@ -78,7 +75,6 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     }
 
     setAttendanceRecords(updatedRecords);
-    saveData('attendance_records', updatedRecords);
     // 🔥 同步到 Firestore
     if (existingRecord) {
       smartUpdateDocument('attendance_records', existingRecord.id, updatedRecords.find(r => r.id === existingRecord.id)!);
@@ -123,7 +119,6 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     }
 
     setAttendanceRecords(updatedRecords);
-    saveData('attendance_records', updatedRecords);
     // 🔥 同步到 Firestore
     if (existingRecord) {
       smartUpdateDocument('attendance_records', existingRecord.id, updatedRecords.find(r => r.id === existingRecord.id)!);

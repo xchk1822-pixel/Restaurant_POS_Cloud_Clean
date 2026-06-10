@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
-import { dataService } from '../../services/DataService';
 
 interface Employee {
   id: string;
@@ -110,9 +109,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   const [dynamicSubsidy, setDynamicSubsidy] = useState<Record<string, number>>({});
   const [dynamicSocialSecurity, setDynamicSocialSecurity] = useState<Record<string, number>>({});
 
-  const saveData = (key: string, data: any) => {
-    dataService.saveData(key, data);
-  };
+
 
   const recordCashFlow = async (flow: Omit<CashFlowRecord, 'id'>) => {
     const newFlow: CashFlowRecord = {
@@ -122,7 +119,6 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     
     const updated = [...cashFlowRecords, newFlow];
     setCashFlowRecords(updated);
-    saveData('cash_flow_records', updated);
 
     try {
       await smartAddDocument('cash_flow_records', newFlow);
@@ -286,7 +282,6 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     });
 
     setLoanRecords(updatedLoans);
-    saveData('loan_records', updatedLoans);
 
     try {
       await Promise.all(
@@ -305,7 +300,6 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     
     const updatedSalaries = [...salaryRecords, salaryRecord];
     setSalaryRecords(updatedSalaries);
-    saveData('salary_records', updatedSalaries);
 
     // 🔥 同步到 Firestore
     try {

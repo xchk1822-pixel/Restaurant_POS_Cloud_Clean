@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
-import { dataService } from '../../services/DataService';
 
 interface Employee {
   id: string;
@@ -35,13 +34,9 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     overtimeRate: 0,
   });
 
-  const saveData = (key: string, data: any) => {
-    dataService.saveData(key, data);
-  };
-
   const handleSaveEmployee = async () => {
     if (!formData.name || !formData.phone || !formData.position) {
-      alert('请填写必填项');
+      alert('\u8bf7\u586b\u5199\u5fc5\u586b\u9879');
       return;
     }
 
@@ -73,10 +68,9 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         await smartAddDocument('employees', employee);
       }
     } catch (error) {
-      console.error('同步员工到 Firestore 失败:', error);
-      alert('员工已保存到本机，但云端同步失败，请检查网络后重试。');
+      console.error('sync employee to Firestore failed:', error);
+      alert('\u5458\u5de5\u5df2\u4fdd\u5b58\u5230\u672c\u673a\uff0c\u4f46\u4e91\u7aef\u540c\u6b65\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5\u3002');
     }
-    saveData('employees', updatedEmployees); // ✅ 保留 localStorage 保存
     setShowAddEmployee(false);
     setEditingEmployee(null);
     setFormData({
@@ -92,7 +86,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!window.confirm('确定要删除该员工吗？')) return;
+    if (!window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8be5\u5458\u5de5\u5417\uff1f')) return;
     
     // 🔥 先计算更新后的数据
     const employee = employees.find(emp => emp.id === id);
@@ -113,23 +107,11 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         employeeId: id,
         deletedAt: deletedEmployee.deletedAt,
       });
-      console.log('✅ 已从 Firestore 删除员工:', id);
-      
-      // 删除成功后，更新本地状态
+      console.log('employee marked deleted in Firestore:', id);
       setEmployees(updated.filter((emp: any) => !emp?.isDeleted));
-      saveData('employees', updated); // ✅ 保留 localStorage 保存
-      const existingDeletions = dataService.getData('employee_deletions');
-      dataService.saveData('employee_deletions', [
-        ...existingDeletions.filter((record: any) => String(record.employeeId || record.id) !== String(id)),
-        {
-          id,
-          employeeId: id,
-          deletedAt: deletedEmployee.deletedAt,
-        }
-      ]);
     } catch (error) {
-      console.error('❌ 删除 Firestore 数据失败:', error);
-      alert('删除失败，请重试');
+      console.error('delete employee from Firestore failed:', error);
+      alert('\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5');
     }
   };
 

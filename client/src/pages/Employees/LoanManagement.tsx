@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { dataManager } from '../../services/dataManager';
-import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
-import { dataService } from '../../services/DataService';
+import { smartAddDocument } from '../../services/smartSyncService';
 
 interface Employee {
   id: string;
@@ -63,9 +62,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     date: getLocalDateString(),
   });
 
-  const saveData = (key: string, data: any) => {
-    dataService.saveData(key, data);
-  };
+
 
   const recordCashFlow = async (flow: Omit<CashFlowRecord, 'id'>) => {
     const newFlow: CashFlowRecord = {
@@ -75,7 +72,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     
     const updated = [...cashFlowRecords, newFlow];
     setCashFlowRecords(updated);
-    saveData('cash_flow_records', updated);
     
     // 🔥 同步到 Firestore
     try {
@@ -109,7 +105,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
     const updated = [...loanRecords, newLoan];
     setLoanRecords(updated);
-    saveData('loan_records', updated);
     
     // 🔥 同步到 Firestore
     try {
