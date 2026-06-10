@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { smartSubscribeToCollection, smartAddDocument, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
 import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
@@ -142,60 +142,50 @@ const EmployeesModule: React.FC = () => {
   // 现金流记录
   const [cashFlowRecords, setCashFlowRecords] = useState<CashFlowRecord[]>([]);
 
-  // 加载数据
+  // 加载数据：一次性读取，避免员工管理长期占用 Firestore 监听
   useEffect(() => {
-    console.log('🔍 员工管理模块开始加载数据...');
-    
-    // 🔥 清理旧的全局key employees数据（避免数据冲突）
+    console.log('员工管理模块开始加载数据...');
+    let cancelled = false;
+
     try {
       const globalEmployees = localStorage.getItem('employees');
       if (globalEmployees) {
-        console.log('🗑️ 清理旧的全局 employees 数据');
+        console.log('清理旧的全局 employees 数据');
         localStorage.removeItem('employees');
       }
     } catch (error) {
       console.error('清理全局 employees 失败:', error);
     }
-    
-    // 🔥 订阅 Firestore 员工数据
-    const unsubscribeEmployees = smartSubscribeToCollection('employees', (data) => {
-      console.log('👥 员工数据更新:', data.length);
-      setEmployees(data);
-    });
-    
-    // 🔥 订阅考勤记录
-    const unsubscribeAttendance = smartSubscribeToCollection('attendance_records', (data) => {
-      console.log('📅 考勤记录更新:', data.length);
-      setAttendanceRecords(data);
-    });
-    
-    // 🔥 订阅薪资记录
-    const unsubscribeSalaries = smartSubscribeToCollection('salary_records', (data) => {
-      console.log('💰 薪资记录更新:', data.length);
-      setSalaryRecords(data);
-    });
-    
-    // 🔥 订阅借款记录
-    const unsubscribeLoans = smartSubscribeToCollection('loan_records', (data) => {
-      console.log('💸 借款记录更新:', data.length);
-      setLoanRecords(data);
-    });
-    
-    // 🔥 订阅现金流记录
-    const unsubscribeCashFlows = smartSubscribeToCollection('cash_flow_records', (data) => {
-      console.log('💵 现金流记录更新:', data.length);
-      setCashFlowRecords(data);
-    });
-    
+
+    const loadData = async () => {
+      const loads: Array<{
+        name: string;
+        setter: React.Dispatch<React.SetStateAction<any[]>>;
+      }> = [
+        { name: 'employees', setter: setEmployees },
+        { name: 'attendance_records', setter: setAttendanceRecords },
+        { name: 'salary_records', setter: setSalaryRecords },
+        { name: 'loan_records', setter: setLoanRecords },
+        { name: 'cash_flow_records', setter: setCashFlowRecords },
+      ];
+
+      for (const item of loads) {
+        try {
+          const data = await smartGetDocuments(item.name);
+          if (!cancelled) {
+            item.setter(data);
+          }
+        } catch (error) {
+          console.error(`加载 ${item.name} 失败:`, error);
+        }
+      }
+    };
+
+    loadData();
     return () => {
-      unsubscribeEmployees();
-      unsubscribeAttendance();
-      unsubscribeSalaries();
-      unsubscribeLoans();
-      unsubscribeCashFlows();
+      cancelled = true;
     };
   }, []);
-
   // ✅ 自动保存考勤记录到 DataService（会自动同步到 Firestore）
   useEffect(() => {
     if (attendanceRecords.length > 0) {

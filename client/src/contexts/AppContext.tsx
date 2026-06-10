@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { dataService } from '../services/DataService';
 import { dataManager } from '../services/dataManager';
-import { smartIncrementField, smartSubscribeToCollection } from '../services/smartSyncService';
+import { smartGetDocuments, smartIncrementField, smartSubscribeToCollection } from '../services/smartSyncService';
 
 // 库存物品接口
 export interface InventoryItem {
@@ -597,16 +597,40 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     console.log('🔄 为分店重新建立实时订阅:', activeStoreId);
+    let cancelled = false;
+
+    const loadSnapshotData = async () => {
+      const snapshotLoads: Array<{
+        name: string;
+        setter: React.Dispatch<React.SetStateAction<any[]>>;
+        label: string;
+      }> = [
+        { name: 'menu_items', setter: setMenuItems, label: '菜单' },
+        { name: 'purchase_orders', setter: setPurchaseOrders, label: '采购订单' },
+        { name: 'suppliers', setter: setSuppliers, label: '供应商' },
+        { name: 'fridges', setter: setFridges, label: '冰箱' },
+        { name: 'fridge_inventory', setter: setFridgeInventory, label: '冰箱库存' },
+      ];
+
+      for (const config of snapshotLoads) {
+        try {
+          const data = await smartGetDocuments(config.name);
+          if (!cancelled) {
+            applyCloudData(data, config.setter, config.label, { merge: true });
+          }
+        } catch (error) {
+          console.error(`加载 ${config.name} 失败:`, error);
+        }
+      }
+    };
+
+    loadSnapshotData();
+
     const unsubscribers = [
-      smartSubscribeToCollection('menu_items', data => applyCloudData(data, setMenuItems, '菜单')),
-      smartSubscribeToCollection('purchase_orders', data => applyCloudData(data, setPurchaseOrders, '采购订单')),
-      smartSubscribeToCollection('suppliers', data => applyCloudData(data, setSuppliers, '供应商')),
-      smartSubscribeToCollection('fridges', data => applyCloudData(data, setFridges, '冰箱')),
-      smartSubscribeToCollection('fridge_inventory', data => applyCloudData(data, setFridgeInventory, '冰箱库存')),
       smartSubscribeToCollection('pos_orders', data => applyCloudData(data, setOrders, '订单', { merge: true })),
     ];
-
     return () => {
+      cancelled = true;
       unsubscribers.forEach(unsubscribe => unsubscribe());
     };
   }, [activeStoreId]);

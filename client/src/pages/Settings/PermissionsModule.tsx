@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSetDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { DEFAULT_ROLE_PERMISSIONS } from '../../utils/permissions';
 
 interface PermissionNode {
@@ -168,22 +168,29 @@ const PermissionsModule: React.FC = () => {
   const [formPerms, setFormPerms] = useState<string[]>([]);
 
   useEffect(() => {
-    console.log('🔍 初始化角色数据监听...');
-    
-    // 🔥 实时监听 Firestore 角色数据
-    const unsubscribe = smartSubscribeToCollection('system_roles', (cloudRoles) => {
-      console.log('📡 Firestore 角色数据更新:', cloudRoles.length, '个');
-      const normalized = normalizeRoles(cloudRoles);
-      localStorage.setItem('system_roles', JSON.stringify(normalized));
-      setRoles(normalized);
-    });
-    
+    console.log('初始化角色数据...');
+    let cancelled = false;
+
+    const loadRoles = async () => {
+      try {
+        const cloudRoles = await smartGetDocuments('system_roles');
+        if (cancelled) return;
+
+        const normalized = normalizeRoles(cloudRoles);
+        localStorage.setItem('system_roles', JSON.stringify(normalized));
+        setRoles(normalized);
+      } catch (error) {
+        console.error('加载角色数据失败:', error);
+        const saved = localStorage.getItem('system_roles');
+        setRoles(saved ? normalizeRoles(JSON.parse(saved)) : normalizeRoles([]));
+      }
+    };
+
+    loadRoles();
     return () => {
-      unsubscribe();
-      console.log('⚠️ 停止角色数据监听');
+      cancelled = true;
     };
   }, []);
-
 
   const saveRoles = async (updated: Role[]) => {
     // 🔥 不再直接保存，而是通过智能同步服务

@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { smartSubscribeToCollection } from '../../services/smartSyncService';
+import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateTimeString } from '../../utils/exchangeRate';
-import { db } from '../../firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
 import { getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 
 interface StoreStats {
@@ -69,105 +67,66 @@ const OwnerDashboard: React.FC = () => {
   // 销售趋势
   const [salesTrend, setSalesTrend] = useState<any[]>([]);
 
-  // 🔥 加载所有数据
+  // 加载所有分店数据：一次性读取，避免老板仪表板常驻大量 Firestore 监听
   useEffect(() => {
-    console.log('🔍 老板看板开始加载真实数据...');
-    
-    // 订阅分店数据
-    const unsubscribeStores = smartSubscribeToCollection('stores', (data) => {
-      console.log('📊 分店数据更新:', data.length, '个分店');
-      console.log('📊 分店详情:', data.map(s => ({ id: s.id, name: s.name })));
-      setStores(data);
-    });
+    console.log('老板仪表板开始一次性加载数据...');
+    let cancelled = false;
 
-    // 订阅订单数据
-    const unsubscribeOrders = smartSubscribeToCollection('pos_orders', (data) => {
-      console.log('📦 订单数据:', data.length);
-      setOrders(data);
-    });
+    const loadAllData = async () => {
+      try {
+        const loadedStores = await smartGetDocuments('stores');
+        if (cancelled) return;
+        setStores(loadedStores);
 
-    // 订阅支出数据
-    const unsubscribeExpenses = smartSubscribeToCollection('expenses', (data) => {
-      console.log('💸 支出数据:', data.length);
-      setExpenses(data);
-    });
+        if (loadedStores.length === 0) {
+          setOrders([]);
+          setExpenses([]);
+          setPurchases([]);
+          setInventory([]);
+          setEmployees([]);
+          return;
+        }
 
-    // 订阅采购数据
-    const unsubscribePurchases = smartSubscribeToCollection('purchase_orders', (data) => {
-      console.log('🛒 采购数据:', data.length);
-      setPurchases(data);
-    });
+        const collectionNames = ['pos_orders', 'expenses', 'purchase_orders', 'inventory_items', 'employees'] as const;
+        const buckets: Record<typeof collectionNames[number], any[]> = {
+          pos_orders: [],
+          expenses: [],
+          purchase_orders: [],
+          inventory_items: [],
+          employees: [],
+        };
 
-    // 订阅库存数据
-    const unsubscribeInventory = smartSubscribeToCollection('inventory_items', (data) => {
-      console.log('📦 库存数据:', data.length);
-      setInventory(data);
-    });
+        for (const store of loadedStores) {
+          for (const collectionName of collectionNames) {
+            try {
+              const data = await smartGetDocuments(`stores/${store.id}/${collectionName}`);
+              buckets[collectionName].push(...data.map(item => ({
+                ...item,
+                storeId: store.id,
+                storeName: store.name,
+              })));
+            } catch (error) {
+              console.error(`老板仪表板读取 ${store.name}/${collectionName} 失败:`, error);
+            }
+          }
+        }
 
-    // 订阅员工数据
-    const unsubscribeEmployees = smartSubscribeToCollection('employees', (data) => {
-      console.log('👥 员工数据:', data.length);
-      setEmployees(data);
-    });
+        if (cancelled) return;
+        setOrders(buckets.pos_orders);
+        setExpenses(buckets.expenses);
+        setPurchases(buckets.purchase_orders);
+        setInventory(buckets.inventory_items);
+        setEmployees(buckets.employees);
+      } catch (error) {
+        console.error('老板仪表板加载数据失败:', error);
+      }
+    };
 
+    loadAllData();
     return () => {
-      unsubscribeStores();
-      unsubscribeOrders();
-      unsubscribeExpenses();
-      unsubscribePurchases();
-      unsubscribeInventory();
-      unsubscribeEmployees();
+      cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (stores.length === 0) {
-      setOrders([]);
-      setExpenses([]);
-      setPurchases([]);
-      setInventory([]);
-      setEmployees([]);
-      return;
-    }
-
-    const collectionNames = ['pos_orders', 'expenses', 'purchase_orders', 'inventory_items', 'employees'] as const;
-    const buckets: Record<typeof collectionNames[number], Map<string, any[]>> = {
-      pos_orders: new Map(),
-      expenses: new Map(),
-      purchase_orders: new Map(),
-      inventory_items: new Map(),
-      employees: new Map(),
-    };
-
-    const publish = () => {
-      setOrders(Array.from(buckets.pos_orders.values()).flat());
-      setExpenses(Array.from(buckets.expenses.values()).flat());
-      setPurchases(Array.from(buckets.purchase_orders.values()).flat());
-      setInventory(Array.from(buckets.inventory_items.values()).flat());
-      setEmployees(Array.from(buckets.employees.values()).flat());
-    };
-
-    const unsubscribers = stores.flatMap(store =>
-      collectionNames.map(collectionName =>
-        onSnapshot(collection(db, 'stores', store.id, collectionName), snapshot => {
-          buckets[collectionName].set(store.id, snapshot.docs.map(doc => ({
-            id: doc.id,
-            storeId: store.id,
-            storeName: store.name,
-            ...doc.data(),
-          })));
-          publish();
-        }, error => {
-          console.error(`老板仪表板读取 ${store.name}/${collectionName} 失败:`, error);
-          buckets[collectionName].set(store.id, []);
-          publish();
-        })
-      )
-    );
-
-    return () => unsubscribers.forEach(unsubscribe => unsubscribe());
-  }, [stores]);
-
   /**
    * 计算所有核心指标
    */

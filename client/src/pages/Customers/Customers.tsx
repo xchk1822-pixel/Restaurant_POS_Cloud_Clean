@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getPointsExchangeRate } from '../../utils/exchangeRate';
 import { dataService } from '../../services/DataService';
-import { smartSubscribeToCollection } from '../../services/smartSyncService';
+import { smartGetDocuments } from '../../services/smartSyncService';
 
 interface Customer {
   id: string;
@@ -58,16 +58,6 @@ const Customers: React.FC = () => {
     loadCustomers();
   }, []);
 
-  // 🔥 监听 Firestore 实时更新
-  useEffect(() => {
-    const unsubscribe = smartSubscribeToCollection('customers', (cloudCustomers: any[]) => {
-      console.log('📡 Firestore 客户数据更新:', cloudCustomers.length, '个');
-      setCustomers(cloudCustomers);
-    });
-    
-    return () => unsubscribe();
-  }, []);
-  
   // ✅ 自动保存顾客数据到 localStorage 和 Firestore
   useEffect(() => {
     try {

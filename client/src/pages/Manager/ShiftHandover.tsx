@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/DataService';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
-import { smartSubscribeToCollection } from '../../services/smartSyncService';
+import { smartGetDocuments } from '../../services/smartSyncService';
 
 interface CashCount {
   [key: string]: number;
@@ -58,26 +58,27 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     return saved ? JSON.parse(saved) : [];
   });
   
-  // 🔥 订阅 Firestore 交班记录
+  // 一次性读取交班记录，避免低频页面长期监听 Firestore
   useEffect(() => {
-    console.log('🔄 开始订阅 Firestore 交班记录...');
-    
-    const unsubscribe = smartSubscribeToCollection('handovers', (cloudRecords) => {
-      console.log('☁️ 收到云端交班记录更新:', cloudRecords.length, '个');
-      
-      if (cloudRecords.length > 0) {
-        setHistory(cloudRecords as HistoryRecord[]);
-        console.log('✅ 交班记录已从云端同步');
+    let cancelled = false;
+
+    const loadHandovers = async () => {
+      try {
+        const cloudRecords = await smartGetDocuments('handovers');
+        if (!cancelled && cloudRecords.length > 0) {
+          setHistory(cloudRecords as HistoryRecord[]);
+        }
+      } catch (error) {
+        console.error('加载交班记录失败:', error);
       }
-    });
-    
+    };
+
+    loadHandovers();
     return () => {
-      console.log('🔕 停止订阅 Firestore 交班记录');
-      unsubscribe();
+      cancelled = true;
     };
   }, []);
-  
-  // 🔥 同步交班记录到 Firestore（批量）
+    // 🔥 同步交班记录到 Firestore（批量）
   useEffect(() => {
     if (history.length > 0) {
       dataService.saveData('handovers', history);
