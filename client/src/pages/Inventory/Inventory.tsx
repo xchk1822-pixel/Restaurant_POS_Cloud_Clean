@@ -77,6 +77,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showInventorySummary, setShowInventorySummary] = useState(false);
 
   // 生成唯一条形码（13位EAN格式）
   const generateBarcode = () => {
@@ -221,15 +222,15 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', overflow: 'hidden' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', padding: '0.75rem', gap: '0.6rem', overflow: 'hidden' }}>
       {/* 顶部标签和统计 */}
-      <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '1rem', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+      <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '0.65rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: activeTab === 'items' ? '0.55rem' : 0 }}>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               onClick={() => setActiveTab('items')}
               style={{
-                padding: '0.6rem 1.2rem',
+                padding: '0.45rem 0.85rem',
                 backgroundColor: activeTab === 'items' ? '#3b82f6' : '#f3f4f6',
                 color: activeTab === 'items' ? 'white' : '#374151',
                 border: 'none',
@@ -244,7 +245,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <button
               onClick={() => setActiveTab('purchase')}
               style={{
-                padding: '0.6rem 1.2rem',
+                padding: '0.45rem 0.85rem',
                 backgroundColor: activeTab === 'purchase' ? '#3b82f6' : '#f3f4f6',
                 color: activeTab === 'purchase' ? 'white' : '#374151',
                 border: 'none',
@@ -259,7 +260,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <button
               onClick={() => setActiveTab('records')}
               style={{
-                padding: '0.6rem 1.2rem',
+                padding: '0.45rem 0.85rem',
                 backgroundColor: activeTab === 'records' ? '#3b82f6' : '#f3f4f6',
                 color: activeTab === 'records' ? 'white' : '#374151',
                 border: 'none',
@@ -277,7 +278,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <button
               onClick={handleScanBarcode}
               style={{
-                padding: '0.6rem 1rem',
+                padding: '0.45rem 0.75rem',
                 backgroundColor: '#8b5cf6',
                 color: 'white',
                 border: 'none',
@@ -292,7 +293,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <button
               onClick={() => setShowAddModal(true)}
               style={{
-                padding: '0.6rem 1rem',
+                padding: '0.45rem 0.75rem',
                 backgroundColor: '#10b981',
                 color: 'white',
                 border: 'none',
@@ -309,7 +310,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
         {/* 搜索和筛选 */}
         {activeTab === 'items' && (
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
             <input
               type="text"
               placeholder="搜索商品名称或条形码..."
@@ -317,7 +318,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
                 flex: 1,
-                padding: '0.6rem',
+                padding: '0.45rem 0.6rem',
                 border: '1px solid #d1d5db',
                 borderRadius: '0.375rem',
                 fontSize: '0.9rem'
@@ -327,7 +328,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
               style={{
-                padding: '0.6rem',
+                padding: '0.45rem 0.6rem',
                 border: '1px solid #d1d5db',
                 borderRadius: '0.375rem',
                 fontSize: '0.9rem'
@@ -341,7 +342,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <button
               onClick={() => setShowInventoryCategoryModal(true)}
               style={{
-                padding: '0.6rem 1rem',
+                padding: '0.45rem 0.75rem',
                 backgroundColor: '#8b5cf6',
                 color: 'white',
                 border: 'none',
@@ -359,7 +360,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
       {/* 库存物品列表 */}
       {activeTab === 'items' && (
-        <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minHeight: 0, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {/* 🔥 货值统计面板 */}
           {(() => {
             // 🔥 计算仓库库存货值
@@ -417,17 +418,61 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             // 低库存预警货值（仅仓库）
             const lowStockItems = inventoryItems.filter(item => isLowStock(item));
             const lowStockValue = lowStockItems.reduce((sum, item) => sum + (getTotalStock(item) * item.costPrice), 0);
+
+            if (!showInventorySummary) {
+              return (
+                <div style={{
+                  padding: '0.55rem 0.75rem',
+                  borderBottom: '1px solid #e5e7eb',
+                  backgroundColor: '#f9fafb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  flexShrink: 0
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: 0 }}>
+                    <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1f2937', whiteSpace: 'nowrap' }}>
+                      库存总货值 C$ {totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                      仓库 C$ {warehouseValue.toFixed(2)} / 冰箱 C$ {fridgeValue.toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: lowStockItems.length > 0 ? '#dc2626' : '#059669', whiteSpace: 'nowrap', fontWeight: '600' }}>
+                      {lowStockItems.length > 0 ? `低库存 ${lowStockItems.length} 种` : '库存正常'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowInventorySummary(true)}
+                    style={{
+                      padding: '0.35rem 0.7rem',
+                      backgroundColor: '#eef2ff',
+                      color: '#3730a3',
+                      border: '1px solid #c7d2fe',
+                      borderRadius: '0.25rem',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                      flexShrink: 0
+                    }}
+                  >
+                    展开统计
+                  </button>
+                </div>
+              );
+            }
             
             return (
               <div style={{
-                padding: '1rem',
+                padding: '0.75rem',
                 borderBottom: '1px solid #e5e7eb',
-                backgroundColor: '#f9fafb'
+                backgroundColor: '#f9fafb',
+                flexShrink: 0
               }}>
                 {/* 总货值 */}
                 <div style={{
-                  marginBottom: '1rem',
-                  padding: '1rem',
+                  marginBottom: '0.65rem',
+                  padding: '0.75rem',
                   backgroundColor: 'white',
                   borderRadius: '0.5rem',
                   border: '2px solid #3b82f6',
@@ -437,7 +482,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 }}>
                   <div>
                     <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.25rem' }}>💰 库存总货值（仓库 + 冰箱）</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#3b82f6' }}>
+                    <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#3b82f6' }}>
                       C$ {totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
@@ -447,6 +492,22 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>物品种类</div>
                     <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#374151' }}>{inventoryItems.length} 种</div>
+                    <button
+                      onClick={() => setShowInventorySummary(false)}
+                      style={{
+                        marginTop: '0.35rem',
+                        padding: '0.3rem 0.6rem',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        fontWeight: '700'
+                      }}
+                    >
+                      收起统计
+                    </button>
                   </div>
                 </div>
                 
@@ -454,12 +515,12 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                  gap: '0.75rem',
+                  gap: '0.5rem',
                   marginBottom: lowStockItems.length > 0 ? '1rem' : '0'
                 }}>
                   {Object.entries(categoryValues).map(([key, data]) => (
                     <div key={key} style={{
-                      padding: '0.75rem',
+                      padding: '0.55rem',
                       backgroundColor: 'white',
                       borderRadius: '0.375rem',
                       border: '1px solid #e5e7eb'
@@ -467,7 +528,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.25rem' }}>
                         {data.icon} {data.name}
                       </div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151' }}>
+                      <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>
                         C$ {data.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
@@ -506,7 +567,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             );
           })()}
           
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
