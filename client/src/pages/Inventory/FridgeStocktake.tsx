@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartIncrementField, smartDeleteDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartIncrementField, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
 
 interface FridgeItem {
   fridgeId: string;
@@ -176,10 +176,14 @@ const FridgeStocktake: React.FC = () => {
       id: `fridge-${Date.now()}`,
       name: newFridgeName.trim(),
       location: newFridgeLocation.trim(),
-      createdAt: new Date()
+      createdAt: new Date(),
+      lastModified: Date.now()
     };
     
     setFridges([...fridges, newFridge]);
+    smartAddDocument('fridges', newFridge).catch(error => {
+      console.error('同步新增冰箱失败:', error);
+    });
     setNewFridgeName('');
     setNewFridgeLocation('');
     setShowAddFridgeModal(false);
@@ -190,11 +194,21 @@ const FridgeStocktake: React.FC = () => {
   const handleEditFridge = () => {
     if (!editingFridge || !newFridgeName.trim()) return;
     
-    setFridges(fridges.map(f => 
-      f.id === editingFridge.id 
-        ? { ...f, name: newFridgeName.trim(), location: newFridgeLocation.trim() }
+    const updatedFridge = {
+      ...editingFridge,
+      name: newFridgeName.trim(),
+      location: newFridgeLocation.trim(),
+      lastModified: Date.now()
+    };
+
+    setFridges(fridges.map(f =>
+      f.id === editingFridge.id
+        ? updatedFridge
         : f
     ));
+    smartUpdateDocument('fridges', editingFridge.id, updatedFridge).catch(error => {
+      console.error('同步编辑冰箱失败:', error);
+    });
     
     setEditingFridge(null);
     setNewFridgeName('');
@@ -208,8 +222,18 @@ const FridgeStocktake: React.FC = () => {
       return;
     }
     
+    const recordsToDelete = fridgeInventory.filter(inv => inv.fridgeId === fridge.id);
     setFridges(fridges.filter(f => f.id !== fridge.id));
     setFridgeInventory(fridgeInventory.filter(inv => inv.fridgeId !== fridge.id));
+    smartDeleteDocument('fridges', fridge.id).catch(error => {
+      console.error('同步删除冰箱失败:', error);
+    });
+    recordsToDelete.forEach(record => {
+      const recordId = record.id || `${record.fridgeId}-${record.itemId}`;
+      smartDeleteDocument('fridge_inventory', recordId).catch(error => {
+        console.error('同步删除冰箱库存记录失败:', error);
+      });
+    });
     
     if (selectedFridge === fridge.id && fridges.length > 1) {
       setSelectedFridge(fridges.find(f => f.id !== fridge.id)?.id || '');
@@ -423,7 +447,7 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // 完成盘点
-  const completeStocktake = () => {
+  const completeStocktake = async () => {
     // ✅ 检查是否有未清点的商品
     const uncountedItems = fridgeItems.filter(item => actualQuantities[item.itemId] === undefined);
     
@@ -460,17 +484,30 @@ const FridgeStocktake: React.FC = () => {
       }
     }
 
+    const now = Date.now();
+
     // 更新冰箱库存
     const newInventory = fridgeInventory.map(inv => {
       if (inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined) {
         return {
           ...inv,
-          quantity: actualQuantities[inv.itemId]
+          id: inv.id || `${inv.fridgeId}-${inv.itemId}`,
+          quantity: actualQuantities[inv.itemId],
+          lastModified: now
         };
       }
       return inv;
     });
     setFridgeInventory(newInventory);
+
+    const updatedFridgeRecords = newInventory.filter(inv =>
+      inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined
+    );
+    await Promise.allSettled(
+      updatedFridgeRecords.map(inv =>
+        smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv)
+      )
+    );
 
     // 保存盘点历史
     try {
@@ -481,6 +518,8 @@ const FridgeStocktake: React.FC = () => {
         fridgeId: selectedFridge,
         fridgeName: fridges.find(f => f.id === selectedFridge)?.name,
         date: getLocalDateString(), // 🔥 使用本地时间
+        createdAt: new Date(),
+        lastModified: now,
         items: fridgeItems.map(item => {
           const warehouseItem = inventoryItems.find(i => i.id === item.itemId);
           const warehouseStock = warehouseItem?.currentStock || 0;
@@ -504,6 +543,9 @@ const FridgeStocktake: React.FC = () => {
       history.unshift(stocktakeRecord);
       localStorage.setItem('fridge_stocktake_history', JSON.stringify(history.slice(0, 50)));
       setStocktakeHistory(history.slice(0, 50));
+      smartAddDocument('fridge_stocktake_history', stocktakeRecord).catch(error => {
+        console.error('同步冰箱盘点历史失败:', error);
+      });
     } catch (error) {
       console.error('保存盘点历史失败:', error);
     }

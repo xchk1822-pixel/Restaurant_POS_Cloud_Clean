@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
+import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -76,7 +77,7 @@ const WarehouseStocktake: React.FC = () => {
   };
 
   // 完成盘点
-  const completeStocktake = () => {
+  const completeStocktake = async () => {
     const discrepancies: any[] = [];
     let hasDifference = false;
 
@@ -106,19 +107,30 @@ const WarehouseStocktake: React.FC = () => {
       }
     }
 
+    const now = Date.now();
+    const updatedItems = filteredItems
+      .filter(item => actualQuantities[item.id] !== undefined)
+      .map(item => ({
+        ...item,
+        currentStock: actualQuantities[item.id],
+        lastUpdated: new Date(),
+        lastModified: now
+      }));
+
     // 更新库存
     setInventoryItems(items => {
       return items.map(item => {
         if (actualQuantities[item.id] !== undefined) {
-          return {
-            ...item,
-            currentStock: actualQuantities[item.id],
-            lastUpdated: new Date()
-          };
+          const updatedItem = updatedItems.find(nextItem => nextItem.id === item.id);
+          return updatedItem || item;
         }
         return item;
       });
     });
+
+    await Promise.allSettled(
+      updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item))
+    );
 
     // 保存盘点历史
     try {
@@ -127,6 +139,8 @@ const WarehouseStocktake: React.FC = () => {
       const stocktakeRecord = {
         id: `stocktake-${Date.now()}`,
         date: getLocalDateString(), // 🔥 使用本地时间
+        createdAt: new Date(),
+        lastModified: now,
         items: filteredItems.map(item => {
           const actualStock = actualQuantities[item.id] || 0;
           
@@ -145,6 +159,9 @@ const WarehouseStocktake: React.FC = () => {
       history.unshift(stocktakeRecord);
       localStorage.setItem('warehouse_stocktake_history', JSON.stringify(history.slice(0, 50)));
       setStocktakeHistory(history.slice(0, 50));
+      smartAddDocument('warehouse_stocktake_history', stocktakeRecord).catch(error => {
+        console.error('同步仓库盘点历史失败:', error);
+      });
     } catch (error) {
       console.error('保存盘点历史失败:', error);
     }
