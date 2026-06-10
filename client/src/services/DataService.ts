@@ -82,6 +82,7 @@ class DataService {
 
     const collections = [
       'inventory_items',
+      'inventory_categories',
       'menu_items',
       'pos_orders',
       'expenses',

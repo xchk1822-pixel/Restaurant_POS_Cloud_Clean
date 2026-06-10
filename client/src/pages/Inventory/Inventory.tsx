@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PurchaseManagement from './PurchaseManagement';
 import { useAppContext } from '../../contexts/AppContext';
-import { smartSubscribeToCollection, smartAddDocument, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
 
 // 本地类型定义（与AppContext保持一致）
@@ -57,6 +57,46 @@ interface InventoryProps {
   defaultTab?: 'items' | 'menu' | 'purchase' | 'records';
 }
 
+interface InventoryCategory {
+  id?: string;
+  key: string;
+  name: string;
+  icon: string;
+  lastModified?: number;
+}
+
+const DEFAULT_INVENTORY_CATEGORIES: InventoryCategory[] = [
+  { id: 'ingredient', key: 'ingredient', name: '食材', icon: '🥬' },
+  { id: 'alcohol', key: 'alcohol', name: '酒水', icon: '🍺' },
+  { id: 'beverage', key: 'beverage', name: '饮料', icon: '🥤' },
+  { id: 'other', key: 'other', name: '其他', icon: '📦' }
+];
+
+const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory[] => {
+  const now = Date.now();
+  const merged = new Map<string, InventoryCategory>();
+
+  categories.forEach((category, index) => {
+    if (!category || typeof category !== 'object') return;
+    const key = String(category.key || category.id || `cat_${now}_${index}`);
+    const normalized: InventoryCategory = {
+      id: String(category.id || key),
+      key,
+      name: String(category.name || key),
+      icon: String(category.icon || '📦'),
+      lastModified: Number(category.lastModified || 0) || now
+    };
+    const existing = merged.get(key);
+    if (!existing || (normalized.lastModified || 0) >= (existing.lastModified || 0)) {
+      merged.set(key, normalized);
+    }
+  });
+
+  return Array.from(merged.values());
+};
+
+const mergeInventoryCategories = (...groups: any[][]): InventoryCategory[] => normalizeInventoryCategories(groups.flat());
+
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const {
     inventoryItems,
@@ -102,58 +142,98 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<{ id?: string; name: string }>({ name: '' });
   const [showInventoryCategoryModal, setShowInventoryCategoryModal] = useState(false);
-  const [editingInventoryCategory, setEditingInventoryCategory] = useState<{ key: string; name: string; icon: string }>({ key: '', name: '', icon: '📦' });
+  const [editingInventoryCategory, setEditingInventoryCategory] = useState<InventoryCategory>({ key: '', name: '', icon: '📦' });
 
   // 菜品分类管理（从 AppContext 获取，与 POS 同步）
   // categories 和 setCategories 已经从 useAppContext() 中获取
 
   // 库存物品类别管理（从 localStorage 加载）
-  const [inventoryCategories, setInventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
+  const getInventoryCategoryStorageKey = React.useCallback(() => {
+    const storeId = dataService.getCurrentStoreId();
+    return storeId ? `store_${storeId}_inventory_categories` : 'inventory_categories';
+  }, []);
+  const inventoryCategoryRemoteUpdateRef = React.useRef(false);
+
+  const [inventoryCategories, setInventoryCategories] = useState<InventoryCategory[]>(() => {
     try {
-      const saved = localStorage.getItem('inventory_categories');
-      if (saved) {
-        return JSON.parse(saved);
+      const serviceData = normalizeInventoryCategories(dataService.getData('inventory_categories'));
+      if (serviceData.length > 0) {
+        return serviceData;
+      }
+
+      const storeId = dataService.getCurrentStoreId();
+      const storageKeys = [
+        storeId ? `store_${storeId}_inventory_categories` : '',
+        'inventory_categories'
+      ].filter(Boolean);
+
+      for (const storageKey of storageKeys) {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          const parsed = normalizeInventoryCategories(JSON.parse(saved));
+          if (parsed.length > 0) {
+            return parsed;
+          }
+        }
       }
     } catch (error) {
       console.error('加载库存类别失败:', error);
     }
-    
-    // 默认值
-    return [
-      { key: 'ingredient', name: '食材', icon: '🥬' },
-      { key: 'alcohol', name: '酒水', icon: '🍺' },
-      { key: 'beverage', name: '饮料', icon: '🥤' },
-      { key: 'other', name: '其他', icon: '📦' }
-    ];
+
+    return normalizeInventoryCategories(DEFAULT_INVENTORY_CATEGORIES);
   });
   
-  // 🔥 实时监听 Firestore 库存分类数据
   React.useEffect(() => {
-    const unsubscribe = smartSubscribeToCollection('inventory_categories', (cloudCategories) => {
-      console.log('📡 Firestore 库存分类更新:', cloudCategories.length, '个');
-      if (cloudCategories && cloudCategories.length > 0) {
-        setInventoryCategories(cloudCategories);
+    let cancelled = false;
+
+    const loadInventoryCategories = async () => {
+      try {
+        const cloudCategories = await smartGetDocuments('inventory_categories');
+        if (cancelled) return;
+
+        const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
+        if (normalizedCloudCategories.length > 0) {
+          inventoryCategoryRemoteUpdateRef.current = true;
+          setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories));
+        }
+      } catch (error) {
+        console.error('加载云端库存类别失败:', error);
       }
-    });
-    
-    return () => unsubscribe();
+    };
+
+    loadInventoryCategories();
+    return () => {
+      cancelled = true;
+    };
   }, []);
-  
-  // ✅ 自动保存库存类别到 localStorage 和 Firestore
-  React.useEffect(() => {
+    React.useEffect(() => {
     try {
-      localStorage.setItem('inventory_categories', JSON.stringify(inventoryCategories));
-      
-      // 🔥 通过 dataService 同步到 Firestore（backupMode 已启用）
-      if (inventoryCategories.length > 0) {
-        dataService.saveData('inventory_categories', inventoryCategories);
+      const normalizedCategories = normalizeInventoryCategories(inventoryCategories);
+      if (JSON.stringify(normalizedCategories) !== JSON.stringify(inventoryCategories)) {
+        setInventoryCategories(normalizedCategories);
+        return;
       }
+
+      const storageKey = getInventoryCategoryStorageKey();
+      localStorage.setItem(storageKey, JSON.stringify(normalizedCategories));
+      localStorage.setItem('inventory_categories', JSON.stringify(normalizedCategories));
+
+      const shouldSyncToCloud = !inventoryCategoryRemoteUpdateRef.current;
+      inventoryCategoryRemoteUpdateRef.current = false;
+      if (!shouldSyncToCloud) {
+        return;
+      }
+
+      normalizedCategories.forEach(category => {
+        const docId = category.id || category.key;
+        smartSetDocument('inventory_categories', docId, category).catch(error => {
+          console.error('同步库存类别失败:', error);
+        });
+      });
     } catch (error) {
       console.error('保存库存类别失败:', error);
     }
-  }, [inventoryCategories]);
-
-  // 模拟库存记录（仅用于展示，实际数据应从 Firestore 获取）
+  }, [inventoryCategories, getInventoryCategoryStorageKey]);
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
       const saved = localStorage.getItem('inventory_stock_records');
@@ -2236,7 +2316,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     onChange={(e) => {
                       const name = e.target.value;
                       // 自动生成 key：拼音首字母或简单转换
-                      const key = name ? `cat_${Date.now()}` : '';
+                      const key = name ? (editingInventoryCategory.key || `cat_${Date.now()}`) : '';
                       setEditingInventoryCategory({...editingInventoryCategory, name, key});
                     }}
                     placeholder="类别名称"
@@ -2258,7 +2338,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         alert('该类别已存在');
                         return;
                       }
-                      setInventoryCategories([...inventoryCategories, { ...editingInventoryCategory }]);
+                      setInventoryCategories(prev => mergeInventoryCategories(prev, [{ ...editingInventoryCategory, id: editingInventoryCategory.key, lastModified: Date.now() }]));
                       setEditingInventoryCategory({ key: '', name: '', icon: '📦' });
                     }}
                     style={{
@@ -2308,7 +2388,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           const newIcon = prompt('修改图标（Emoji）:', cat.icon);
                           if (newName && newIcon) {
                             const newCats = [...inventoryCategories];
-                            newCats[idx] = { ...cat, name: newName, icon: newIcon };
+                            newCats[idx] = { ...cat, id: cat.id || cat.key, name: newName, icon: newIcon, lastModified: Date.now() };
                             setInventoryCategories(newCats);
                           }
                         }}
@@ -2335,6 +2415,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                             return;
                           }
                           setInventoryCategories(inventoryCategories.filter((_, i) => i !== idx));
+                          smartDeleteDocument('inventory_categories', cat.id || cat.key).catch(error => {
+                            console.error('删除库存类别失败:', error);
+                          });
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',

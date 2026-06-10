@@ -598,7 +598,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     console.log('🔄 为分店重新建立实时订阅:', activeStoreId);
     const unsubscribers = [
-      smartSubscribeToCollection('inventory_items', data => applyCloudData(data, setInventoryItems, '??', { merge: true })),
       smartSubscribeToCollection('menu_items', data => applyCloudData(data, setMenuItems, '菜单')),
       smartSubscribeToCollection('purchase_orders', data => applyCloudData(data, setPurchaseOrders, '采购订单')),
       smartSubscribeToCollection('suppliers', data => applyCloudData(data, setSuppliers, '供应商')),
