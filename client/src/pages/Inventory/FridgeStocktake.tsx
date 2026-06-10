@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartIncrementField, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
+import { mergeRecordsByVersion } from '../../utils/syncMerge';
 
 interface FridgeItem {
   fridgeId: string;
@@ -40,6 +41,8 @@ const FridgeStocktake: React.FC = () => {
   const [newFridgeName, setNewFridgeName] = useState('');
   const [newFridgeLocation, setNewFridgeLocation] = useState('');
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // 库存分类（从 localStorage 加载）
   const [inventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
@@ -98,6 +101,45 @@ const FridgeStocktake: React.FC = () => {
   };
 
   const fridgeItems = getFridgeItems();
+  const refreshFridgeData = async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudFridges, cloudFridgeInventory, cloudItems, cloudHistory] = await Promise.all([
+        smartGetDocuments('fridges'),
+        smartGetDocuments('fridge_inventory'),
+        smartGetDocuments('inventory_items'),
+        smartGetDocuments('fridge_stocktake_history')
+      ]);
+
+      if (cloudFridges.length > 0) {
+        setFridges(prev => mergeRecordsByVersion(prev, cloudFridges));
+      }
+
+      if (cloudFridgeInventory.length > 0) {
+        setFridgeInventory(prev => mergeRecordsByVersion(prev, cloudFridgeInventory));
+      }
+
+      if (cloudItems.length > 0) {
+        setInventoryItems(prev => mergeRecordsByVersion(prev, cloudItems, item => ({
+          ...item,
+          lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
+        })));
+      }
+
+      if (cloudHistory.length > 0) {
+        const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
+        setStocktakeHistory(mergedHistory);
+        localStorage.setItem('fridge_stocktake_history', JSON.stringify(mergedHistory.slice(0, 50)));
+      }
+
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新冰箱盘点数据失败:', error);
+      alert('刷新冰箱盘点数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // 初始化：加载实际数量和排序
   useEffect(() => {
@@ -613,7 +655,27 @@ const FridgeStocktake: React.FC = () => {
       {/* 标题栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>🧊 冰箱盘点</h2>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshFridgeData}
+            disabled={isRefreshing}
+            style={{
+              padding: '0.6rem 1.2rem',
+              backgroundColor: isRefreshing ? '#9ca3af' : '#0ea5e9',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            {isRefreshing ? '同步中...' : '刷新冰箱'}
+          </button>
           <button
             onClick={() => setShowAddFridgeModal(true)}
             style={{

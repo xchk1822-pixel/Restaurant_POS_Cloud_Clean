@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartDeleteDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
+import { mergeRecordsByVersion } from '../../utils/syncMerge';
 
 interface Supplier {
   id: string;
@@ -13,6 +14,7 @@ interface Supplier {
   balance: number; // 当前欠款余额
   status: 'active' | 'inactive';
   lastUpdated: Date;
+  lastModified?: number;
 }
 
 interface PaymentRecord {
@@ -53,10 +55,39 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   // 筛选状态
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'has_debt'>('all');
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 保存数据
   const saveData = (key: string, data: any) => {
     localStorage.setItem(key, JSON.stringify(data));
+  };
+  const refreshSupplierData = async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudSuppliers, cloudPurchaseOrders] = await Promise.all([
+        smartGetDocuments('suppliers'),
+        smartGetDocuments('purchase_orders')
+      ]);
+
+      if (cloudSuppliers.length > 0) {
+        setSuppliers(prev => mergeRecordsByVersion(prev, cloudSuppliers, supplier => ({
+          ...supplier,
+          lastUpdated: supplier.lastUpdated ? new Date(supplier.lastUpdated) : new Date()
+        })));
+      }
+
+      if (cloudPurchaseOrders.length > 0) {
+        setPurchaseOrders(prev => mergeRecordsByVersion(prev, cloudPurchaseOrders));
+      }
+
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新供应商数据失败:', error);
+      alert('刷新供应商数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // 获取供应商的采购订单
@@ -101,7 +132,8 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
         phone: editingSupplier.phone!,
         address: editingSupplier.address || '',
         status: editingSupplier.status || 'active',
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
+        lastModified: Date.now()
       };
       
       setSuppliers(suppliers.map(sup => 
@@ -126,7 +158,8 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
         address: editingSupplier.address || '',
         balance: 0,
         status: editingSupplier.status || 'active',
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
+        lastModified: Date.now()
       };
       setSuppliers([...suppliers, newSupplier]);
       alert('✅ 供应商添加成功！');
@@ -145,7 +178,7 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   };
 
   // 删除供应商
-  const handleDeleteSupplier = (supplierId: string) => {
+  const handleDeleteSupplier = async (supplierId: string) => {
     const supplier = suppliers.find(s => s.id === supplierId);
     if (!supplier) return;
 
@@ -156,12 +189,13 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
 
     if (window.confirm(`确定要删除供应商"${supplier.name}"吗？`)) {
       setSuppliers(suppliers.filter(s => s.id !== supplierId));
+      await smartDeleteDocument('suppliers', supplierId);
       alert('✅ 供应商已删除！');
     }
   };
 
   // 处理还款（按单据）
-  const handlePayment = () => {
+  const handlePayment = async () => {
     if (!selectedOrder || !paymentForm.amount) {
       alert('请选择采购单并填写还款金额');
       return;
@@ -183,33 +217,43 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
     // 更新采购单的已付金额
     const newPaidAmount = selectedOrder.paidAmount + amount;
     const newOrderStatus = newPaidAmount >= selectedOrder.totalAmount ? 'completed' : 'partial';
+    const now = Date.now();
+    const updatedSelectedOrder = {
+      ...selectedOrder,
+      paidAmount: newPaidAmount,
+      status: newOrderStatus as 'completed' | 'partial',
+      lastModified: now
+    };
+    const updatedOrdersForSync = purchaseOrders.map(order => 
+      order.id === selectedOrder.id ? updatedSelectedOrder : order
+    );
+    const supplierForSync = suppliers.find(sup => sup.id === selectedOrder.supplierId);
+    const supplierCloudUpdate: Supplier | null = supplierForSync ? {
+      ...supplierForSync,
+      balance: updatedOrdersForSync
+        .filter(order => order.supplierId === supplierForSync.id)
+        .reduce((sum, order) => sum + (order.totalAmount - order.paidAmount), 0),
+      lastUpdated: new Date(),
+      lastModified: now
+    } : null;
     
-    // 更新采购单
-    setPurchaseOrders(orders => {
-      const updatedOrders = orders.map(order => 
-        order.id === selectedOrder.id ? {
-          ...order,
-          paidAmount: newPaidAmount,
-          status: newOrderStatus as 'completed' | 'partial'
-        } : order
-      );
-      
-      // 🔄 同时更新供应商的欠款余额
-      setSuppliers(suppliers => suppliers.map(sup => {
-        if (sup.id === selectedOrder.supplierId) {
-          // 重新计算该供应商的总欠款（使用更新后的订单数据）
-          const totalDebt = updatedOrders.filter(o => o.supplierId === sup.id).reduce((sum, order) => {
-            return sum + (order.totalAmount - order.paidAmount);
-          }, 0);
-          return { ...sup, balance: totalDebt, lastUpdated: new Date() };
-        }
-        return sup;
-      }));
-      
-      return updatedOrders;
-    });
-
+    setPurchaseOrders(updatedOrdersForSync);
+    if (supplierCloudUpdate) {
+      setSuppliers(suppliers => suppliers.map(sup => 
+        sup.id === selectedOrder.supplierId ? supplierCloudUpdate : sup
+      ));
+    }
     // 创建还款记录（关联到具体订单）
+    try {
+      await smartUpdateDocument('purchase_orders', selectedOrder.id, updatedSelectedOrder);
+      if (supplierCloudUpdate) {
+        await smartUpdateDocument('suppliers', selectedOrder.supplierId, supplierCloudUpdate);
+      }
+    } catch (error) {
+      console.error('Failed to sync supplier payment update:', error);
+      alert('还款已在本机记录，但同步云端失败，请点击刷新后检查网络再重试');
+    }
+
     const paymentRecord: PaymentRecord = {
       id: `pay-${Date.now()}`,
       orderId: selectedOrder.id,
@@ -223,7 +267,7 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       // ❌ 不存储 voucherImage 到 localStorage，避免超出配额
     };
 
-    savePaymentRecord(selectedOrder.supplierId, paymentRecord);
+    await savePaymentRecord(selectedOrder.supplierId, paymentRecord);
 
     // 🔄 同步创建开支记录
     const expenseDate = getLocalDateString(); // 🔥 使用本地时间
@@ -545,12 +589,22 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
             管理供应商信息、欠款追踪、还款记录
           </p>
         </div>
-        <button onClick={() => {
-          setEditingSupplier({ status: 'active' });
-          setShowAddModal(true);
-        }} style={styles.btn('#10b981')}>
-          ➕ 添加供应商
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {lastSyncedAt && (
+            <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+              已刷新 {lastSyncedAt.toLocaleTimeString('zh-CN', { hour12: false })}
+            </span>
+          )}
+          <button onClick={refreshSupplierData} disabled={isRefreshing} style={styles.btn(isRefreshing ? '#9ca3af' : '#3b82f6')}>
+            {isRefreshing ? '刷新中...' : '刷新供应商'}
+          </button>
+          <button onClick={() => {
+            setEditingSupplier({ status: 'active' });
+            setShowAddModal(true);
+          }} style={styles.btn('#10b981')}>
+            ➕ 添加供应商
+          </button>
+        </div>
       </div>
 
       {/* 工具栏 */}

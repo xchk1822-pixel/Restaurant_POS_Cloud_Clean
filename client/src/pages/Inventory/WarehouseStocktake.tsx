@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
+import { mergeRecordsByVersion } from '../../utils/syncMerge';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -12,6 +13,8 @@ const WarehouseStocktake: React.FC = () => {
   const [actualQuantities, setActualQuantities] = useState<Record<string, number>>({});
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // 库存分类（从 localStorage 加载）
   const [inventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
@@ -54,6 +57,35 @@ const WarehouseStocktake: React.FC = () => {
   };
 
   const filteredItems = getFilteredItems();
+  const refreshWarehouseData = async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudItems, cloudHistory] = await Promise.all([
+        smartGetDocuments('inventory_items'),
+        smartGetDocuments('warehouse_stocktake_history')
+      ]);
+
+      if (cloudItems.length > 0) {
+        setInventoryItems(prev => mergeRecordsByVersion(prev, cloudItems, item => ({
+          ...item,
+          lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
+        })));
+      }
+
+      if (cloudHistory.length > 0) {
+        const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
+        setStocktakeHistory(mergedHistory);
+        localStorage.setItem('warehouse_stocktake_history', JSON.stringify(mergedHistory.slice(0, 50)));
+      }
+
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新仓库盘点数据失败:', error);
+      alert('刷新仓库盘点数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // 初始化实际数量
   useEffect(() => {
@@ -214,20 +246,42 @@ const WarehouseStocktake: React.FC = () => {
       {/* 标题栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>📦 仓库盘点</h2>
-        <button
-          onClick={() => setShowHistoryModal(true)}
-          style={{
-            padding: '0.6rem 1.2rem',
-            backgroundColor: '#8b5cf6',
-            color: 'white',
-            border: 'none',
-            borderRadius: '0.375rem',
-            cursor: 'pointer',
-            fontWeight: '600'
-          }}
-        >
-          📋 盘点历史
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshWarehouseData}
+            disabled={isRefreshing}
+            style={{
+              padding: '0.6rem 1.2rem',
+              backgroundColor: isRefreshing ? '#9ca3af' : '#0ea5e9',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            {isRefreshing ? '同步中...' : '刷新仓库'}
+          </button>
+          <button
+            onClick={() => setShowHistoryModal(true)}
+            style={{
+              padding: '0.6rem 1.2rem',
+              backgroundColor: '#8b5cf6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            盘点历史
+          </button>
+        </div>
       </div>
 
       {/* 筛选栏 */}

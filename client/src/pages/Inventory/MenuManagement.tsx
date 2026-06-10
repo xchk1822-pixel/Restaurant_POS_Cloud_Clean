@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
+import { smartDeleteDocument, smartGetDocuments, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { getRecordVersion, mergeRecordsByVersion } from '../../utils/syncMerge';
 
 interface RecipeIngredient {
   itemId: string;
@@ -19,6 +21,7 @@ interface MenuItem {
   ingredients?: RecipeIngredient[];
   available?: boolean;
   image?: string;
+  lastModified?: number;
 }
 
 const MenuManagement: React.FC = () => {
@@ -41,6 +44,8 @@ const MenuManagement: React.FC = () => {
   
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<{ id?: string; name: string }>({ name: '' });
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // 从 localStorage 加载分类配置
   useEffect(() => {
@@ -59,6 +64,42 @@ const MenuManagement: React.FC = () => {
       console.error('加载分类配置失败:', error);
     }
   }, []);
+
+  const refreshMenuData = async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudMenus, cloudCategoryDocs] = await Promise.all([
+        smartGetDocuments('menu_items'),
+        smartGetDocuments('menu_categories')
+      ]);
+      setMenuItems(prev => mergeRecordsByVersion(prev, cloudMenus));
+      const latestCategoryDoc = cloudCategoryDocs
+        .filter(doc => Array.isArray(doc.names))
+        .sort((a, b) => getRecordVersion(b) - getRecordVersion(a))[0];
+      if (latestCategoryDoc) {
+        const menuCategories = cloudMenus.map(item => item.category).filter(Boolean);
+        const mergedCategories = Array.from(new Set([...latestCategoryDoc.names, ...menuCategories]));
+        setCategories(mergedCategories);
+        localStorage.setItem('inventory_categories', JSON.stringify(mergedCategories));
+      }
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新菜品数据失败:', error);
+      alert('刷新菜品数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const saveMenuCategories = async (nextCategories: string[]) => {
+    setCategories(nextCategories);
+    localStorage.setItem('inventory_categories', JSON.stringify(nextCategories));
+    await smartSetDocument('menu_categories', 'categories', {
+      id: 'categories',
+      names: nextCategories,
+      lastModified: Date.now()
+    });
+  };
 
   return (
     <div style={{ 
@@ -81,7 +122,27 @@ const MenuManagement: React.FC = () => {
             停售 <span style={{ fontWeight: 'bold', color: '#ef4444' }}>{menuItems.filter(m => !m.available).length}</span> 个
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshMenuData}
+            disabled={isRefreshing}
+            style={{
+              padding: '0.6rem 1.2rem',
+              backgroundColor: isRefreshing ? '#9ca3af' : '#0ea5e9',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            {isRefreshing ? '同步中...' : '刷新菜品'}
+          </button>
           <button
             onClick={() => setShowCategoryModal(true)}
             style={{
@@ -229,10 +290,16 @@ const MenuManagement: React.FC = () => {
                       ✏️ 编辑
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
+                        const updatedMenu = {
+                          ...menu,
+                          available: !menu.available,
+                          lastModified: Date.now()
+                        };
                         setMenuItems(menuItems.map(m => 
-                          m.id === menu.id ? { ...m, available: !m.available } : m
+                          m.id === menu.id ? updatedMenu : m
                         ));
+                        await smartUpdateDocument('menu_items', menu.id, updatedMenu);
                       }}
                       style={{
                         flex: 1,
@@ -249,9 +316,10 @@ const MenuManagement: React.FC = () => {
                       {menu.available ? '⏸️ 停售' : '▶️ 上架'}
                     </button>
                     <button
-                      onClick={() => {
-                        if (window.confirm(`确定要删除菜品"${menu.name}"吗？`)) {
+                      onClick={async () => {
+                        if (window.confirm(`确定要删除菜品 ${menu.name} 吗？`)) {
                           setMenuItems(menuItems.filter(m => m.id !== menu.id));
+                          await smartDeleteDocument('menu_items', menu.id);
                         }
                       }}
                       style={{
@@ -619,7 +687,7 @@ const MenuManagement: React.FC = () => {
                 取消
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!editingMenu.name || !editingMenu.price) {
                     alert('请填写菜品名称和价格');
                     return;
@@ -638,29 +706,35 @@ const MenuManagement: React.FC = () => {
                   }
                   
                   if (editingMenu.id) {
-                    // 编辑现有菜品
-                    setMenuItems(menuItems.map(m => 
-                      m.id === editingMenu.id ? { ...m, ...editingMenu } as MenuItem : m
+                    const updatedMenu = {
+                      ...menuItems.find(m => m.id === editingMenu.id),
+                      ...editingMenu,
+                      lastModified: Date.now()
+                    } as MenuItem;
+                    setMenuItems(menuItems.map(m =>
+                      m.id === editingMenu.id ? updatedMenu : m
                     ));
+                    await smartUpdateDocument('menu_items', editingMenu.id, updatedMenu);
                   } else {
-                    // 添加新菜品
+                    const now = Date.now();
                     const newMenu: MenuItem = {
-                      id: `menu-${Date.now()}`,
+                      id: `menu-${now}`,
                       name: editingMenu.name!,
                       price: editingMenu.price!,
                       category: editingMenu.category || '主食',
                       type: editingMenu.type || 'direct',
                       stockItemId: editingMenu.stockItemId,
                       available: editingMenu.available !== false,
-                      ingredients: editingMenu.ingredients || []
+                      ingredients: editingMenu.ingredients || [],
+                      lastModified: now
                     } as MenuItem;
-                    
-                    // 如果有图片，添加到对象中
+
                     if (editingMenu.image) {
                       (newMenu as any).image = editingMenu.image;
                     }
-                    
+
                     setMenuItems([...menuItems, newMenu]);
+                    await smartSetDocument('menu_items', newMenu.id, newMenu);
                   }
                   setShowMenuModal(false);
                   setEditingMenu({
@@ -727,13 +801,13 @@ const MenuManagement: React.FC = () => {
                   value={editingCategory.name}
                   onChange={(e) => setEditingCategory({ name: e.target.value })}
                   placeholder="输入分类名称"
-                  onKeyDown={(e) => {
+                  onKeyDown={async (e) => {
                     if (e.key === 'Enter' && editingCategory.name.trim()) {
                       if (categories.includes(editingCategory.name.trim())) {
                         alert('该分类已存在');
                         return;
                       }
-                      setCategories([...categories, editingCategory.name.trim()]);
+                      await saveMenuCategories([...categories, editingCategory.name.trim()]);
                       setEditingCategory({ name: '' });
                     }
                   }}
@@ -746,7 +820,7 @@ const MenuManagement: React.FC = () => {
                   }}
                 />
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!editingCategory.name.trim()) {
                       alert('请输入分类名称');
                       return;
@@ -755,7 +829,7 @@ const MenuManagement: React.FC = () => {
                       alert('该分类已存在');
                       return;
                     }
-                    setCategories([...categories, editingCategory.name.trim()]);
+                    await saveMenuCategories([...categories, editingCategory.name.trim()]);
                     setEditingCategory({ name: '' });
                   }}
                   style={{
@@ -796,7 +870,7 @@ const MenuManagement: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const newName = prompt('修改分类名称:', cat);
                           if (newName && newName.trim() && newName.trim() !== cat) {
                             if (categories.includes(newName.trim())) {
@@ -805,11 +879,17 @@ const MenuManagement: React.FC = () => {
                             }
                             const newCategories = [...categories];
                             newCategories[idx] = newName.trim();
-                            setCategories(newCategories);
+                            await saveMenuCategories(newCategories);
                             // 同时更新使用该分类的菜品
-                            setMenuItems(menuItems.map(menu => 
-                              menu.category === cat ? { ...menu, category: newName.trim() } : menu
-                            ));
+                            const now = Date.now();
+                            const updatedMenus = menuItems.map(menu => 
+                              menu.category === cat ? { ...menu, category: newName.trim(), lastModified: now } : menu
+                            );
+                            setMenuItems(updatedMenus);
+                            await Promise.all(updatedMenus
+                              .filter(menu => menu.category === newName.trim())
+                              .map(menu => smartUpdateDocument('menu_items', menu.id, menu))
+                            );
                           }
                         }}
                         style={{
@@ -826,7 +906,7 @@ const MenuManagement: React.FC = () => {
                         ✏️ 编辑
                       </button>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const usedCount = menuItems.filter(m => m.category === cat).length;
                           if (usedCount > 0) {
                             if (!window.confirm(`该分类下有 ${usedCount} 个菜品，删除后这些菜品将保留原分类名称。确定要删除吗？`)) {
@@ -837,7 +917,7 @@ const MenuManagement: React.FC = () => {
                               return;
                             }
                           }
-                          setCategories(categories.filter((_, i) => i !== idx));
+                          await saveMenuCategories(categories.filter((_, i) => i !== idx));
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',
