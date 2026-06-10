@@ -94,7 +94,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 onClick={() => isAvailable && onAddItem(item)}
                 disabled={!isAvailable}
                 style={{
-                  padding: '0.4rem',
+                  padding: 0,
                   backgroundColor: !isAvailable ? '#f3f4f6' : (item.type === 'recipe' ? 'white' : '#dbeafe'),
                   border: item.type === 'recipe' ? '1px solid #e5e7eb' : '2px solid #3b82f6',
                   borderColor: !isAvailable ? '#d1d5db' : (item.type === 'recipe' ? '#e5e7eb' : '#3b82f6'),
@@ -104,10 +104,11 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   transition: 'all 0.2s',
                   position: 'relative',
                   opacity: isAvailable ? 1 : 0.5,
-                  minHeight: '100px',  // 从 110px 压缩到 100px
+                  minHeight: '142px',
                   display: 'flex',
                   flexDirection: 'column',
-                  justifyContent: 'space-between'
+                  justifyContent: 'space-between',
+                  overflow: 'hidden'
                 }}
                 onMouseEnter={(e) => {
                   if (isAvailable) {
@@ -125,11 +126,11 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               {/* 菜品图片 */}
                 <div style={{
                   width: '100%',
-                  height: '60px',
-                  marginBottom: '0.35rem',
-                  borderRadius: '0.25rem',
+                  aspectRatio: '4 / 3',
+                  minHeight: '104px',
                   overflow: 'hidden',
-                  backgroundColor: '#f3f4f6'
+                  backgroundColor: '#f8fafc',
+                  position: 'relative'
                 }}>
                   <MenuImage
                     menuId={item.id}
@@ -140,9 +141,34 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                     style={{
                       width: '100%',
                       height: '100%',
-                      objectFit: 'cover'
+                      objectFit: 'contain',
+                      display: 'block'
                     }}
                   />
+                  <div style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    padding: '0.35rem 0.45rem',
+                    background: 'linear-gradient(180deg, rgba(15,23,42,0.1), rgba(15,23,42,0.88))',
+                    color: 'white',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.45)'
+                  }}>
+                    <div style={{
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      lineHeight: 1.15,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}>
+                      {item.name}
+                    </div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 800, lineHeight: 1.1 }}>
+                      C${item.price}
+                    </div>
+                  </div>
                 </div>
               
               {/* 类型标签 */}
@@ -160,11 +186,11 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 {item.type === 'recipe' ? '🍽️' : '📦'}
               </div>
               
-              <div style={{ fontWeight: '600', fontSize: '0.8rem', marginBottom: '0.15rem', marginTop: '1rem', lineHeight: '1.2' }}>{item.name}</div>
-              <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: '0.25rem', lineHeight: '1.2' }}>{item.nameEs}</div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#2563eb' }}>C${item.price}</div>
+              {item.nameEs && (
+                <div style={{ fontSize: '0.68rem', color: '#6b7280', padding: '0.25rem 0.45rem 0', lineHeight: '1.2' }}>{item.nameEs}</div>
+              )}
               {item.type !== 'recipe' && (
-                <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                <div style={{ fontSize: '0.68rem', color: '#6b7280', padding: '0.2rem 0.45rem 0.4rem' }}>
                   ✓ 直接扣库存
                 </div>
               )}
