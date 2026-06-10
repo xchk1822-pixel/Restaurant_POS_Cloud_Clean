@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { dataService } from '../services/DataService';
 import { dataManager } from '../services/dataManager';
-import { smartGetDocuments, smartIncrementField, smartSubscribeToCollection } from '../services/smartSyncService';
+import { smartGetDocuments, smartIncrementField, smartSubscribeToCollection, smartUpdateDocument } from '../services/smartSyncService';
+import { uploadCachedMenuImage } from '../services/menuImageService';
 
 // 库存物品接口
 export interface InventoryItem {
@@ -38,6 +39,12 @@ export interface MenuItem {
   price: number;
   category: string;
   image?: string;
+  imageUrl?: string;
+  imageThumbUrl?: string;
+  imageStoragePath?: string;
+  imageThumbStoragePath?: string;
+  imageUpdatedAt?: number;
+  imageUploadPending?: boolean;
   type?: 'recipe' | 'direct'; // recipe=需要配方，direct=直接扣库存
   stockItemId?: string; // 直接扣库存时关联的库存物品ID
   ingredients?: RecipeIngredient[]; // 配方模式时的原料列表
@@ -883,6 +890,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 同步更新分类列表
     const uniqueCategories = Array.from(new Set(menuItems.map(item => item.category)));
     setCategories(uniqueCategories);
+  }, [menuItems]);
+
+  useEffect(() => {
+    const syncPendingImages = async () => {
+      if (!navigator.onLine) return;
+      const pendingItems = menuItems.filter(item => item.imageUploadPending);
+      if (pendingItems.length === 0) return;
+
+      for (const item of pendingItems) {
+        try {
+          const imageFields = await uploadCachedMenuImage(item.id, item.imageUpdatedAt);
+          const updatedMenu = {
+            ...item,
+            ...imageFields,
+            lastModified: Date.now()
+          };
+          await smartUpdateDocument('menu_items', item.id, updatedMenu);
+          setMenuItems(current => current.map(menu => menu.id === item.id ? updatedMenu : menu));
+        } catch (error) {
+          console.warn('待上传菜品图片同步失败:', item.id, error);
+        }
+      }
+    };
+
+    syncPendingImages();
+    window.addEventListener('online', syncPendingImages);
+    return () => window.removeEventListener('online', syncPendingImages);
   }, [menuItems]);
 
   // ❌ 移除自动保存（避免与实时监听形成循环）

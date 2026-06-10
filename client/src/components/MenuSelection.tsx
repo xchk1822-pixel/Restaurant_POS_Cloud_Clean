@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import type { MenuItem as AppMenuItem } from '../contexts/AppContext';
+import MenuImage from './MenuImage';
 
 interface MenuItem extends AppMenuItem {}
 
@@ -122,7 +123,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 }}
               >
               {/* 菜品图片 */}
-              {(item as any).image && (
+              {(item.imageThumbUrl || item.imageUrl || item.image) && (
                 <div style={{
                   width: '100%',
                   height: '60px',
@@ -131,9 +132,11 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   overflow: 'hidden',
                   backgroundColor: '#f3f4f6'
                 }}>
-                  <img 
-                    src={(item as any).image} 
-                    alt={item.name}
+                  <MenuImage
+                    menuId={item.id}
+                    name={item.name}
+                    src={item.imageThumbUrl || item.imageUrl}
+                    legacySrc={item.image}
                     style={{
                       width: '100%',
                       height: '100%',

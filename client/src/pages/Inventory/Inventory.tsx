@@ -3,6 +3,8 @@ import PurchaseManagement from './PurchaseManagement';
 import { useAppContext } from '../../contexts/AppContext';
 import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
+import MenuImage from '../../components/MenuImage';
+import { processAndUploadMenuImage } from '../../services/menuImageService';
 
 // 本地类型定义（与AppContext保持一致）
 interface InventoryItem {
@@ -39,7 +41,12 @@ interface MenuItem {
   ingredients?: RecipeIngredient[];
   available?: boolean;
   image?: string; // 菜品图片（Base64）
-  lastModified?: number;
+  imageUrl?: string;
+  imageThumbUrl?: string;
+  imageStoragePath?: string;
+  imageThumbStoragePath?: string;
+  imageUpdatedAt?: number;
+  imageUploadPending?: boolean;  lastModified?: number;
 }
 
 interface StockRecord {
@@ -176,6 +183,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     available: true,
     ingredients: []
   });
+  const [selectedMenuImageFile, setSelectedMenuImageFile] = useState<File | null>(null);
+  const [isProcessingMenuImage, setIsProcessingMenuImage] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<{ id?: string; name: string }>({ name: '' });
   const [showInventoryCategoryModal, setShowInventoryCategoryModal] = useState(false);
@@ -895,6 +904,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             </div>
             <button
               onClick={() => {
+                setSelectedMenuImageFile(null);
                 setEditingMenu({
                   name: '',
                   price: 0,
@@ -942,20 +952,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       flexShrink: 0,
                       overflow: 'hidden'
                     }}>
-                      {(menu).image ? (
-                        <img 
-                          src={(menu).image} 
-                          alt={menu.name}
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover'
-                          }}
-                        />
-                      ) : (
-                        '🍽️'
-                      )}
-                    </div>
+                      <MenuImage
+                        menuId={menu.id}
+                        name={menu.name}
+                        src={menu.imageThumbUrl || menu.imageUrl}
+                        legacySrc={menu.image}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover'
+                        }}
+                        placeholder={'🍽️'}
+                      />                    </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                         <div>
@@ -997,6 +1005,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
                       onClick={() => {
+                        setSelectedMenuImageFile(null);
                         setEditingMenu({ ...menu });
                         setShowMenuModal(true);
                       }}
@@ -1765,20 +1774,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      console.log('📷 开始上传图片:', file.name, '大小:', (file.size / 1024).toFixed(2), 'KB');
-                      
-                      // 将图片转换为 Base64
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const base64 = reader.result as string;
-                        console.log('✅ 图片转换成功，Base64长度:', base64.length);
-                        setEditingMenu({...editingMenu, image: base64});
-                      };
-                      reader.onerror = () => {
-                        console.error('❌ 图片读取失败');
-                        alert('图片读取失败，请重试');
-                      };
-                      reader.readAsDataURL(file);
+                      setSelectedMenuImageFile(file);
                     }
                   }}
                   style={{ display: 'none' }}
@@ -1801,10 +1797,20 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     position: 'relative'
                   }}
                 >
-                  {editingMenu.image ? (
-                    <img 
-                      src={editingMenu.image} 
-                      alt="菜品" 
+                  {selectedMenuImageFile ? (
+                    <>
+                      <div style={{ fontSize: '2rem' }}>🖼️</div>
+                      <div style={{ fontSize: '0.75rem', color: '#2563eb', marginTop: '0.4rem', textAlign: 'center' }}>
+                        保存时压缩上传
+                      </div>
+                    </>
+                  ) : (editingMenu.imageThumbUrl || editingMenu.imageUrl || editingMenu.image) ? (
+                    <MenuImage
+                      menuId={editingMenu.id || 'new-menu'}
+                      name={editingMenu.name || '菜品'}
+                      src={editingMenu.imageThumbUrl || editingMenu.imageUrl}
+                      legacySrc={editingMenu.image}
+                      variant="medium"
                       style={{
                         width: '100%',
                         height: '100%',
@@ -2080,6 +2086,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
               <button
                 onClick={() => {
+                  setSelectedMenuImageFile(null);
                   setShowMenuModal(false);
                   setEditingMenu({
                     name: '',
@@ -2102,39 +2109,56 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 取消
               </button>
               <button
-                onClick={() => {
+                disabled={isProcessingMenuImage}
+                onClick={async () => {
                   if (!editingMenu.name || !editingMenu.price) {
                     alert('请填写菜品名称和价格');
                     return;
                   }
+                  setIsProcessingMenuImage(true);
+                  let imageFields: Partial<MenuItem> = {};
+                  const menuIdForSave = editingMenu.id || `menu-${Date.now()}`;
+                  try {
+                    if (selectedMenuImageFile) {
+                      imageFields = await processAndUploadMenuImage(menuIdForSave, selectedMenuImageFile);
+                    }
+                  } catch (error: any) {
+                    console.error('处理菜品图片失败:', error);
+                    alert(error?.message || '图片处理失败，请换一张图片重试');
+                    setIsProcessingMenuImage(false);
+                    return;
+                  }
+
                   if (editingMenu.id) {
-                    // 编辑现有菜品
-                    setMenuItems(menuItems.map(m => 
-                      m.id === editingMenu.id ? { ...m, ...editingMenu } as MenuItem : m
+                    const updatedMenu = {
+                      ...menuItems.find(m => m.id === editingMenu.id),
+                      ...editingMenu,
+                      ...imageFields,
+                      image: selectedMenuImageFile ? undefined : editingMenu.image,
+                      lastModified: Date.now()
+                    } as MenuItem;
+                    setMenuItems(menuItems.map(m =>
+                      m.id === editingMenu.id ? updatedMenu : m
                     ));
+                    await smartUpdateDocument('menu_items', editingMenu.id, updatedMenu);
                   } else {
-                    // 添加新菜品
+                    const now = Date.now();
                     const newMenu: MenuItem = {
-                      id: `menu-${Date.now()}`,
+                      id: menuIdForSave,
                       name: editingMenu.name!,
                       price: editingMenu.price!,
                       category: editingMenu.category || '主食',
                       available: editingMenu.available !== false,
-                      ingredients: editingMenu.ingredients || []
+                      ingredients: editingMenu.ingredients || [],
+                      ...imageFields,
+                      lastModified: now
                     } as MenuItem;
-                    
-                    // 如果有图片，添加到对象中
-                    if (editingMenu.image) {
-                      newMenu.image = editingMenu.image;
-                      console.log('📷 保存图片，长度:', editingMenu.image.length);
-                    } else {
-                      console.log('⚠️ 没有图片');
-                    }
-                    
-                    console.log('💾 保存菜品:', newMenu.name, 'ID:', newMenu.id);
                     setMenuItems([...menuItems, newMenu]);
+                    await smartSetDocument('menu_items', newMenu.id, newMenu);
                   }
                   setShowMenuModal(false);
+                  setSelectedMenuImageFile(null);
+                  setIsProcessingMenuImage(false);
                   setEditingMenu({
                     name: '',
                     price: 0,
@@ -2150,11 +2174,11 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   color: 'white',
                   border: 'none',
                   borderRadius: '0.375rem',
-                  cursor: 'pointer',
+                  cursor: isProcessingMenuImage ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
               >
-                确认保存
+                {isProcessingMenuImage ? '图片处理中...' : '确认保存'}
               </button>
             </div>
           </div>
