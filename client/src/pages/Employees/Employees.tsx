@@ -99,6 +99,7 @@ const EmployeesModule: React.FC = () => {
   const [loanRecords, setLoanRecords] = useState<LoanRecord[]>([]);
   const [cashFlowRecords, setCashFlowRecords] = useState<CashFlowRecord[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     setActiveTab(getPathTab());
@@ -136,6 +137,7 @@ const EmployeesModule: React.FC = () => {
       setSalaryRecords(salaryData);
       setLoanRecords(loanData);
       setCashFlowRecords(cashFlowData);
+      setLastSyncedAt(new Date());
     } catch (error) {
       console.error('加载员工管理数据失败:', error);
       alert('加载员工管理数据失败，请检查网络后重试');
@@ -179,6 +181,11 @@ const EmployeesModule: React.FC = () => {
       fontWeight: 600,
       cursor: isRefreshing ? 'not-allowed' : 'pointer',
     },
+    syncInfo: {
+      fontSize: '0.8rem',
+      color: '#6b7280',
+      whiteSpace: 'nowrap' as const,
+    },
     content: {
       flex: 1,
       overflow: 'hidden' as const,
@@ -189,14 +196,21 @@ const EmployeesModule: React.FC = () => {
     <div style={styles.container}>
       <div style={styles.header}>
         <h1 style={styles.title}>员工管理</h1>
-        <button
-          type="button"
-          onClick={loadEmployeeModuleData}
-          disabled={isRefreshing}
-          style={styles.refreshButton}
-        >
-          {isRefreshing ? '刷新中...' : '刷新云端数据'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {lastSyncedAt && (
+            <span style={styles.syncInfo}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={loadEmployeeModuleData}
+            disabled={isRefreshing}
+            style={styles.refreshButton}
+          >
+            {isRefreshing ? '刷新中...' : '刷新云端数据'}
+          </button>
+        </div>
       </div>
 
       <div style={styles.content}>
