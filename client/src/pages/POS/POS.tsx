@@ -1562,7 +1562,10 @@ const POS: React.FC = () => {
       return;
     }
 
-    if (orderType === 'dine_in' && !selectedTableId) {
+    const activeOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
+    const activeOrderType = activeOrder?.orderType || orderType;
+
+    if (activeOrderType === 'dine_in' && !selectedTableId) {
       alert('\u8bf7\u5148\u9009\u62e9\u684c\u53f0');
       return;
     }
@@ -1595,6 +1598,7 @@ const POS: React.FC = () => {
 
     if (!selectedOrderId) {
       const existingActiveOrder = orders.find(o =>
+        orderType === 'dine_in' &&
         o.tableId === selectedTableId &&
         o.status !== 'completed' &&
         o.status !== 'cancelled'
@@ -1609,9 +1613,11 @@ const POS: React.FC = () => {
       const newOrder: Order = {
         id: generateOrderId(),
         orderNumber: generateOrderNumber(),
-        tableId: selectedTableId!,
-        tableNumber: tables.find(t => t.id === selectedTableId)?.number || '',
+        tableId: orderType === 'dine_in' ? selectedTableId! : '',
+        tableNumber: orderType === 'dine_in' ? (tables.find(t => t.id === selectedTableId)?.number || '') : '',
         orderType,
+        deliveryType: orderType === 'delivery' ? deliveryType : undefined,
+        deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
         customerId: selectedCustomer?.id,
         customerName: selectedCustomer?.name,
         items: updatedItems,
@@ -1637,7 +1643,7 @@ const POS: React.FC = () => {
       console.log('created POS order:', newOrder.id);
 
       setTables(prevTables => prevTables.map(t =>
-        t.id === selectedTableId
+        orderType === 'dine_in' && t.id === selectedTableId
           ? { ...t, status: 'occupied' as const, currentOrderId: newOrder.id, lastModified: Date.now() }
           : t
       ));
@@ -2397,9 +2403,11 @@ const POS: React.FC = () => {
     }));
 
     setCurrentItems(formattedItems);
+    setOrderType(order.orderType || 'dine_in');
+    setDeliveryType(order.deliveryType || 'self');
+    setDeliveryFee(order.orderType === 'delivery' ? (order.deliveryFee || 0) : 0);
     setServiceFeeEnabled(false);
     setTaxEnabled(false);
-    setDeliveryFee(0);
     setCashNIO('');
     setCashUSD('');
     setCardNIO('');
