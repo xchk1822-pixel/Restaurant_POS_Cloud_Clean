@@ -97,6 +97,41 @@ const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory
 
 const mergeInventoryCategories = (...groups: any[][]): InventoryCategory[] => normalizeInventoryCategories(groups.flat());
 
+const getInventoryItemVersion = (item: any): number => {
+  if (!item) return 0;
+  const value = item.lastModified || item.lastUpdated || item.updatedAt || item.createdAt;
+  if (!value) return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object' && typeof value.seconds === 'number') {
+    return value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1000000);
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const mergeInventoryItemsByVersion = (localItems: InventoryItem[], cloudItems: any[]): InventoryItem[] => {
+  const merged = new Map<string, InventoryItem>();
+
+  localItems.forEach(item => {
+    if (item?.id) merged.set(String(item.id), item);
+  });
+
+  cloudItems.forEach(cloudItem => {
+    if (!cloudItem?.id) return;
+    const id = String(cloudItem.id);
+    const localItem = merged.get(id);
+    if (!localItem || getInventoryItemVersion(cloudItem) >= getInventoryItemVersion(localItem)) {
+      merged.set(id, {
+        ...cloudItem,
+        lastUpdated: cloudItem.lastUpdated ? new Date(cloudItem.lastUpdated) : new Date()
+      } as InventoryItem);
+    }
+  });
+
+  return Array.from(merged.values());
+};
+
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const {
     inventoryItems,
@@ -118,6 +153,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInventorySummary, setShowInventorySummary] = useState(false);
+  const [inventoryLastSyncedAt, setInventoryLastSyncedAt] = useState<Date | null>(null);
+  const [isRefreshingInventory, setIsRefreshingInventory] = useState(false);
 
   // 生成唯一条形码（13位EAN格式）
   const generateBarcode = () => {
@@ -234,6 +271,34 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       console.error('保存库存类别失败:', error);
     }
   }, [inventoryCategories, getInventoryCategoryStorageKey]);
+
+  const refreshInventoryData = React.useCallback(async () => {
+    setIsRefreshingInventory(true);
+    try {
+      const [cloudItems, cloudCategories] = await Promise.all([
+        smartGetDocuments('inventory_items'),
+        smartGetDocuments('inventory_categories')
+      ]);
+
+      if (cloudItems.length > 0) {
+        setInventoryItems(prev => mergeInventoryItemsByVersion(prev, cloudItems));
+      }
+
+      const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
+      if (normalizedCloudCategories.length > 0) {
+        inventoryCategoryRemoteUpdateRef.current = true;
+        setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories));
+      }
+
+      setInventoryLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新库存数据失败:', error);
+      alert('刷新库存数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshingInventory(false);
+    }
+  }, [setInventoryItems]);
+
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
       const saved = localStorage.getItem('inventory_stock_records');
@@ -354,7 +419,28 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {inventoryLastSyncedAt && (
+              <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                最后同步 {inventoryLastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              </span>
+            )}
+            <button
+              onClick={refreshInventoryData}
+              disabled={isRefreshingInventory}
+              style={{
+                padding: '0.45rem 0.75rem',
+                backgroundColor: isRefreshingInventory ? '#9ca3af' : '#0ea5e9',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontWeight: '600',
+                cursor: isRefreshingInventory ? 'not-allowed' : 'pointer',
+                fontSize: '0.85rem'
+              }}
+            >
+              {isRefreshingInventory ? '同步中...' : '刷新库存'}
+            </button>
             <button
               onClick={handleScanBarcode}
               style={{
