@@ -111,8 +111,10 @@ interface Order {
   paymentMethod?: 'cash' | 'card' | 'mixed'; // 鏀粯鏂瑰紡
   cashAmount?: number; // 鐜伴噾鏀粯閲戦
   cardAmount?: number; // 鍒峰崱鏀粯閲戦
+  stockDeducted?: boolean;
   stockDeductedAt?: Date;
   stockDeductedItems?: Record<string, number>;
+  stockDeductionOperationId?: string;
   lastModified?: number; // 馃敟 鏈€鍚庝慨鏀规椂闂存埑锛堟绉掞級锛岀敤浜庡璁惧鍚屾鐗堟湰鎺у埗
 }
 
@@ -158,8 +160,10 @@ const getOrdersSignature = (orders: Array<Partial<Order>> = []): string => {
         createdAt: normalizeDateForSignature(order.createdAt),
         completedAt: normalizeDateForSignature(order.completedAt),
         clearedAt: normalizeDateForSignature(order.clearedAt),
+        stockDeducted: !!order.stockDeducted,
         stockDeductedAt: normalizeDateForSignature(order.stockDeductedAt),
         stockDeductedItems: order.stockDeductedItems || {},
+        stockDeductionOperationId: order.stockDeductionOperationId || null,
         items: (order.items || []).map(item => ({
           id: item.id,
           menuItemId: item.menuItemId,
@@ -320,6 +324,42 @@ const getOrderVersion = (order: Partial<Order>): number => {
   return Number.isFinite(version) ? version : 0;
 };
 
+const getPaymentRank = (paymentStatus?: string): number => {
+  switch (paymentStatus) {
+    case 'paid': return 3;
+    case 'partial': return 2;
+    case 'refunded': return 1;
+    case 'unpaid':
+    default: return 0;
+  }
+};
+
+const getOrderStatusRank = (status?: string): number => {
+  switch (status) {
+    case 'cancelled':
+    case 'completed': return 5;
+    case 'paid': return 4;
+    case 'served': return 3;
+    case 'preparing': return 2;
+    case 'confirmed': return 1;
+    case 'draft':
+    default: return 0;
+  }
+};
+
+const isOrderStateRegression = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {
+  if (localOrder.stockDeducted && !incomingOrder.stockDeducted) return true;
+  if (localOrder.clearedAt && !incomingOrder.clearedAt) return true;
+
+  const localStatusRank = getOrderStatusRank(localOrder.status);
+  const incomingStatusRank = getOrderStatusRank(incomingOrder.status);
+  if (localStatusRank > incomingStatusRank && ['completed', 'cancelled'].includes(String(localOrder.status))) {
+    return true;
+  }
+
+  return getPaymentRank(localOrder.paymentStatus) > getPaymentRank(incomingOrder.paymentStatus);
+};
+
 const toDisplayDate = (value: any): Date | null => {
   const timestamp = toTimestampMillis(value);
   return timestamp ? new Date(timestamp) : null;
@@ -349,8 +389,27 @@ const hasNewerCloudOrders = (cloudOrders: Order[], localOrders: Order[]): boolea
   return cloudOrders.some(cloudOrder => {
     const localOrder = localById.get(cloudOrder.id);
     if (!localOrder) return true;
+    if (isOrderStateRegression(localOrder, cloudOrder)) return false;
     return getOrderVersion(cloudOrder) > getOrderVersion(localOrder);
   });
+};
+
+const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Order[] => {
+  const merged = new Map<string, Order>();
+
+  localOrders.forEach(order => {
+    if (order.id) merged.set(order.id, order);
+  });
+
+  incomingOrders.forEach(incomingOrder => {
+    if (!incomingOrder.id) return;
+    const localOrder = merged.get(incomingOrder.id);
+    if (!localOrder || (!isOrderStateRegression(localOrder, incomingOrder) && getOrderVersion(incomingOrder) >= getOrderVersion(localOrder))) {
+      merged.set(incomingOrder.id, incomingOrder);
+    }
+  });
+
+  return Array.from(merged.values());
 };
 
 const POS: React.FC = () => {
@@ -660,7 +719,7 @@ const POS: React.FC = () => {
 
         const ordersData = dataService.getData('pos_orders');
         if (ordersData.length > 0) {
-          setOrders(ordersData as Order[]);
+          setOrders(prevOrders => mergeOrdersByVersion(prevOrders, ordersData as Order[]));
           console.log('synced POS orders', ordersData.length);
         }
 
@@ -1582,13 +1641,24 @@ const POS: React.FC = () => {
       ));
     } else {
       setOrders(prevOrders => prevOrders.map(o =>
-        o.id === selectedOrderId ? {
-          ...o,
-          items: updatedItems,
-          totalAmount: finalTotal,
-          updatedAt: new Date(),
-          lastModified: Date.now()
-        } : o
+        o.id === selectedOrderId ? (() => {
+          const nextSettledAmount = Number(o.settledAmount || o.paidAmount || 0);
+          const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
+            nextSettledAmount >= finalTotal - 0.001
+              ? 'paid'
+              : nextSettledAmount > 0
+                ? 'partial'
+                : 'unpaid';
+
+          return {
+            ...o,
+            items: updatedItems,
+            totalAmount: finalTotal,
+            paymentStatus: nextPaymentStatus,
+            updatedAt: new Date(),
+            lastModified: Date.now()
+          };
+        })() : o
       ));
       pendingOrderSyncIdsRef.current.add(selectedOrderId);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
@@ -1630,6 +1700,14 @@ const POS: React.FC = () => {
   const getStockDeductionKey = (item: OrderItem) => item.id || item.menuItemId;
 
   const deductStockForOrder = (order: Order): Order => {
+    if (order.stockDeducted) {
+      console.log('订单库存已经扣减过，跳过重复扣减:', order.id);
+      return {
+        ...order,
+        lastModified: Date.now()
+      };
+    }
+
     if (!order.items || order.items.length === 0) {
       console.warn('鈿狅笍 璁㈠崟娌℃湁鍟嗗搧锛岃烦杩囧簱瀛樻墸鍑?', order.id);
       return order;
@@ -1660,6 +1738,7 @@ const POS: React.FC = () => {
     console.log('鉁?寮€濮嬫墸鍑忓簱瀛?', order.id, itemsToDeduct.map(item => `${item.name} x${item.quantity}`).join(', '));
     deductStock(itemsToDeduct);
 
+    const operationId = order.stockDeductionOperationId || `stock-${order.id}-${Date.now()}`;
     const nextDeductedItems = { ...deductedItems };
     order.items.forEach(item => {
       nextDeductedItems[getStockDeductionKey(item)] = item.quantity;
@@ -1672,8 +1751,10 @@ const POS: React.FC = () => {
 
     return {
       ...order,
+      stockDeducted: true,
       stockDeductedAt: new Date(),
       stockDeductedItems: nextDeductedItems,
+      stockDeductionOperationId: operationId,
       lastModified: Date.now()
     };
   };
@@ -1742,7 +1823,7 @@ const POS: React.FC = () => {
           lastModified: Date.now()
         };
 
-        paidOrderForSideEffects = isFullyPaid ? deductStockForOrder(updatedOrder) : updatedOrder;
+        paidOrderForSideEffects = updatedOrder;
         setOrders(prevOrders => prevOrders.map(o =>
           o.id === selectedOrderId ? paidOrderForSideEffects! : o
         ));
@@ -1785,7 +1866,7 @@ const POS: React.FC = () => {
           lastModified: Date.now()
         };
 
-        paidOrderForSideEffects = isFullyPaid ? deductStockForOrder(newOrder) : newOrder;
+        paidOrderForSideEffects = newOrder;
         finalOrderId = paidOrderForSideEffects.id;
         setOrders(prevOrders => [...prevOrders, paidOrderForSideEffects!]);
         pendingOrderSyncIdsRef.current.add(paidOrderForSideEffects.id);
@@ -4275,12 +4356,18 @@ const POS: React.FC = () => {
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`确认桌${order.tableNumber}的顾客已离开？\n\n点击确定后将完成订单并清理桌台`)) {
-                                // 将订单状态设为 completed，而不是删除
+                                const completedOrder = deductStockForOrder({
+                                  ...order,
+                                  status: 'completed' as const,
+                                  completedAt: new Date(),
+                                  clearedAt: new Date(),
+                                  lastModified: Date.now()
+                                });
                                 setOrders(prevOrders => prevOrders.map(o => 
-                                  o.id === order.id ? { ...o, status: 'completed', completedAt: new Date() } : o
+                                  o.id === order.id ? completedOrder : o
                                 ));
                                 setTables(prevTables => prevTables.map(t => 
-                                  t.id === order.tableId ? { ...t, status: 'available' as const } : t
+                                  t.id === order.tableId ? { ...t, status: 'available' as const, lastModified: Date.now() } : t
                                 ));
                                 setTimeout(() => {
                                   alert('✅ 订单已完成，桌台已清理\n\n可以接待新顾客了');
@@ -4307,9 +4394,15 @@ const POS: React.FC = () => {
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '订单已完成'}？`)) {
-                                // 将订单状态设为 completed，而不是删除
+                                const completedOrder = deductStockForOrder({
+                                  ...order,
+                                  status: 'completed' as const,
+                                  completedAt: new Date(),
+                                  clearedAt: new Date(),
+                                  lastModified: Date.now()
+                                });
                                 setOrders(prevOrders => prevOrders.map(o => 
-                                  o.id === order.id ? { ...o, status: 'completed', completedAt: new Date() } : o
+                                  o.id === order.id ? completedOrder : o
                                 ));
                                 alert('✅ 订单已完成');
                               }

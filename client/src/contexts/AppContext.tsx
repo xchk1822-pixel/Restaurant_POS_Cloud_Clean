@@ -510,12 +510,66 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const id = String(cloudItem.id);
       const localItem = merged.get(id);
 
-      if (!localItem || getSyncVersion(cloudItem) >= getSyncVersion(localItem)) {
+      if (!localItem || shouldUseCloudItem(localItem, cloudItem)) {
         merged.set(id, cloudItem);
       }
     });
 
     return Array.from(merged.values());
+  };
+
+  const getPaymentRank = (paymentStatus?: string): number => {
+    switch (paymentStatus) {
+      case 'paid': return 3;
+      case 'partial': return 2;
+      case 'refunded': return 1;
+      case 'unpaid':
+      default: return 0;
+    }
+  };
+
+  const getOrderStatusRank = (status?: string): number => {
+    switch (status) {
+      case 'cancelled':
+      case 'completed': return 5;
+      case 'paid': return 4;
+      case 'served': return 3;
+      case 'preparing': return 2;
+      case 'confirmed': return 1;
+      case 'draft':
+      default: return 0;
+    }
+  };
+
+  const isOrderStateRegression = (localItem: any, cloudItem: any): boolean => {
+    const localLooksLikeOrder = 'paymentStatus' in localItem || 'status' in localItem || 'items' in localItem;
+    const cloudLooksLikeOrder = 'paymentStatus' in cloudItem || 'status' in cloudItem || 'items' in cloudItem;
+    if (!localLooksLikeOrder || !cloudLooksLikeOrder) return false;
+
+    if (localItem.stockDeducted && !cloudItem.stockDeducted) return true;
+    if (localItem.clearedAt && !cloudItem.clearedAt) return true;
+
+    const localStatusRank = getOrderStatusRank(localItem.status);
+    const cloudStatusRank = getOrderStatusRank(cloudItem.status);
+    if (localStatusRank > cloudStatusRank && ['completed', 'cancelled'].includes(localItem.status)) {
+      return true;
+    }
+
+    const localPaymentRank = getPaymentRank(localItem.paymentStatus);
+    const cloudPaymentRank = getPaymentRank(cloudItem.paymentStatus);
+    if (localPaymentRank > cloudPaymentRank) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const shouldUseCloudItem = <T extends { id?: string }>(localItem: T, cloudItem: T): boolean => {
+    if (isOrderStateRegression(localItem, cloudItem)) {
+      return false;
+    }
+
+    return getSyncVersion(cloudItem) >= getSyncVersion(localItem);
   };
 
   useEffect(() => {
