@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import ShiftHandoverModule from './ShiftHandover';
@@ -10,23 +10,8 @@ const ManagerDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'handover' | 'expenseRecords' | 'orderHistory' | 'financialReports'>('dashboard');
   
   // ✅ 使用 DataManager 获取订单数据
-  const [allOrders, setAllOrders] = useState<any[]>(() => {
-    const orders = dataManager.getData('orders');
-    console.log('✅ ManagerDashboard 初始化加载订单:', orders.length, '个');
-    return orders;
-  });
+  const [allOrders] = useState<any[]>(() => dataManager.getData('orders'));
   
-  // 🔄 实时监听 DataManager 订单变化
-  useEffect(() => {
-    const unsubscribe = dataManager.subscribe('orders', (newOrders) => {
-      setAllOrders(newOrders);
-      console.log('🔄 ManagerDashboard 订单已更新:', newOrders.length, '个');
-    });
-    
-    return () => unsubscribe();
-  }, []);
-  
-  // 订单搜索和过滤状态
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('today');

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { dataService } from '../../services/DataService';
 import { dataManager } from '../../services/dataManager';
 import { getPointsExchangeRate } from '../../utils/exchangeRate';
+import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 
 interface Customer {
   id: string;
@@ -31,9 +31,35 @@ interface PointsTransaction {
   createdAt: string;
 }
 
+const getScopedStorageKey = (collectionName: string): string => {
+  try {
+    const userStr = localStorage.getItem('current_user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    return user?.storeId ? `store_${user.storeId}_${collectionName}` : collectionName;
+  } catch {
+    return collectionName;
+  }
+};
+
+const loadLocalPointsTransactions = (): PointsTransaction[] => {
+  const scopedKey = getScopedStorageKey('points_transactions');
+  const saved = localStorage.getItem(scopedKey) || localStorage.getItem('points_transactions');
+  if (!saved) return [];
+  try {
+    return JSON.parse(saved);
+  } catch {
+    return [];
+  }
+};
+
+const saveLocalPointsTransactions = (records: PointsTransaction[]) => {
+  localStorage.setItem(getScopedStorageKey('points_transactions'), JSON.stringify(records));
+  localStorage.setItem('points_transactions', JSON.stringify(records));
+};
+
 const CustomersModule: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>(() => dataManager.getData('customers'));
-  const [transactions, setTransactions] = useState<PointsTransaction[]>([]);
+  const [transactions, setTransactions] = useState<PointsTransaction[]>(() => loadLocalPointsTransactions());
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'points' | 'totalSpent' | 'visitCount' | 'lastVisit'>('lastVisit');
   
@@ -56,35 +82,39 @@ const CustomersModule: React.FC = () => {
   });
   const [pointsAmount, setPointsAmount] = useState<number>(0);
   const [redeemAmount, setRedeemAmount] = useState<number>(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   
   // 使用全局积分兑换率
   const pointsExchangeRate = getPointsExchangeRate();
 
   // 🔄 实时监听客户数据变化
-  useEffect(() => {
-    console.log('👥 客户管理 - 初始化数据监听');
-    
-    const unsubscribe = dataManager.subscribe('customers', (newCustomers) => {
-      console.log('🔄 客户管理：客户数据已更新', newCustomers.length, '条');
-      setCustomers(newCustomers);
-    });
+  const refreshCustomerData = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudCustomers, cloudTransactions] = await Promise.all([
+        smartGetDocuments('customers', true),
+        smartGetDocuments('points_transactions', true),
+      ]);
 
-    return () => unsubscribe();
-  }, []);
-
-  // 加载积分交易记录
-  useEffect(() => {
-    const saved = localStorage.getItem('points_transactions');
-    if (saved) {
-      try {
-        setTransactions(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to parse transactions:', e);
-      }
+      await dataManager.saveData('customers', cloudCustomers, { syncFirestore: false, notify: false });
+      dataManager.clearCache('customers');
+      setCustomers(cloudCustomers);
+      setTransactions(cloudTransactions as PointsTransaction[]);
+      saveLocalPointsTransactions(cloudTransactions as PointsTransaction[]);
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u5ba2\u6237\u6570\u636e\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u5ba2\u6237\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
     }
   }, []);
 
-  // 过滤和排序客户
+  useEffect(() => {
+    refreshCustomerData();
+  }, [refreshCustomerData]);
+
   const filteredCustomers = customers
     .filter(c => 
       c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -134,7 +164,7 @@ const CustomersModule: React.FC = () => {
   };
 
   // 添加客户
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
     if (!formData.name.trim()) {
       alert('请输入客户姓名');
       return;
@@ -179,7 +209,7 @@ const CustomersModule: React.FC = () => {
     setShowEditModal(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!selectedCustomer) return;
 
     const updatedCustomer = {
@@ -195,7 +225,11 @@ const CustomersModule: React.FC = () => {
       }
     };
 
-    dataManager.updateData('customers', selectedCustomer.id, updatedCustomer);
+    const nextCustomers = customers.map(customer =>
+      customer.id === selectedCustomer.id ? updatedCustomer : customer
+    );
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers);
     setShowEditModal(false);
     setSelectedCustomer(null);
     setFormData({ name: '', phone: '', notes: '', whatsapp: '', facebook: '', instagram: '', telegram: '' });
@@ -203,10 +237,13 @@ const CustomersModule: React.FC = () => {
   };
 
   // 删除客户
-  const handleDeleteCustomer = (customerId: string) => {
+  const handleDeleteCustomer = async (customerId: string) => {
     if (!window.confirm('确定要删除这个客户吗？此操作不可恢复！')) return;
 
-    dataManager.deleteData('customers', customerId);
+    const nextCustomers = customers.filter(customer => customer.id !== customerId);
+    setCustomers(nextCustomers);
+    await smartDeleteDocument('customers', customerId);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     alert('✅ 客户已删除');
   };
 
@@ -217,7 +254,7 @@ const CustomersModule: React.FC = () => {
     setShowPointsModal(true);
   };
 
-  const handleAddPoints = () => {
+  const handleAddPoints = async () => {
     if (!selectedCustomer || pointsAmount <= 0) {
       alert('请输入有效的积分数量');
       return;
@@ -228,7 +265,11 @@ const CustomersModule: React.FC = () => {
       points: selectedCustomer.points + pointsAmount
     };
 
-    dataManager.updateData('customers', selectedCustomer.id, updatedCustomer);
+    const nextCustomers = customers.map(customer =>
+      customer.id === selectedCustomer.id ? updatedCustomer : customer
+    );
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -242,7 +283,8 @@ const CustomersModule: React.FC = () => {
 
     const updatedTransactions = [...transactions, transaction];
     setTransactions(updatedTransactions);
-    dataService.saveData('points_transactions', updatedTransactions);
+    saveLocalPointsTransactions(updatedTransactions);
+    await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowPointsModal(false);
     setSelectedCustomer(null);
@@ -257,7 +299,7 @@ const CustomersModule: React.FC = () => {
     setShowRedeemModal(true);
   };
 
-  const handleConfirmRedeem = () => {
+  const handleConfirmRedeem = async () => {
     if (!selectedCustomer || redeemAmount <= 0) {
       alert('请输入有效的兑换积分');
       return;
@@ -274,7 +316,11 @@ const CustomersModule: React.FC = () => {
       points: selectedCustomer.points - redeemAmount
     };
 
-    dataManager.updateData('customers', selectedCustomer.id, updatedCustomer);
+    const nextCustomers = customers.map(customer =>
+      customer.id === selectedCustomer.id ? updatedCustomer : customer
+    );
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -288,7 +334,8 @@ const CustomersModule: React.FC = () => {
 
     const updatedTransactions = [...transactions, transaction];
     setTransactions(updatedTransactions);
-    dataService.saveData('points_transactions', updatedTransactions);
+    saveLocalPointsTransactions(updatedTransactions);
+    await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowRedeemModal(false);
     setSelectedCustomer(null);
@@ -297,10 +344,14 @@ const CustomersModule: React.FC = () => {
   };
 
   // 重置积分
-  const handleResetPoints = (customerId: string) => {
+  const handleResetPoints = async (customerId: string) => {
     if (!window.confirm('确定要重置这个客户的积分吗？')) return;
 
-    dataManager.updateData('customers', customerId, { points: 0 });
+    const nextCustomers = customers.map(customer =>
+      customer.id === customerId ? { ...customer, points: 0 } : customer
+    );
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers);
     alert('✅ 积分已重置为 0');
   };
 
@@ -472,9 +523,26 @@ const CustomersModule: React.FC = () => {
       {/* 头部 */}
       <div style={styles.header}>
         <h1 style={styles.title}>👥 客户管理</h1>
-        <button onClick={() => setShowAddModal(true)} style={styles.btn('#3b82f6', 'white')}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshCustomerData}
+            disabled={isRefreshing}
+            style={{
+              ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1', 'white'),
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+          </button>
+                  <button onClick={() => setShowAddModal(true)} style={styles.btn('#3b82f6', 'white')}>
           ➕ 添加客户
         </button>
+        </div>
       </div>
 
       {/* 统计卡片 */}

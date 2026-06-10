@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { dataService } from '../../services/DataService';
+import { dataManager } from '../../services/dataManager';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
-import { smartGetDocuments } from '../../services/smartSyncService';
+import { smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
 
 interface CashCount {
   [key: string]: number;
 }
 
 interface HistoryRecord {
+  id?: string;
   t: string; // 时间
   u: string; // 美金总额
   n: string; // 科多巴总额
@@ -57,34 +58,36 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     const saved = localStorage.getItem('rest_v6_final');
     return saved ? JSON.parse(saved) : [];
   });
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   
   // 一次性读取交班记录，避免低频页面长期监听 Firestore
-  useEffect(() => {
-    let cancelled = false;
+  const refreshHandovers = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const cloudRecords = await smartGetDocuments('handovers', true);
+      const normalizedRecords = cloudRecords.map((record: any) => ({
+        ...record,
+        id: record.id || ('handover-' + Date.now() + '-' + Math.random().toString(36).slice(2)),
+      })) as HistoryRecord[];
 
-    const loadHandovers = async () => {
-      try {
-        const cloudRecords = await smartGetDocuments('handovers');
-        if (!cancelled && cloudRecords.length > 0) {
-          setHistory(cloudRecords as HistoryRecord[]);
-        }
-      } catch (error) {
-        console.error('加载交班记录失败:', error);
+      if (normalizedRecords.length > 0) {
+        setHistory(normalizedRecords);
+        await dataManager.saveData('handovers', normalizedRecords, { syncFirestore: false, notify: false });
       }
-    };
-
-    loadHandovers();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-    // 🔥 同步交班记录到 Firestore（批量）
-  useEffect(() => {
-    if (history.length > 0) {
-      dataService.saveData('handovers', history);
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
     }
-  }, [history]);
-  
+  }, []);
+
+  useEffect(() => {
+    refreshHandovers();
+  }, [refreshHandovers]);
+
   const [currentTime, setCurrentTime] = useState(new Date());
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
 
@@ -128,7 +131,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   };
 
   // 保存交班记录
-  const handleSave = () => {
+  const handleSave = async () => {
     if (usdTotal === 0 && nioTotal === 0) {
       alert('当前金额为0，未保存');
       return;
@@ -171,10 +174,15 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   };
 
   // 清空历史记录
-  const handleClear = () => {
+  const handleClear = async () => {
     if (window.confirm('清空所有历史记录？')) {
+      await Promise.all(history.map(record =>
+        record.id ? smartDeleteDocument('handovers', record.id) : Promise.resolve()
+      ));
       setHistory([]);
+      await dataManager.saveData('handovers', [], { syncFirestore: false, notify: false });
       localStorage.removeItem('rest_v6_final');
+      setLastSyncedAt(new Date());
     }
   };
 
@@ -488,6 +496,18 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
               <h3 style={{ margin: 0 }}>📊 历史记录</h3>
               <button style={styles.btnReset} onClick={resetInputs}>
                 🗑️ 清空输入
+              </button>
+              {lastSyncedAt && (
+                <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                  {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+                </span>
+              )}
+              <button
+                style={{ ...styles.btnReset, background: isRefreshing ? '#9ca3af' : '#6366f1' }}
+                onClick={refreshHandovers}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
               </button>
             </div>
             <button

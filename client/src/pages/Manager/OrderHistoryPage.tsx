@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { smartGetDocuments } from '../../services/smartSyncService';
 import { formatNicaraguaDate, formatNicaraguaDateTime, formatNicaraguaTime, toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
@@ -24,23 +25,30 @@ const OrderHistoryPage: React.FC = () => {
   };
 
   // ✅ 使用 DataManager 获取订单数据
-  const [allOrders, setAllOrders] = useState<any[]>(() => {
-    const orders = dataManager.getData('orders');
-    console.log('✅ OrderHistoryPage 初始化加载订单:', orders.length, '个');
-    return orders;
-  });
-  
-  // 🔄 实时监听 DataManager 订单变化
-  useEffect(() => {
-    const unsubscribe = dataManager.subscribe('orders', (newOrders) => {
-      setAllOrders(newOrders);
-      console.log('🔄 OrderHistoryPage 订单已更新:', newOrders.length, '个');
-    });
-    
-    return () => unsubscribe();
+  const [allOrders, setAllOrders] = useState<any[]>(() => dataManager.getData('orders'));
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const refreshOrderHistoryData = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const cloudOrders = await smartGetDocuments('pos_orders', true);
+      await dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false });
+      dataManager.clearCache('orders');
+      setAllOrders(cloudOrders);
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u5386\u53f2\u8ba2\u5355\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u5386\u53f2\u8ba2\u5355\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
-  
-  // 计算各环节耗时
+
+  useEffect(() => {
+    refreshOrderHistoryData();
+  }, [refreshOrderHistoryData]);
+
   const calculateStageDurations = (order: any) => {
     const durations: any = {};
     const createdAt = getTimestampFromValue(order.createdAt);
@@ -459,7 +467,22 @@ const OrderHistoryPage: React.FC = () => {
       {/* 头部 */}
       <div style={styles.header}>
         <h1 style={styles.title}>📜 历史订单</h1>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshOrderHistoryData}
+            disabled={isRefreshing}
+            style={{
+              ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1', 'white'),
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+          </button>
           <button
             onClick={handlePrintOrders}
             style={styles.btn('#3b82f6', 'white')}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
+import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
 interface ExpenseItem {
@@ -63,18 +64,39 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // ✅ 监听数据变化（确保与其他模块同步）
-  useEffect(() => {
-    const unsubscribe = dataManager.subscribe('expenses', (newData) => {
-      console.log('🔄 开支记录：收到数据更新通知');
-      setExpenses(newData);
-    });
-    
-    return () => unsubscribe();
+  const refreshExpenseData = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudExpenses, cloudCategories] = await Promise.all([
+        smartGetDocuments('expenses', true),
+        smartGetDocuments('expense_categories', true),
+      ]);
+
+      await dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false });
+      dataManager.clearCache('expenses');
+      setExpenses(cloudExpenses);
+
+      if (cloudCategories.length > 0) {
+        setCategories(cloudCategories);
+        localStorage.setItem('expense_categories', JSON.stringify(cloudCategories));
+      }
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u5f00\u652f\u8bb0\u5f55\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u5f00\u652f\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
 
-  // ✅ 保存类别到 DataService（会自动同步到 Firestore）
+  useEffect(() => {
+    refreshExpenseData();
+  }, [refreshExpenseData]);
+
   useEffect(() => {
     if (categories.length > 0) {
       dataService.saveData('expense_categories', categories);
@@ -82,7 +104,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   }, [categories]);
 
   // ✅ 添加开支 - 使用 dataManager 统一保存
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
       alert('请输入有效金额');
       return;
@@ -99,9 +121,9 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     };
 
     // ✅ 通过 dataManager 保存，自动触发所有订阅者
-    dataManager.addData('expenses', newExpense);
-    
-    console.log('✅ 开支记录已保存，并同步到财务系统');
+    const nextExpenses = [...expenses, newExpense];
+    setExpenses(nextExpenses);
+    await dataManager.saveData('expenses', nextExpenses);
 
     setFormData({
       categoryId: categories[0]?.id || '',
@@ -114,14 +136,15 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   };
 
   // ✅ 删除开支 - 使用 dataManager 统一保存
-  const handleDeleteExpense = (id: string) => {
-    if (window.confirm('确定要删除这条记录吗？')) {
-      dataManager.deleteData('expenses', id);
-      console.log('✅ 开支记录已删除，并同步到财务系统');
+  const handleDeleteExpense = async (id: string) => {
+    if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u6761\u8bb0\u5f55\u5417\uff1f')) {
+      const nextExpenses = expenses.filter(exp => exp.id !== id);
+      setExpenses(nextExpenses);
+      await smartDeleteDocument('expenses', id);
+      await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false, notify: false });
     }
   };
 
-  // 处理图片上传
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -152,40 +175,47 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   };
 
   // 添加类别
-  const handleAddCategory = () => {
+  const handleAddCategory = async () => {
     if (!newCategoryName.trim()) return;
     const newCat: ExpenseCategory = {
       id: `cat-${Date.now()}`,
       name: newCategoryName.trim(),
       code: newCategoryName.trim().toUpperCase().replace(/\s+/g, '_')
     };
-    setCategories([...categories, newCat]);
+    const nextCategories = [...categories, newCat];
+    setCategories(nextCategories);
+    await smartSetDocument('expense_categories', newCat.id, newCat);
+    localStorage.setItem('expense_categories', JSON.stringify(nextCategories));
     setNewCategoryName('');
   };
 
   // 删除类别
-  const handleDeleteCategory = (id: string) => {
+  const handleDeleteCategory = async (id: string) => {
     if (categories.length <= 1) {
       alert('至少保留一个开支类别');
       return;
     }
     if (window.confirm('删除类别后，相关记录的类别将失效，确定删除吗？')) {
-      setCategories(categories.filter(cat => cat.id !== id));
+      const nextCategories = categories.filter(cat => cat.id !== id);
+      setCategories(nextCategories);
+      await smartDeleteDocument('expense_categories', id);
+      localStorage.setItem('expense_categories', JSON.stringify(nextCategories));
     }
   };
 
   // 处理票据上传
   const handleReceiptUpload = (expenseId: string, file: File) => {
     const reader = new FileReader();
-    reader.onloadend = () => {
-      setExpenses(expenses.map(exp =>
+    reader.onloadend = async () => {
+      const updatedExpenses = expenses.map(exp =>
         exp.id === expenseId ? { ...exp, receipt: reader.result as string } : exp
-      ));
+      );
+      setExpenses(updatedExpenses);
+      await dataManager.saveData('expenses', updatedExpenses);
     };
     reader.readAsDataURL(file);
   };
 
-  // 过滤开支
   const filteredExpenses = expenses.filter(exp => {
     if (filterCategory !== 'all' && exp.categoryId !== filterCategory) return false;
     if (filterDate && exp.date !== filterDate) return false;
@@ -314,7 +344,22 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {!embedded && (
         <div style={styles.header}>
           <h1 style={styles.title}>📝 开支记录</h1>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {lastSyncedAt && (
+              <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              </span>
+            )}
+            <button
+              onClick={refreshExpenseData}
+              disabled={isRefreshing}
+              style={{
+                ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1', 'white'),
+                cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+            </button>
             <button
               onClick={() => setShowCategoryManager(!showCategoryManager)}
               style={styles.btn('#8b5cf6', 'white')}
