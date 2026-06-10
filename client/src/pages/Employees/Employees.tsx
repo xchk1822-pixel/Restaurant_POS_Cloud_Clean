@@ -124,7 +124,7 @@ const EmployeesModule: React.FC = () => {
         smartGetDocuments('cash_flow_records'),
       ]);
 
-      setEmployees(employeesData);
+      setEmployees(employeesData.filter((employee: any) => !employee?.isDeleted));
       setAttendanceRecords(attendanceData);
       setSalaryRecords(salaryData);
       setLoanRecords(loanData);

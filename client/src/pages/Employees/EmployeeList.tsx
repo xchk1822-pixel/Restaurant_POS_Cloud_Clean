@@ -95,22 +95,23 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     if (!window.confirm('确定要删除该员工吗？')) return;
     
     // 🔥 先计算更新后的数据
-    const updated = employees.filter(emp => emp.id !== id);
     const employee = employees.find(emp => emp.id === id);
     if (!employee) return;
+    const deletedEmployee = {
+      ...employee,
+      status: 'inactive' as const,
+      isDeleted: true,
+      deletedAt: Date.now(),
+    };
+    const updated = [...employees.filter(emp => emp.id !== id), deletedEmployee];
     
     // 🔥 先从 Firestore 删除
     try {
-      await smartUpdateDocument('employees', id, {
-        ...employee,
-        status: 'inactive',
-        isDeleted: true,
-        deletedAt: Date.now(),
-      });
+      await smartUpdateDocument('employees', id, deletedEmployee);
       console.log('✅ 已从 Firestore 删除员工:', id);
       
       // 删除成功后，更新本地状态
-      setEmployees(updated);
+      setEmployees(updated.filter((emp: any) => !emp?.isDeleted));
       saveData('employees', updated); // ✅ 保留 localStorage 保存
     } catch (error) {
       console.error('❌ 删除 Firestore 数据失败:', error);
