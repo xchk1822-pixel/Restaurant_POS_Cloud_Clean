@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>数据恢复工具</title>
+    <style>
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .key { font-weight: bold; color: #333; }
+        .count { color: #0066cc; font-size: 1.2em; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 5px; }
+        button:hover { background: #0052a3; }
+        .warning { background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 10px 0; }
+        .success { background: #d4edda; border: 1px solid #28a745; padding: 10px; margin: 10px 0; }
+        pre { background: #f5f5f5; padding: 10px; overflow: auto; max-height: 300px; }
+    </style>
+</head>
+<body>
+    <h1>🔧 数据恢复工具</h1>
+    
+    <div class="warning">
+        ⚠️ <strong>重要提示：</strong>这个页面会显示所有 localStorage 中的数据，帮助恢复丢失的数据。
+    </div>
+
+    <div class="section">
+        <h2>📊 当前数据存储状态</h2>
+        <div id="status"></div>
+    </div>
+
+    <div class="section">
+        <h2>🔍 检查可能的库存数据 Key</h2>
+        <button onclick="checkAllKeys()">检查所有 Keys</button>
+        <div id="keysResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>💾 数据迁移工具</h2>
+        <p>如果发现数据在其他 key 中，可以使用以下按钮迁移：</p>
+        <button onclick="migrateData('inventory_items', 'app_inventory_items')">迁移库存到 app_inventory_items</button>
+        <button onclick="migrateData('restaurant_menu_items', 'restaurant_menu_items')">检查菜单数据</button>
+        <button onclick="migrateData('fridges', 'app_fridges')">迁移冰箱到 app_fridges</button>
+        <button onclick="migrateData('fridge_inventory', 'app_fridge_inventory')">迁移冰箱库存</button>
+        <div id="migrateResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>📋 原始数据查看</h2>
+        <textarea id="rawData" rows="10" style="width: 100%;" placeholder="输入 key 名称查看数据"></textarea>
+        <br>
+        <button onclick="viewRawData()">查看数据</button>
+        <pre id="rawDataResult"></pre>
+    </div>
+
+    <script>
+        // 显示所有 keys
+        function showAllKeys() {
+            const keys = Object.keys(localStorage);
+            const result = document.getElementById('status');
+            
+            let html = `<p>总共 ${keys.length} 个 keys</p>`;
+            html += '<ul>';
+            
+            const importantKeys = [
+                'app_inventory_items',
+                'inventory_items',
+                'restaurant_menu_items',
+                'menu_items',
+                'app_fridges',
+                'fridges',
+                'app_fridge_inventory',
+                'fridge_inventory',
+                'pos_orders',
+                'pos_tables',
+                'pos_held_orders',
+                'cached_users',
+                'current_user'
+            ];
+            
+            importantKeys.forEach(key => {
+                const data = localStorage.getItem(key);
+                if (data) {
+                    try {
+                        const parsed = JSON.parse(data);
+                        const count = Array.isArray(parsed) ? parsed.length : 'object';
+                        html += `<li><span class="key">${key}</span>: <span class="count">${count} 条</span></li>`;
+                    } catch (e) {
+                        html += `<li><span class="key">${key}</span>: <span style="color:red">解析失败</span></li>`;
+                    }
+                } else {
+                    html += `<li><span class="key">${key}</span>: <span style="color:#999">不存在</span></li>`;
+                }
+            });
+            
+            html += '</ul>';
+            result.innerHTML = html;
+        }
+
+        // 检查所有包含特定关键词的 keys
+        function checkAllKeys() {
+            const keys = Object.keys(localStorage);
+            const result = document.getElementById('keysResult');
+            
+            let html = '<h3>所有包含 inventory/menu/fridge/order 的 keys:</h3><ul>';
+            
+            const filtered = keys.filter(k => 
+                k.includes('inventory') || 
+                k.includes('menu') || 
+                k.includes('fridge') ||
+                k.includes('order') ||
+                k.includes('table')
+            );
+            
+            if (filtered.length === 0) {
+                html += '<li style="color:red">没有找到相关数据！</li>';
+            } else {
+                filtered.forEach(key => {
+                    const data = localStorage.getItem(key);
+                    try {
+                        const parsed = JSON.parse(data);
+                        const count = Array.isArray(parsed) ? parsed.length : 'object';
+                        html += `<li><span class="key">${key}</span>: <span class="count">${count} 条</span> 
+                                <button onclick="copyKey('${key}')" style="padding:2px 8px;font-size:12px;">复制</button></li>`;
+                    } catch (e) {
+                        html += `<li><span class="key">${key}</span>: 解析失败</li>`;
+                    }
+                });
+            }
+            
+            html += '</ul>';
+            result.innerHTML = html;
+        }
+
+        // 迁移数据
+        function migrateData(fromKey, toKey) {
+            const result = document.getElementById('migrateResult');
+            const data = localStorage.getItem(fromKey);
+            
+            if (!data) {
+                result.innerHTML = `<div class="warning">❌ ${fromKey} 不存在</div>`;
+                return;
+            }
+            
+            try {
+                const parsed = JSON.parse(data);
+                localStorage.setItem(toKey, data);
+                result.innerHTML = `<div class="success">✅ 成功从 ${fromKey} 迁移到 ${toKey} (${Array.isArray(parsed) ? parsed.length : 'object'} 条)</div>`;
+                
+                // 刷新状态
+                showAllKeys();
+            } catch (e) {
+                result.innerHTML = `<div class="warning">❌ 迁移失败: ${e.message}</div>`;
+            }
+        }
+
+        // 查看原始数据
+        function viewRawData() {
+            const key = document.getElementById('rawData').value.trim();
+            const result = document.getElementById('rawDataResult');
+            
+            if (!key) {
+                result.textContent = '请输入 key 名称';
+                return;
+            }
+            
+            const data = localStorage.getItem(key);
+            if (!data) {
+                result.textContent = `${key} 不存在`;
+                return;
+            }
+            
+            try {
+                const parsed = JSON.parse(data);
+                result.textContent = JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                result.textContent = data;
+            }
+        }
+
+        // 复制 key 名称
+        function copyKey(key) {
+            navigator.clipboard.writeText(key).then(() => {
+                alert(`已复制: ${key}`);
+            });
+        }
+
+        // 页面加载时显示状态
+        window.onload = showAllKeys;
+    </script>
+</body>
+</html>

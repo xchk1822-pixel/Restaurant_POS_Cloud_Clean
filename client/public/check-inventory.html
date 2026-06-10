@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>库存数据检查</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            max-width: 900px; 
+            margin: 0 auto;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-top: 0; }
+        .status { 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .found { 
+            background: #d4edda; 
+            border-color: #28a745;
+            color: #155724;
+        }
+        .not-found { 
+            background: #f8d7da; 
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border-color: #17a2b8;
+            color: #0c5460;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 10px 5px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.success {
+            background: #28a745;
+        }
+        button.success:hover {
+            background: #218838;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow: auto;
+            max-height: 400px;
+            font-size: 12px;
+        }
+        .data-preview {
+            margin-top: 20px;
+        }
+        .count {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 库存数据检查工具</h1>
+        
+        <div id="results"></div>
+        
+        <div style="margin-top: 30px;">
+            <h3>🛠️ 操作</h3>
+            <button onclick="checkAllKeys()">🔄 重新检查所有 Key</button>
+            <button id="migrateBtn" onclick="migrateData()" class="success" style="display:none;">
+                ✅ 迁移数据到标准位置
+            </button>
+        </div>
+        
+        <div id="dataPreview" class="data-preview" style="display:none;">
+            <h3>📋 数据预览</h3>
+            <pre id="previewContent"></pre>
+        </div>
+    </div>
+
+    <script>
+        let foundKey = '';
+        let foundData = null;
+
+        function checkAllKeys() {
+            const resultsDiv = document.getElementById('results');
+            const migrateBtn = document.getElementById('migrateBtn');
+            const dataPreview = document.getElementById('dataPreview');
+            
+            // 重置
+            foundKey = '';
+            foundData = null;
+            migrateBtn.style.display = 'none';
+            dataPreview.style.display = 'none';
+            
+            const possibleKeys = [
+                'app_inventory_items',
+                'inventory_items',
+                'restaurant_inventory_items',
+                'pos_inventory',
+                'stock_items'
+            ];
+            
+            let html = '<h2>检查结果：</h2>';
+            let hasData = false;
+            
+            possibleKeys.forEach(key => {
+                const data = localStorage.getItem(key);
+                if (data) {
+                    try {
+                        const parsed = JSON.parse(data);
+                        const count = Array.isArray(parsed) ? parsed.length : 'object';
+                        
+                        html += `
+                            <div class="status found">
+                                <strong>✅ ${key}</strong><br>
+                                数据量: <span class="count">${count}</span> 条<br>
+                                <small>最后更新: ${new Date().toLocaleString()}</small>
+                            </div>
+                        `;
+                        
+                        // 记录第一个找到的数据
+                        if (!foundKey) {
+                            foundKey = key;
+                            foundData = parsed;
+                            hasData = true;
+                            
+                            // 显示预览
+                            dataPreview.style.display = 'block';
+                            document.getElementById('previewContent').textContent = 
+                                JSON.stringify(parsed.slice(0, 3), null, 2) + 
+                                (parsed.length > 3 ? `\n... 还有 ${parsed.length - 3} 条数据` : '');
+                        }
+                    } catch (e) {
+                        html += `
+                            <div class="status not-found">
+                                <strong>❌ ${key}</strong><br>
+                                解析失败: ${e.message}
+                            </div>
+                        `;
+                    }
+                } else {
+                    html += `
+                        <div class="status not-found">
+                            <strong>⚪ ${key}</strong><br>
+                            不存在
+                        </div>
+                    `;
+                }
+            });
+            
+            if (!hasData) {
+                html += `
+                    <div class="status info">
+                        <strong>⚠️ 未找到任何库存数据</strong><br>
+                        可能原因：<br>
+                        1. 使用了不同的浏览器<br>
+                        2. 之前清除了浏览器缓存<br>
+                        3. 使用了无痕/隐私模式<br>
+                        <br>
+                        建议：回想一下之前用哪个浏览器添加的库存数据
+                    </div>
+                `;
+            } else {
+                // 如果数据不在标准 key，显示迁移按钮
+                if (foundKey !== 'app_inventory_items') {
+                    migrateBtn.style.display = 'inline-block';
+                    html += `
+                        <div class="status info">
+                            <strong>💡 提示</strong><br>
+                            数据在 "${foundKey}" 中，点击绿色按钮迁移到标准位置
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="status found">
+                            <strong>✅ 数据已在标准位置</strong><br>
+                            不需要迁移
+                        </div>
+                    `;
+                }
+            }
+            
+            resultsDiv.innerHTML = html;
+        }
+
+        function migrateData() {
+            if (!foundKey || !foundData) {
+                alert('没有可迁移的数据');
+                return;
+            }
+            
+            try {
+                // 复制到标准 key
+                localStorage.setItem('app_inventory_items', JSON.stringify(foundData));
+                
+                alert(`✅ 成功迁移！\n\n从: ${foundKey}\n到: app_inventory_items\n数据量: ${foundData.length} 条\n\n请刷新主系统页面查看数据`);
+                
+                // 重新检查
+                checkAllKeys();
+            } catch (e) {
+                alert(`❌ 迁移失败: ${e.message}`);
+            }
+        }
+
+        // 页面加载时自动检查
+        window.onload = checkAllKeys;
+    </script>
+</body>
+</html>

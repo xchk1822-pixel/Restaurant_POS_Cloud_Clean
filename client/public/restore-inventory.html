@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>库存数据自动恢复</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            max-width: 900px; 
+            margin: 0 auto;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 { 
+            color: #333; 
+            margin-top: 0;
+            text-align: center;
+        }
+        .step {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            border-left: 5px solid #007bff;
+        }
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #007bff;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        button {
+            padding: 15px 30px;
+            margin: 10px 5px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 2px solid #17a2b8;
+            color: #0c5460;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow: auto;
+            max-height: 300px;
+            font-size: 13px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+        }
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 库存数据自动恢复工具</h1>
+        
+        <div class="stats" id="stats"></div>
+        
+        <div class="step">
+            <span class="step-number">1</span>
+            <strong>分析现有数据</strong>
+            <p>从冰箱库存和菜单中提取物品信息</p>
+            <button onclick="analyzeData()">🔍 开始分析</button>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">2</span>
+            <strong>生成库存物品</strong>
+            <p>根据分析结果创建库存物品列表</p>
+            <button onclick="generateInventory()" id="genBtn" disabled>✨ 生成库存数据</button>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">3</span>
+            <strong>验证恢复</strong>
+            <p>确认数据已正确保存</p>
+            <button onclick="verifyRecovery()" id="verifyBtn" disabled>✅ 验证恢复</button>
+        </div>
+        
+        <div id="result" class="result"></div>
+        
+        <div style="margin-top: 30px; text-align: center;">
+            <button onclick="window.location.href='/'" style="background: #007bff;">
+                🏠 返回主系统
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let extractedItems = [];
+        let analysisComplete = false;
+
+        function analyzeData() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '<p>⏳ 正在分析数据...</p>';
+            
+            try {
+                // 获取冰箱库存数据
+                const fridgeInventory = JSON.parse(localStorage.getItem('fridge_inventory') || '[]');
+                const appFridgeInventory = JSON.parse(localStorage.getItem('app_fridge_inventory') || '[]');
+                
+                // 合并所有冰箱库存
+                const allFridgeInv = [...fridgeInventory, ...appFridgeInventory];
+                
+                // 提取唯一的物品ID
+                const itemIds = [...new Set(allFridgeInv.map(item => item.itemId))];
+                
+                // 获取菜单数据
+                const menuItems = JSON.parse(localStorage.getItem('menu_items') || '[]');
+                const restaurantMenuItems = JSON.parse(localStorage.getItem('restaurant_menu_items') || '[]');
+                const allMenuItems = [...menuItems, ...restaurantMenuItems];
+                
+                // 从菜单中提取关联的库存ID
+                const linkedStockIds = [...new Set(
+                    allMenuItems
+                        .filter(m => m.stockItemId)
+                        .map(m => m.stockItemId)
+                )];
+                
+                // 合并所有物品ID
+                const allItemIds = [...new Set([...itemIds, ...linkedStockIds])];
+                
+                extractedItems = allItemIds.map((id, index) => ({
+                    id: id,
+                    barcode: id,
+                    name: `物品 ${index + 1}`,
+                    category: 'ingredient',
+                    unit: '个',
+                    currentStock: 0,
+                    minStock: 0,
+                    costPrice: 0,
+                    lastUpdated: new Date().toISOString()
+                }));
+                
+                // 显示统计
+                const statsDiv = document.getElementById('stats');
+                statsDiv.innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${allFridgeInv.length}</div>
+                        <div class="stat-label">冰箱库存记录</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${itemIds.length}</div>
+                        <div class="stat-label">唯一物品ID</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${allMenuItems.length}</div>
+                        <div class="stat-label">菜单项目</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${linkedStockIds.length}</div>
+                        <div class="stat-label">关联库存ID</div>
+                    </div>
+                `;
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <h3>✅ 分析完成！</h3>
+                    <p>发现 <strong>${allItemIds.length}</strong> 个物品ID</p>
+                    <p>其中：</p>
+                    <ul>
+                        <li>从冰箱库存提取：${itemIds.length} 个</li>
+                        <li>从菜单关联提取：${linkedStockIds.length} 个</li>
+                    </ul>
+                    <pre>${JSON.stringify(allItemIds.slice(0, 10), null, 2)}${allItemIds.length > 10 ? '\n... 还有更多' : ''}</pre>
+                `;
+                
+                analysisComplete = true;
+                document.getElementById('genBtn').disabled = false;
+                
+            } catch (e) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `<h3>❌ 分析失败</h3><p>${e.message}</p>`;
+            }
+        }
+
+        function generateInventory() {
+            if (!analysisComplete || extractedItems.length === 0) {
+                alert('请先完成数据分析');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '<p>⏳ 正在生成库存数据...</p>';
+            
+            try {
+                // 保存到标准位置
+                localStorage.setItem('app_inventory_items', JSON.stringify(extractedItems));
+                localStorage.setItem('inventory_items', JSON.stringify(extractedItems));
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <h3>✅ 库存数据生成成功！</h3>
+                    <p>已创建 <strong>${extractedItems.length}</strong> 个库存物品</p>
+                    <p>数据已保存到：</p>
+                    <ul>
+                        <li>app_inventory_items</li>
+                        <li>inventory_items</li>
+                    </ul>
+                    <p><strong>注意：</strong>这些是基础物品，你需要手动完善名称、价格等信息。</p>
+                `;
+                
+                document.getElementById('verifyBtn').disabled = false;
+                
+            } catch (e) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `<h3>❌ 生成失败</h3><p>${e.message}</p>`;
+            }
+        }
+
+        function verifyRecovery() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            
+            try {
+                const data = JSON.parse(localStorage.getItem('app_inventory_items') || '[]');
+                
+                if (data.length > 0) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ 验证成功！</h3>
+                        <p>库存数据已正确保存</p>
+                        <p>物品数量：${data.length}</p>
+                        <p>现在可以返回主系统查看数据了！</p>
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = '<h3>❌ 验证失败</h3><p>没有找到库存数据</p>';
+                }
+            } catch (e) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `<h3>❌ 验证失败</h3><p>${e.message}</p>`;
+            }
+        }
+
+        // 页面加载时自动分析
+        window.onload = analyzeData;
+    </script>
+</body>
+</html>

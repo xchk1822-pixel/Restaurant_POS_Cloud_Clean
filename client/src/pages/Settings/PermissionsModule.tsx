@@ -1,0 +1,582 @@
+import React, { useState, useEffect } from 'react';
+import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSetDocument } from '../../services/smartSyncService';
+import { DEFAULT_ROLE_PERMISSIONS } from '../../utils/permissions';
+
+interface PermissionNode {
+  id: string;
+  name: string;
+  icon: string;
+  children?: PermissionNode[];
+}
+
+const PERMISSION_TREE: PermissionNode[] = [
+  { id: 'dashboard', name: '老板仪表板', icon: '📊' },
+  { id: 'pos', name: 'POS收银台', icon: '💰' },
+  { id: 'waiter', name: '服务生点餐', icon: '🍽️' },
+  { id: 'kitchen', name: '厨房显示', icon: '🍳' },
+  {
+    id: 'inventory', name: '库存管理', icon: '🏪',
+    children: [
+      { id: 'inventory:items', name: '物品管理', icon: '📋' },
+      { id: 'inventory:menu', name: '菜品管理', icon: '🍽️' },
+      { id: 'inventory:warehouse', name: '仓库盘点', icon: '🏪' },
+      { id: 'inventory:fridge', name: '冰箱盘点', icon: '🧊' },
+    ]
+  },
+  {
+    id: 'employees', name: '员工管理', icon: '👥',
+    children: [
+      { id: 'employees:profile', name: '员工档案', icon: '👤' },
+      { id: 'employees:attendance', name: '考勤管理', icon: '📅' },
+      { id: 'employees:loans', name: '借款管理', icon: '💸' },
+      { id: 'employees:salary', name: '薪资结算', icon: '💰' },
+    ]
+  },
+  {
+    id: 'manager', name: '店长管理', icon: '🏢',
+    children: [
+      { id: 'manager:expenses', name: '开支记录', icon: '💸' },
+      { id: 'manager:handover', name: '交班对账', icon: '🔄' },
+      { id: 'manager:orders', name: '历史订单', icon: '📋' },
+      { id: 'manager:reports', name: '财务报表', icon: '📈' },
+      { id: 'manager:overview', name: '数据概览', icon: '📊' },
+      { id: 'manager:customers', name: '客户管理', icon: '🤝' },
+    ]
+  },
+  {
+    id: 'settings', name: '系统设置', icon: '⚙️',
+    children: [
+      { id: 'settings:stores', name: '分店管理', icon: '🏪' },
+      { id: 'settings:exchange', name: '汇率设置', icon: '💱' },
+      { id: 'settings:permissions', name: '权限管理', icon: '🔐' },
+    ]
+  },
+  { id: 'reports', name: '报表中心', icon: '📈' }
+];
+
+interface Role {
+  id: string;
+  name: string;
+  description: string;
+  permissions: string[];
+  color: string;
+  icon: string;
+}
+
+const CANONICAL_ROLES: Role[] = [
+  {
+    id: 'store_manager',
+    name: '店长',
+    description: '分店经营管理权限',
+    permissions: DEFAULT_ROLE_PERMISSIONS.store_manager,
+    color: '#2563eb',
+    icon: '🏢',
+  },
+  {
+    id: 'cashier',
+    name: '收银',
+    description: 'POS收银权限',
+    permissions: DEFAULT_ROLE_PERMISSIONS.cashier,
+    color: '#16a34a',
+    icon: '💰',
+  },
+  {
+    id: 'waiter',
+    name: '服务生',
+    description: '服务生点餐权限',
+    permissions: DEFAULT_ROLE_PERMISSIONS.waiter,
+    color: '#f59e0b',
+    icon: '🍽️',
+  },
+  {
+    id: 'chef',
+    name: '厨师',
+    description: '厨房显示权限',
+    permissions: DEFAULT_ROLE_PERMISSIONS.chef,
+    color: '#ef4444',
+    icon: '👨‍🍳',
+  },
+];
+
+const ROLE_ALIAS: Record<string, string> = {
+  store_manager: 'store_manager',
+  manager: 'store_manager',
+  店长: 'store_manager',
+  cashier: 'cashier',
+  收银: 'cashier',
+  waiter: 'waiter',
+  服务生: 'waiter',
+  chef: 'chef',
+  厨师: 'chef',
+};
+
+const getCanonicalRoleId = (role: any): string | null => {
+  const candidates = [role?.id, role?.name].map(value => String(value || '').trim());
+  for (const candidate of candidates) {
+    if (ROLE_ALIAS[candidate]) return ROLE_ALIAS[candidate];
+    const lower = candidate.toLowerCase();
+    if (ROLE_ALIAS[lower]) return ROLE_ALIAS[lower];
+  }
+  return null;
+};
+
+const normalizeRoles = (cloudRoles: any[]): Role[] => {
+  return CANONICAL_ROLES.map(defaultRole => {
+    const matched = cloudRoles.find(role => getCanonicalRoleId(role) === defaultRole.id);
+    return {
+      ...defaultRole,
+      permissions: Array.isArray(matched?.permissions) && matched.permissions.length > 0
+        ? matched.permissions
+        : defaultRole.permissions,
+    };
+  });
+};
+
+const ALL_PERMISSION_IDS: string[] = [];
+const collectIds = (nodes: PermissionNode[]) => {
+  nodes.forEach(n => {
+    ALL_PERMISSION_IDS.push(n.id);
+    if (n.children) collectIds(n.children);
+  });
+};
+collectIds(PERMISSION_TREE);
+
+const findNode = (nodes: PermissionNode[], id: string): PermissionNode | null => {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children) {
+      const found = findNode(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+const PermissionsModule: React.FC = () => {
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [selectedRoleId, setSelectedRoleId] = useState<string>('');
+  const [showForm, setShowForm] = useState(false);
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
+    new Set(['inventory', 'employees', 'manager', 'settings'])
+  );
+
+  const [formName, setFormName] = useState('');
+  const [formDesc, setFormDesc] = useState('');
+  const [formIcon, setFormIcon] = useState('👤');
+  const [formColor, setFormColor] = useState('#3b82f6');
+  const [formPerms, setFormPerms] = useState<string[]>([]);
+
+  useEffect(() => {
+    console.log('🔍 初始化角色数据监听...');
+    
+    // 🔥 实时监听 Firestore 角色数据
+    const unsubscribe = smartSubscribeToCollection('system_roles', (cloudRoles) => {
+      console.log('📡 Firestore 角色数据更新:', cloudRoles.length, '个');
+      const normalized = normalizeRoles(cloudRoles);
+      localStorage.setItem('system_roles', JSON.stringify(normalized));
+      setRoles(normalized);
+    });
+    
+    return () => {
+      unsubscribe();
+      console.log('⚠️ 停止角色数据监听');
+    };
+  }, []);
+
+
+  const saveRoles = async (updated: Role[]) => {
+    // 🔥 不再直接保存，而是通过智能同步服务
+    // 实时监听会自动更新状态
+    console.log('✅ 角色数据已自动同步到云端');
+  };
+
+  const togglePerm = (permId: string) => {
+    console.log('🔘 切换权限:', permId);
+    
+    setFormPerms(prev => {
+      const isChecked = prev.includes(permId);
+      console.log('  当前状态:', isChecked ? '已勾选' : '未勾选');
+      
+      let next: string[];
+      
+      if (!isChecked) {
+        // ✅ 勾选：添加该节点及其所有子节点
+        next = [...prev];
+        
+        const addNodeAndChildren = (nodeId: string) => {
+          if (!next.includes(nodeId)) {
+            next.push(nodeId);
+            console.log('    ➕ 添加:', nodeId);
+          }
+          const node = findNode(PERMISSION_TREE, nodeId);
+          if (node && node.children) {
+            node.children.forEach(child => addNodeAndChildren(child.id));
+          }
+        };
+        addNodeAndChildren(permId);
+
+        // ✅ 检查父节点是否应该自动勾选（所有子节点都已勾选）
+        let currentNode = permId;
+        while (true) {
+          const parent = PERMISSION_TREE.find(n => n.children && n.children.some(c => c.id === currentNode));
+          if (!parent) break;
+          
+          const allChildrenChecked = parent.children!.every(c => next.includes(c.id));
+          if (allChildrenChecked && !next.includes(parent.id)) {
+            next.push(parent.id);
+            console.log('    ➕ 自动添加父节点:', parent.id);
+          }
+          currentNode = parent.id;
+        }
+      } else {
+        // ❌ 取消勾选：移除该节点及其所有子节点
+        next = prev.filter(id => id !== permId);
+        console.log('    ➖ 移除:', permId);
+        
+        const removeNodeAndChildren = (nodeId: string) => {
+          const node = findNode(PERMISSION_TREE, nodeId);
+          if (node && node.children) {
+            node.children.forEach(child => {
+              const idx = next.indexOf(child.id);
+              if (idx >= 0) {
+                next.splice(idx, 1);
+                console.log('    ➖ 移除子节点:', child.id);
+              }
+            });
+          }
+        };
+        removeNodeAndChildren(permId);
+
+        // ❌ 取消父节点
+        let currentNode = permId;
+        while (true) {
+          const parent = PERMISSION_TREE.find(n => n.children && n.children.some(c => c.id === currentNode));
+          if (!parent) break;
+          
+          const idx = next.indexOf(parent.id);
+          if (idx >= 0) {
+            next.splice(idx, 1);
+            console.log('    ➖ 移除父节点:', parent.id);
+          }
+          
+          currentNode = parent.id;
+        }
+      }
+
+      console.log('  新的权限列表:', next);
+      return next;
+    });
+  };
+
+  const handleNewRole = () => {
+    setEditingRoleId(null);
+    setSelectedRoleId('');
+    setFormName('');
+    setFormDesc('');
+    setFormIcon('👤');
+    setFormColor('#3b82f6');
+    setFormPerms([]);
+    setShowForm(true);
+  };
+
+  const handleSelectRole = (role: Role) => {
+    console.log('📝 选择角色进行编辑:', role.id, role.name);
+    setSelectedRoleId(role.id);
+    setEditingRoleId(role.id); // ✅ 确保设置 editingRoleId
+    setFormName(role.name);
+    setFormDesc(role.description);
+    setFormIcon(role.icon);
+    setFormColor(role.color);
+    setFormPerms([...role.permissions]);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!formName.trim()) { 
+      alert('请输入角色名称'); 
+      return; 
+    }
+
+    const roleData: Role = {
+      id: editingRoleId || `role-${Date.now()}`,
+      name: formName.trim(),
+      description: formDesc.trim(),
+      icon: formIcon,
+      color: formColor,
+      permissions: formPerms,
+    };
+
+    console.log('💾 保存角色数据:', {
+      editingRoleId,
+      isNew: !editingRoleId,
+      roleData
+    });
+
+    try {
+      let newRoles: Role[];
+      
+      if (editingRoleId) {
+        // ✅ 更新现有角色
+        console.log('🔄 更新角色:', editingRoleId);
+        newRoles = roles.map(r => r.id === editingRoleId ? roleData : r);
+      } else {
+        // ✅ 创建新角色
+        console.log('➕ 创建新角色');
+        alert('角色已固定为店长、收银、服务生、厨师，请选择已有角色修改权限。');
+        return;
+      }
+      
+      // ✅ 保存到 localStorage
+      localStorage.setItem('system_roles', JSON.stringify(newRoles));
+      setRoles(newRoles);
+      
+      // 🔥 同步到 Firestore（使用智能同步服务）
+      try {
+        if (editingRoleId) {
+          // 更新现有角色
+          await smartUpdateDocument('system_roles', editingRoleId, roleData);
+          console.log('✅ 已更新角色到 Firestore:', editingRoleId);
+        } else {
+          // 创建新角色
+          const newId = `role-${Date.now()}`;
+          await smartAddDocument('system_roles', { ...roleData, id: newId });
+          console.log('✅ 已创建角色到 Firestore:', newId);
+        }
+      } catch (error) {
+        console.error('❌ 同步角色到 Firestore 失败:', error);
+      }
+      
+      console.log('✅ 保存成功，共', newRoles.length, '个角色');
+      
+      setShowForm(false);
+      setEditingRoleId(null);
+      setSelectedRoleId('');
+    } catch (error) {
+      console.error('❌ 保存失败:', error);
+      alert('❌ 保存失败: ' + (error as Error).message);
+    }
+  };
+
+  const handleDelete = async (roleId: string) => {
+    if (!window.confirm('确定删除该角色？')) return;
+    
+    try {
+      // ✅ 从 localStorage 删除
+      const newRoles = roles.filter(r => r.id !== roleId);
+      localStorage.setItem('system_roles', JSON.stringify(newRoles));
+      setRoles(newRoles);
+      
+      // 🔥 从 Firestore 删除
+      try {
+        const { db } = await import('../../firebase');
+        const { doc, deleteDoc } = await import('firebase/firestore');
+        
+        const roleRef = doc(db, 'system_roles', roleId);
+        await deleteDoc(roleRef);
+        
+        console.log('✅ 已从 Firestore 删除角色');
+      } catch (error) {
+        console.error('❌ 从 Firestore 删除角色失败:', error);
+      }
+      
+      console.log('✅ 角色已删除，剩余', newRoles.length, '个角色');
+      alert('✅ 角色已删除');
+      
+      if (selectedRoleId === roleId) {
+        setSelectedRoleId('');
+        setShowForm(false);
+      }
+    } catch (error) {
+      console.error('❌ 删除失败:', error);
+      alert('❌ 删除失败，请重试');
+    }
+  };
+
+  const toggleExpand = (nodeId: string) => {
+    setExpandedNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+      return next;
+    });
+  };
+
+  const renderTree = (nodes: PermissionNode[], level: number) => {
+    return nodes.map(node => {
+      const hasChild = !!(node.children && node.children.length > 0);
+      const isExpanded = expandedNodes.has(node.id);
+      const isChecked = formPerms.includes(node.id);
+
+      return (
+        <div key={node.id} style={{ marginBottom: '0.25rem' }}>
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              padding: level === 0 ? '0.5rem 0.75rem' : '0.4rem 0.75rem 0.4rem 2.5rem',
+              backgroundColor: level === 0 ? '#f9fafb' : 'transparent',
+              borderRadius: '0.375rem',
+              cursor: hasChild ? 'pointer' : 'default',
+              userSelect: 'none',
+            }}
+            onClick={() => hasChild && toggleExpand(node.id)}
+          >
+            {hasChild ? (
+              <span style={{ fontSize: '0.7rem', color: '#9ca3af', width: '0.8rem' }}>{isExpanded ? '▼' : '▶'}</span>
+            ) : (
+              <span style={{ width: '0.8rem' }} />
+            )}
+            <input
+              type="checkbox"
+              checked={isChecked}
+              onChange={() => togglePerm(node.id)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+            />
+            <span style={{ fontSize: '1.1rem' }}>{node.icon}</span>
+            <span style={{ fontWeight: level === 0 ? 600 : 400, fontSize: '0.875rem', color: '#374151' }}>
+              {node.name}
+            </span>
+          </div>
+          {hasChild && isExpanded && (
+            <div>{renderTree(node.children!, level + 1)}</div>
+          )}
+        </div>
+      );
+    });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.5rem', background: '#f3f4f6' }}>
+      {/* 头部 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0 }}>
+        <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>🔐 权限管理</h1>
+        <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+          固定角色：店长 / 收银 / 服务生 / 厨师
+        </div>
+      </div>
+
+      {/* 主体：左侧角色列表 + 右侧权限配置 */}
+      <div style={{ display: 'flex', gap: '1.5rem', flex: 1, overflow: 'hidden' }}>
+        {/* 左侧 */}
+        <div style={{ width: '280px', flexShrink: 0, background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e5e7eb', fontWeight: 600, fontSize: '0.9rem' }}>
+            角色列表 ({roles.length})
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
+            {roles.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
+                暂无角色数据，点击“添加角色”开始创建
+              </div>
+            )}
+            {roles.map(role => (
+              <div
+                key={role.id}
+                onClick={() => handleSelectRole(role)}
+                style={{
+                  padding: '0.75rem',
+                  marginBottom: '0.5rem',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  border: selectedRoleId === role.id ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                  borderLeftWidth: '4px',
+                  borderLeftStyle: 'solid',
+                  borderLeftColor: role.color,
+                  backgroundColor: selectedRoleId === role.id ? '#eff6ff' : 'white',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                  <span style={{ fontSize: '1.25rem' }}>{role.icon}</span>
+                  <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{role.name}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{role.description}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '0.15rem 0.5rem', borderRadius: '9999px' }}>
+                    {role.permissions.length} 项
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 右侧 */}
+        <div style={{ flex: 1, background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {!showForm ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>👈</div>
+                <div style={{ fontSize: '1rem' }}>请点击左侧角色或添加新角色</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* 表单区 */}
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <span style={{ fontWeight: 600, fontSize: '1rem' }}>
+                    {editingRoleId ? `编辑: ${formName}` : '添加新角色'}
+                  </span>
+                  {false && editingRoleId && (
+                    <button
+                      onClick={() => handleDelete(editingRoleId!)}
+                      style={{ padding: '0.35rem 0.75rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.8rem' }}
+                    >
+                      🗑️ 删除
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 50px', gap: '0.75rem', alignItems: 'end' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>角色名称 *</label>
+                    <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="例如：服务员" style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>描述</label>
+                    <input value={formDesc} onChange={e => setFormDesc(e.target.value)} placeholder="角色职责" style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>图标</label>
+                    <input value={formIcon} onChange={e => setFormIcon(e.target.value)} style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem', textAlign: 'center' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>色</label>
+                    <input type="color" value={formColor} onChange={e => setFormColor(e.target.value)} style={{ width: '100%', height: '2rem', padding: 0, border: '1px solid #d1d5db', borderRadius: '0.25rem', cursor: 'pointer' }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* 权限树 */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.5rem' }}>
+                {renderTree(PERMISSION_TREE, 0)}
+              </div>
+
+              {/* 底部按钮 */}
+              <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                  已选 {formPerms.length} 项权限
+                </span>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => { setShowForm(false); setSelectedRoleId(''); setEditingRoleId(null); }}
+                    style={{ padding: '0.5rem 1rem', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    style={{ padding: '0.5rem 1.5rem', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                  >
+                    💾 保存
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PermissionsModule;
