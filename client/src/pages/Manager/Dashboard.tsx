@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
@@ -137,48 +138,39 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     categoryPreference: [],
   });
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  // 🔄 实时监听数据变化
-  useEffect(() => {
-    console.log('📊 数据概览 - 初始化数据监听');
-    dataManager.clearCache('orders');
-    setOrders(dataManager.getData('orders'));
-    setDataVersion(version => version + 1);
+  const refreshManagerData = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudOrders, cloudExpenses, cloudPurchases] = await Promise.all([
+        smartGetDocuments('pos_orders', true),
+        smartGetDocuments('expenses', true),
+        smartGetDocuments('purchase_orders', true),
+      ]);
 
-    // 监听订单变化
-    const unsubscribeOrders = dataManager.subscribe('orders', (newOrders) => {
-      console.log('🔄 数据概览：订单数据已更新', newOrders.length, '条');
-      setOrders(newOrders);
-      setDataVersion(version => version + 1);
-    });
+      await Promise.all([
+        dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false }),
+        dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false }),
+        dataManager.saveData('purchases', cloudPurchases, { syncFirestore: false, notify: false }),
+      ]);
 
-    // 监听开支变化
-    const unsubscribeExpenses = dataManager.subscribe('expenses', () => {
-      console.log('🔄 数据概览：开支数据已更新');
-      setDataVersion(version => version + 1);
-    });
-
-    // 监听采购变化
-    const unsubscribePurchases = dataManager.subscribe('purchases', () => {
-      console.log('🔄 数据概览：采购数据已更新');
-      setDataVersion(version => version + 1);
-    });
-
-    const handleDataSynced = () => {
       dataManager.clearCache();
-      setOrders(dataManager.getData('orders'));
+      setOrders(cloudOrders);
       setDataVersion(version => version + 1);
-    };
-    window.addEventListener('dataSynced', handleDataSynced);
-
-    // 组件卸载时取消订阅
-    return () => {
-      unsubscribeOrders();
-      unsubscribeExpenses();
-      unsubscribePurchases();
-      window.removeEventListener('dataSynced', handleDataSynced);
-    };
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u5e97\u957f\u6570\u636e\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u5e97\u957f\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshManagerData();
+  }, [refreshManagerData]);
 
   const loadDashboardData = React.useCallback(() => {
     try {
@@ -204,7 +196,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
 
       const startStr = getLocalDateString(start); // 🔥 使用本地时间
       const endStr = getLocalDateString(end); // 🔥 使用本地时间
-      const dashboardOrders = propOrders || getStoreOrdersDirect();
+      const dashboardOrders = propOrders || orders || getStoreOrdersDirect();
 
       console.log('📊 加载数据概览:', { timeRange, startStr, endStr, 订单总数: dashboardOrders.length });
 
@@ -770,19 +762,26 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             </>
           )}
 
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+
           <button
-            onClick={loadDashboardData}
+            onClick={refreshManagerData}
+            disabled={isRefreshing}
             style={{
               padding: '0.6rem 1.2rem',
-              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              background: isRefreshing ? '#9ca3af' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
               color: 'white',
               border: 'none',
               borderRadius: '0.5rem',
-              cursor: 'pointer',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
               fontWeight: '600',
             }}
           >
-            🔄 刷新
+            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
           </button>
         </div>
       </div>

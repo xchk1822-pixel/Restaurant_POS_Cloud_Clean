@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
@@ -45,47 +46,41 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
   const loading = false;
   const [dataVersion, setDataVersion] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  // 🔄 实时监听数据变化
-  useEffect(() => {
-    console.log('📊 财务报表 - 初始化数据监听');
+  // 低频管理数据：进入页面拉取一次云端数据，之后手动刷新
+  const refreshFinancialData = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const [cloudOrders, cloudExpenses, cloudPurchases] = await Promise.all([
+        smartGetDocuments('pos_orders', true),
+        smartGetDocuments('expenses', true),
+        smartGetDocuments('purchase_orders', true),
+      ]);
 
-    // 监听订单变化
-    const unsubscribeOrders = dataManager.subscribe('orders', (newOrders) => {
-      console.log('🔄 财务报表：订单数据已更新', newOrders.length, '条');
-      setOrders(newOrders);
-      setDataVersion(version => version + 1);
-    });
+      await Promise.all([
+        dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false }),
+        dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false }),
+        dataManager.saveData('purchases', cloudPurchases, { syncFirestore: false, notify: false }),
+      ]);
 
-    // 监听开支变化
-    const unsubscribeExpenses = dataManager.subscribe('expenses', () => {
-      console.log('🔄 财务报表：开支数据已更新');
-      setDataVersion(version => version + 1);
-    });
-
-    // 监听采购变化
-    const unsubscribePurchases = dataManager.subscribe('purchases', () => {
-      console.log('🔄 财务报表：采购数据已更新');
-      setDataVersion(version => version + 1);
-    });
-
-    const handleDataSynced = () => {
       dataManager.clearCache();
-      setOrders(dataManager.getData('orders'));
+      setOrders(cloudOrders);
       setDataVersion(version => version + 1);
-    };
-    window.addEventListener('dataSynced', handleDataSynced);
-
-    // 组件卸载时取消订阅
-    return () => {
-      unsubscribeOrders();
-      unsubscribeExpenses();
-      unsubscribePurchases();
-      window.removeEventListener('dataSynced', handleDataSynced);
-    };
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u8d22\u52a1\u62a5\u8868\u6570\u636e\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u8d22\u52a1\u62a5\u8868\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
 
-  // 生成日报表
+  useEffect(() => {
+    refreshFinancialData();
+  }, [refreshFinancialData]);
+
   const generateDailyReport = React.useCallback((date: string): DailyReport => {
     console.log('📊 生成报表:', date, '订单数:', orders.length);
 
@@ -413,8 +408,21 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             </>
           )}
 
-          <button onClick={loadReports} style={styles.btn('#3b82f6', 'white')}>
-            🔄 刷新
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+
+          <button
+            onClick={refreshFinancialData}
+            disabled={isRefreshing}
+            style={{
+              ...styles.btn(isRefreshing ? '#9ca3af' : '#3b82f6', 'white'),
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
           </button>
         </div>
       </div>
