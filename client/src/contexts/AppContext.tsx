@@ -634,6 +634,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     loadSnapshotData();
 
     const unsubscribers = [
+      smartSubscribeToCollection('menu_items', data => applyCloudData(data, setMenuItems, '菜单', { merge: true })),
       smartSubscribeToCollection('pos_orders', data => applyCloudData(data, setOrders, '订单', { merge: true })),
     ];
     return () => {

@@ -957,6 +957,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         name={menu.name}
                         src={menu.imageThumbUrl || menu.imageUrl}
                         legacySrc={menu.image}
+                        cacheVersion={menu.imageUpdatedAt}
                         style={{
                           width: '100%',
                           height: '100%',
@@ -1804,12 +1805,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         保存时压缩上传
                       </div>
                     </>
-                  ) : (editingMenu.imageThumbUrl || editingMenu.imageUrl || editingMenu.image) ? (
+                  ) : (editingMenu.imageThumbUrl || editingMenu.imageUrl || editingMenu.image || editingMenu.imageUpdatedAt || editingMenu.imageUploadPending) ? (
                     <MenuImage
                       menuId={editingMenu.id || 'new-menu'}
                       name={editingMenu.name || '菜品'}
                       src={editingMenu.imageThumbUrl || editingMenu.imageUrl}
                       legacySrc={editingMenu.image}
+                      cacheVersion={editingMenu.imageUpdatedAt}
                       variant="medium"
                       style={{
                         width: '100%',
@@ -2121,6 +2123,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   try {
                     if (selectedMenuImageFile) {
                       imageFields = await processAndUploadMenuImage(menuIdForSave, selectedMenuImageFile);
+                      if (imageFields.imageUploadPending) {
+                        alert('图片已压缩并保存在本机，但还没有上传到云端。当前终端可显示，其他终端需要等网络/权限恢复后自动同步。');
+                      }
                     }
                   } catch (error: any) {
                     console.error('处理菜品图片失败:', error);

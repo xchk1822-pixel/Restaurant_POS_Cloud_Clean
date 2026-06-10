@@ -6,6 +6,7 @@ interface MenuImageProps {
   name: string;
   src?: string;
   legacySrc?: string;
+  cacheVersion?: number;
   variant?: 'thumb' | 'medium';
   style?: React.CSSProperties;
   placeholder?: React.ReactNode;
@@ -16,6 +17,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
   name,
   src,
   legacySrc,
+  cacheVersion,
   variant = 'thumb',
   style,
   placeholder
@@ -41,7 +43,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [menuId, variant]);
+  }, [menuId, variant, cacheVersion]);
 
   if (!displaySrc) {
     return <>{placeholder || null}</>;
