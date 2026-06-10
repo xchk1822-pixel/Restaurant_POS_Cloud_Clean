@@ -1,13 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
-import { dataService } from '../../services/DataService';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
+import { smartGetDocuments } from '../../services/smartSyncService';
 import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
 import SalarySettlement from './SalarySettlement';
-
-// ==================== 类型定义 ====================
 
 interface Employee {
   id: string;
@@ -31,15 +28,6 @@ interface AttendanceRecord {
   checkOut?: string;
   workHours: number;
   status: 'normal' | 'late' | 'early_leave' | 'absent' | 'leave' | 'rest' | 'empty';
-  notes?: string;
-}
-
-interface Schedule {
-  id: string;
-  employeeId: string;
-  date: string;
-  shift: 'morning' | 'afternoon' | 'evening' | 'full_day';
-  shiftTime: string;
   notes?: string;
 }
 
@@ -93,9 +81,7 @@ interface CashFlowRecord {
 
 const EmployeesModule: React.FC = () => {
   const location = useLocation();
-  const navigate = useNavigate();
-  
-  // 根据路径确定当前Tab
+
   const getPathTab = (): 'employees' | 'attendance' | 'loans' | 'salary' => {
     const path = location.pathname;
     if (path.includes('/attendance')) return 'attendance';
@@ -103,142 +89,65 @@ const EmployeesModule: React.FC = () => {
     if (path.includes('/salary')) return 'salary';
     return 'employees';
   };
-  
+
   const [activeTab, setActiveTab] = useState<'employees' | 'attendance' | 'loans' | 'salary'>(
     getPathTab()
   );
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [salaryRecords, setSalaryRecords] = useState<SalaryRecord[]>([]);
+  const [loanRecords, setLoanRecords] = useState<LoanRecord[]>([]);
+  const [cashFlowRecords, setCashFlowRecords] = useState<CashFlowRecord[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // 当路径变化时，更新activeTab
   useEffect(() => {
-    const newTab = getPathTab();
-    setActiveTab(newTab);
+    setActiveTab(getPathTab());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  // 切换Tab时更新路径
-  const handleTabChange = (tab: 'employees' | 'attendance' | 'loans' | 'salary') => {
-    setActiveTab(tab);
-    const paths = {
-      employees: '/employees',
-      attendance: '/employees/attendance',
-      loans: '/employees/loans',
-      salary: '/employees/salary'
-    };
-    navigate(paths[tab], { replace: true });
-  };
-  
-  // 员工列表
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  
-  // 考勤相关
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
-  
-  // 薪资相关
-  const [salaryRecords, setSalaryRecords] = useState<SalaryRecord[]>([]);
-  
-  // 借款管理
-  const [loanRecords, setLoanRecords] = useState<LoanRecord[]>([]);
-  
-  // 现金流记录
-  const [cashFlowRecords, setCashFlowRecords] = useState<CashFlowRecord[]>([]);
-
-  // 加载数据：一次性读取，避免员工管理长期占用 Firestore 监听
-  useEffect(() => {
-    console.log('员工管理模块开始加载数据...');
-    let cancelled = false;
-
+  const loadEmployeeModuleData = useCallback(async () => {
+    setIsRefreshing(true);
     try {
-      const globalEmployees = localStorage.getItem('employees');
-      if (globalEmployees) {
-        console.log('清理旧的全局 employees 数据');
-        localStorage.removeItem('employees');
-      }
+      localStorage.removeItem('employees');
+
+      const [
+        employeesData,
+        attendanceData,
+        salaryData,
+        loanData,
+        cashFlowData,
+      ] = await Promise.all([
+        smartGetDocuments('employees'),
+        smartGetDocuments('attendance_records'),
+        smartGetDocuments('salary_records'),
+        smartGetDocuments('loan_records'),
+        smartGetDocuments('cash_flow_records'),
+      ]);
+
+      setEmployees(employeesData);
+      setAttendanceRecords(attendanceData);
+      setSalaryRecords(salaryData);
+      setLoanRecords(loanData);
+      setCashFlowRecords(cashFlowData);
     } catch (error) {
-      console.error('清理全局 employees 失败:', error);
+      console.error('加载员工管理数据失败:', error);
+      alert('加载员工管理数据失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
     }
-
-    const loadData = async () => {
-      const loads: Array<{
-        name: string;
-        setter: React.Dispatch<React.SetStateAction<any[]>>;
-      }> = [
-        { name: 'employees', setter: setEmployees },
-        { name: 'attendance_records', setter: setAttendanceRecords },
-        { name: 'salary_records', setter: setSalaryRecords },
-        { name: 'loan_records', setter: setLoanRecords },
-        { name: 'cash_flow_records', setter: setCashFlowRecords },
-      ];
-
-      for (const item of loads) {
-        try {
-          const data = await smartGetDocuments(item.name);
-          if (!cancelled) {
-            item.setter(data);
-          }
-        } catch (error) {
-          console.error(`加载 ${item.name} 失败:`, error);
-        }
-      }
-    };
-
-    loadData();
-    return () => {
-      cancelled = true;
-    };
   }, []);
-  // ✅ 自动保存考勤记录到 DataService（会自动同步到 Firestore）
-  useEffect(() => {
-    if (attendanceRecords.length > 0) {
-      dataService.saveData('attendance_records', attendanceRecords);
-    }
-  }, [attendanceRecords]);
-  
-  // ✅ 自动保存薪资记录到 DataService（会自动同步到 Firestore）
-  useEffect(() => {
-    if (salaryRecords.length > 0) {
-      dataService.saveData('salary_records', salaryRecords);
-    }
-  }, [salaryRecords]);
-  
-  // ✅ 自动保存借款记录到 DataService（会自动同步到 Firestore）
-  useEffect(() => {
-    if (loanRecords.length > 0) {
-      dataService.saveData('loan_records', loanRecords);
-    }
-  }, [loanRecords]);
 
-  const loadData = () => {
-    try {
-      const savedEmployees = localStorage.getItem('employees');
-      if (savedEmployees) {
-        const parsed = JSON.parse(savedEmployees);
-        const migrated = parsed.map((emp: any) => ({
-          ...emp,
-          dailyRate: emp.dailyRate || emp.baseSalary || 0,
-          overtimeRate: emp.overtimeRate || emp.hourlyRate || 0,
-          benefits: emp.benefits || 0,
-          subsidy: emp.subsidy || 0,
-          socialSecurityEmployee: emp.socialSecurityEmployee || 0,
-          socialSecurityCompany: emp.socialSecurityCompany || 0,
-        }));
-        setEmployees(migrated);
-      }
+  useEffect(() => {
+    loadEmployeeModuleData();
+  }, [loadEmployeeModuleData]);
 
-      const savedAttendance = localStorage.getItem('attendance_records');
-      if (savedAttendance) setAttendanceRecords(JSON.parse(savedAttendance));
-
-      const savedSalaries = localStorage.getItem('salary_records');
-      if (savedSalaries) setSalaryRecords(JSON.parse(savedSalaries));
-      
-      const savedLoans = localStorage.getItem('loan_records');
-      if (savedLoans) setLoanRecords(JSON.parse(savedLoans));
-      
-      const savedCashFlows = localStorage.getItem('cash_flow_records');
-      if (savedCashFlows) setCashFlowRecords(JSON.parse(savedCashFlows));
-    } catch (e) {
-      console.error('加载数据失败:', e);
-    }
-  };
+  useEffect(() => {
+    const handleDataSynced = () => {
+      loadEmployeeModuleData();
+    };
+    window.addEventListener('dataSynced', handleDataSynced);
+    return () => window.removeEventListener('dataSynced', handleDataSynced);
+  }, [loadEmployeeModuleData]);
 
   const styles = {
     container: {
@@ -250,16 +159,26 @@ const EmployeesModule: React.FC = () => {
     },
     header: {
       display: 'flex',
-      justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: '1.5rem',
+      justifyContent: 'space-between',
+      gap: '1rem',
+      marginBottom: '1rem',
       flexShrink: 0 as const,
     },
     title: {
-      fontSize: '2rem',
-      fontWeight: 'bold',
-      color: '#1f2937',
       margin: 0,
+      fontSize: '1.5rem',
+      fontWeight: 700,
+      color: '#1f2937',
+    },
+    refreshButton: {
+      padding: '0.6rem 1rem',
+      border: 'none',
+      borderRadius: '0.5rem',
+      background: isRefreshing ? '#9ca3af' : '#2563eb',
+      color: 'white',
+      fontWeight: 600,
+      cursor: isRefreshing ? 'not-allowed' : 'pointer',
     },
     content: {
       flex: 1,
@@ -269,7 +188,18 @@ const EmployeesModule: React.FC = () => {
 
   return (
     <div style={styles.container}>
-      {/* 内容区 - 根据URL参数显示对应组件 */}
+      <div style={styles.header}>
+        <h1 style={styles.title}>员工管理</h1>
+        <button
+          type="button"
+          onClick={loadEmployeeModuleData}
+          disabled={isRefreshing}
+          style={styles.refreshButton}
+        >
+          {isRefreshing ? '刷新中...' : '刷新云端数据'}
+        </button>
+      </div>
+
       <div style={styles.content}>
         {activeTab === 'employees' && (
           <EmployeeList employees={employees} setEmployees={setEmployees} />
