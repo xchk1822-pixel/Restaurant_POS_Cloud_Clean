@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { getLocalDateString } from '../../utils/localTime';
-import { dataService } from '../../services/DataService';
+import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 
 interface Store {
   id: string;
@@ -15,6 +15,32 @@ interface Store {
   businessHours: string;
 }
 
+const getLocalRecords = (key: string): any[] => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveLocalRecords = (key: string, records: any[]) => {
+  localStorage.setItem(key, JSON.stringify(records));
+};
+
+const dedupeUsers = (records: any[]): any[] => {
+  const map = new Map<string, any>();
+  records.forEach(record => {
+    const username = String(record?.username || '').trim().toLowerCase();
+    if (!username) return;
+    const existing = map.get(username);
+    const currentTime = Date.parse(record?.updatedAt || record?.createdAt || '') || 0;
+    const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || '') || 0;
+    if (!existing || currentTime >= existingTime) map.set(username, record);
+  });
+  return Array.from(map.values());
+};
+
 interface User {
   id: string;
   username: string;
@@ -28,10 +54,12 @@ interface User {
 }
 
 const StoresModule: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const [stores, setStores] = useState<Store[]>(() => getLocalRecords('stores'));
+  const [users, setUsers] = useState<User[]>(() => dedupeUsers(getLocalRecords('users')));
   const [selectedStore, setSelectedStore] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'info' | 'users'>('info');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   
   // 创建分店向导
   const [showCreateWizard, setShowCreateWizard] = useState(false);
@@ -69,36 +97,43 @@ const StoresModule: React.FC = () => {
     );
   };
 
-  useEffect(() => {
-    // ✅ 从 DataService 加载数据
+  const persistStores = async (nextStores: Store[]) => {
+    setStores(nextStores);
+    saveLocalRecords('stores', nextStores);
+    await Promise.all(nextStores.map(store => smartSetDocument('stores', store.id, store)));
+  };
+
+  const persistUsers = async (nextUsers: User[]) => {
+    const normalizedUsers = dedupeUsers(nextUsers) as User[];
+    setUsers(normalizedUsers);
+    saveLocalRecords('users', normalizedUsers);
+    await Promise.all(normalizedUsers.map(user => smartSetDocument('users', user.id, user)));
+  };
+
+  const refreshStoresData = useCallback(async () => {
+    setIsRefreshing(true);
     try {
-      const stores = dataService.getData('stores');
-      setStores(stores);
-      console.log('📊 Stores页面 - 加载分店:', stores.length);
-      
-      const users = dataService.getData('users');
-      setUsers(users);
-      console.log('👥 Stores页面 - 加载用户:', users.length);
+      const [cloudStores, cloudUsers] = await Promise.all([
+        smartGetDocuments('stores', true),
+        smartGetDocuments('users', true),
+      ]);
+      const normalizedUsers = dedupeUsers(cloudUsers) as User[];
+      setStores(cloudStores as Store[]);
+      setUsers(normalizedUsers);
+      saveLocalRecords('stores', cloudStores);
+      saveLocalRecords('users', normalizedUsers);
+      setLastSyncedAt(new Date());
     } catch (error) {
-      console.error('❌ 加载数据失败:', error);
+      console.error('\u5237\u65b0\u5206\u5e97\u548c\u8d26\u53f7\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u5206\u5e97\u548c\u8d26\u53f7\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
     }
   }, []);
 
-  // ✅ 自动保存分店数据到 DataService
   useEffect(() => {
-    if (stores.length > 0) {
-      dataService.saveData('stores', stores);
-    }
-  }, [stores]);
-
-  // ✅ 自动保存用户数据到 DataService
-  useEffect(() => {
-    if (users.length > 0) {
-      dataService.saveData('users', users);
-    }
-  }, [users]);
-
-
+    refreshStoresData();
+  }, [refreshStoresData]);
 
   const handleCompleteCreate = async () => {
     if (!newStore.name || !newStore.code) {
@@ -120,9 +155,23 @@ const StoresModule: React.FC = () => {
       businessHours: newStore.businessHours || '09:00-22:00',
     };
 
+    const wizardUsernames = [
+      newAccounts.manager.username,
+      newAccounts.cashier.username,
+      newAccounts.waiter.username,
+      newAccounts.chef.username,
+    ].map(value => value.trim().toLowerCase()).filter(Boolean);
+    if (new Set(wizardUsernames).size !== wizardUsernames.length) {
+      alert('\u540c\u4e00\u6b21\u521b\u5efa\u4e2d\u5b58\u5728\u91cd\u590d\u8d26\u53f7\uff0c\u8bf7\u4fee\u6539\u540e\u518d\u4fdd\u5b58');
+      return;
+    }
+    const existingUsername = wizardUsernames.find(username => usernameExists(username));
+    if (existingUsername) {
+      alert(`账号 ${existingUsername} 已存在，请更换用户名`);
+      return;
+    }
+
     const updatedStores = [...stores, store];
-    setStores(updatedStores);
-    dataService.saveData('stores', updatedStores);
 
     const newUsers: User[] = [];
     if (newAccounts.manager.username && newAccounts.manager.password) {
@@ -196,8 +245,10 @@ const StoresModule: React.FC = () => {
 
     if (newUsers.length > 0) {
       const updatedUsers = [...users, ...newUsers];
-      setUsers(updatedUsers);
-      dataService.saveData('users', updatedUsers);
+      await persistStores(updatedStores);
+      await persistUsers(updatedUsers);
+    } else {
+      await persistStores(updatedStores);
     }
 
     alert('✅ 分店及账号创建成功！');
@@ -222,24 +273,27 @@ const StoresModule: React.FC = () => {
   };
 
   const handleDeleteStore = async (storeId: string) => {
-    if (!window.confirm('确定要删除此分店吗？')) return;
-    
+    if (!window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u6b64\u5206\u5e97\u5417\uff1f')) return;
+
+    const removedUsers = users.filter(u => u.storeId === storeId);
     const updatedStores = stores.filter(s => s.id !== storeId);
-    setStores(updatedStores);
-    dataService.saveData('stores', updatedStores);
-    
     const updatedUsers = users.filter(u => u.storeId !== storeId);
-    setUsers(updatedUsers);
-    dataService.saveData('users', updatedUsers);
-    
+
+    await Promise.all([
+      smartDeleteDocument('stores', storeId),
+      ...removedUsers.map(user => smartDeleteDocument('users', user.id)),
+    ]);
+    await persistStores(updatedStores);
+    await persistUsers(updatedUsers);
+
     if (selectedStore === storeId) setSelectedStore('');
   };
 
   const handleDeleteUser = async (userId: string) => {
-    if (!window.confirm('确定要删除此账号吗？')) return;
+    if (!window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u6b64\u8d26\u53f7\u5417\uff1f')) return;
     const updated = users.filter(u => u.id !== userId);
-    setUsers(updated);
-    dataService.saveData('users', updated);
+    await smartDeleteDocument('users', userId);
+    await persistUsers(updated);
   };
 
   const handleResetPassword = async (userId: string) => {
@@ -247,7 +301,7 @@ const StoresModule: React.FC = () => {
     if (!newPassword) return;
     const updated = users.map(u => u.id === userId ? { ...u, password: newPassword } : u);
     setUsers(updated);
-    dataService.saveData('users', updated);
+    await persistUsers(updated);
     alert('✅ 密码已重置');
   };
 
@@ -261,7 +315,7 @@ const StoresModule: React.FC = () => {
     if (!editingStore) return;
     const updated = stores.map(s => s.id === editingStore.id ? editingStore : s);
     setStores(updated);
-    dataService.saveData('stores', updated);
+    await persistStores(updated);
     setShowEditStore(false);
     setEditingStore(null);
     alert('✅ 分店信息已更新');
@@ -311,7 +365,7 @@ const StoresModule: React.FC = () => {
       };
       const updated = users.map(u => u.id === editingUser.id ? updatedUser : u);
       setUsers(updated);
-      dataService.saveData('users', updated);
+    await persistUsers(updated);
       alert('✅ 账号已更新');
     } else {
       // 添加新用户
@@ -328,7 +382,7 @@ const StoresModule: React.FC = () => {
       };
       const updated = [...users, newUser];
       setUsers(updated);
-      dataService.saveData('users', updated);
+    await persistUsers(updated);
       alert('✅ 账号已创建');
     }
 
@@ -535,7 +589,24 @@ const StoresModule: React.FC = () => {
           <h1 style={styles.title}>🏪 分店管理</h1>
           <p style={{ color: '#6b7280', marginTop: '0.5rem' }}>管理所有分店及其账号</p>
         </div>
-        <button onClick={() => setShowCreateWizard(true)} style={styles.btn('#3b82f6')}>➕ 创建分店</button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshStoresData}
+            disabled={isRefreshing}
+            style={{
+              ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1'),
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+          </button>
+          <button onClick={() => setShowCreateWizard(true)} style={styles.btn('#3b82f6')}>➕ 创建分店</button>
+        </div>
       </div>
 
       <div style={styles.contentWrapper}>

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
+import React, { useCallback, useState, useEffect } from 'react';
+import { smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
 import { DEFAULT_ROLE_PERMISSIONS } from '../../utils/permissions';
 
 interface PermissionNode {
@@ -166,37 +166,30 @@ const PermissionsModule: React.FC = () => {
   const [formIcon, setFormIcon] = useState('👤');
   const [formColor, setFormColor] = useState('#3b82f6');
   const [formPerms, setFormPerms] = useState<string[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  useEffect(() => {
-    console.log('初始化角色数据...');
-    let cancelled = false;
-
-    const loadRoles = async () => {
-      try {
-        const cloudRoles = await smartGetDocuments('system_roles');
-        if (cancelled) return;
-
-        const normalized = normalizeRoles(cloudRoles);
-        localStorage.setItem('system_roles', JSON.stringify(normalized));
-        setRoles(normalized);
-      } catch (error) {
-        console.error('加载角色数据失败:', error);
-        const saved = localStorage.getItem('system_roles');
-        setRoles(saved ? normalizeRoles(JSON.parse(saved)) : normalizeRoles([]));
-      }
-    };
-
-    loadRoles();
-    return () => {
-      cancelled = true;
-    };
+  const refreshRoles = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const cloudRoles = await smartGetDocuments('system_roles', true);
+      const normalized = normalizeRoles(cloudRoles);
+      localStorage.setItem('system_roles', JSON.stringify(normalized));
+      setRoles(normalized);
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('\u5237\u65b0\u6743\u9650\u89d2\u8272\u5931\u8d25:', error);
+      const saved = localStorage.getItem('system_roles');
+      setRoles(saved ? normalizeRoles(JSON.parse(saved)) : normalizeRoles([]));
+      alert('\u5237\u65b0\u6743\u9650\u89d2\u8272\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
 
-  const saveRoles = async (updated: Role[]) => {
-    // 🔥 不再直接保存，而是通过智能同步服务
-    // 实时监听会自动更新状态
-    console.log('✅ 角色数据已自动同步到云端');
-  };
+  useEffect(() => {
+    refreshRoles();
+  }, [refreshRoles]);
 
   const togglePerm = (permId: string) => {
     console.log('🔘 切换权限:', permId);
@@ -276,17 +269,6 @@ const PermissionsModule: React.FC = () => {
     });
   };
 
-  const handleNewRole = () => {
-    setEditingRoleId(null);
-    setSelectedRoleId('');
-    setFormName('');
-    setFormDesc('');
-    setFormIcon('👤');
-    setFormColor('#3b82f6');
-    setFormPerms([]);
-    setShowForm(true);
-  };
-
   const handleSelectRole = (role: Role) => {
     console.log('📝 选择角色进行编辑:', role.id, role.name);
     setSelectedRoleId(role.id);
@@ -300,13 +282,18 @@ const PermissionsModule: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) { 
-      alert('请输入角色名称'); 
-      return; 
+    if (!formName.trim()) {
+      alert('\u8bf7\u8f93\u5165\u89d2\u8272\u540d\u79f0');
+      return;
+    }
+
+    if (!editingRoleId) {
+      alert('\u89d2\u8272\u5df2\u56fa\u5b9a\u4e3a\u5e97\u957f\u3001\u6536\u94f6\u3001\u670d\u52a1\u751f\u3001\u53a8\u5e08\uff0c\u8bf7\u9009\u62e9\u5df2\u6709\u89d2\u8272\u4fee\u6539\u6743\u9650\u3002');
+      return;
     }
 
     const roleData: Role = {
-      id: editingRoleId || `role-${Date.now()}`,
+      id: editingRoleId,
       name: formName.trim(),
       description: formDesc.trim(),
       icon: formIcon,
@@ -314,96 +301,29 @@ const PermissionsModule: React.FC = () => {
       permissions: formPerms,
     };
 
-    console.log('💾 保存角色数据:', {
-      editingRoleId,
-      isNew: !editingRoleId,
-      roleData
-    });
-
     try {
-      let newRoles: Role[];
-      
-      if (editingRoleId) {
-        // ✅ 更新现有角色
-        console.log('🔄 更新角色:', editingRoleId);
-        newRoles = roles.map(r => r.id === editingRoleId ? roleData : r);
-      } else {
-        // ✅ 创建新角色
-        console.log('➕ 创建新角色');
-        alert('角色已固定为店长、收银、服务生、厨师，请选择已有角色修改权限。');
-        return;
-      }
-      
-      // ✅ 保存到 localStorage
+      const newRoles = roles.map(r => r.id === editingRoleId ? roleData : r);
       localStorage.setItem('system_roles', JSON.stringify(newRoles));
       setRoles(newRoles);
-      
-      // 🔥 同步到 Firestore（使用智能同步服务）
-      try {
-        if (editingRoleId) {
-          // 更新现有角色
-          await smartUpdateDocument('system_roles', editingRoleId, roleData);
-          console.log('✅ 已更新角色到 Firestore:', editingRoleId);
-        } else {
-          // 创建新角色
-          const newId = `role-${Date.now()}`;
-          await smartAddDocument('system_roles', { ...roleData, id: newId });
-          console.log('✅ 已创建角色到 Firestore:', newId);
-        }
-      } catch (error) {
-        console.error('❌ 同步角色到 Firestore 失败:', error);
-      }
-      
-      console.log('✅ 保存成功，共', newRoles.length, '个角色');
-      
+      await smartUpdateDocument('system_roles', editingRoleId, roleData);
+      setLastSyncedAt(new Date());
       setShowForm(false);
       setEditingRoleId(null);
       setSelectedRoleId('');
     } catch (error) {
-      console.error('❌ 保存失败:', error);
-      alert('❌ 保存失败: ' + (error as Error).message);
-    }
-  };
-
-  const handleDelete = async (roleId: string) => {
-    if (!window.confirm('确定删除该角色？')) return;
-    
-    try {
-      // ✅ 从 localStorage 删除
-      const newRoles = roles.filter(r => r.id !== roleId);
-      localStorage.setItem('system_roles', JSON.stringify(newRoles));
-      setRoles(newRoles);
-      
-      // 🔥 从 Firestore 删除
-      try {
-        const { db } = await import('../../firebase');
-        const { doc, deleteDoc } = await import('firebase/firestore');
-        
-        const roleRef = doc(db, 'system_roles', roleId);
-        await deleteDoc(roleRef);
-        
-        console.log('✅ 已从 Firestore 删除角色');
-      } catch (error) {
-        console.error('❌ 从 Firestore 删除角色失败:', error);
-      }
-      
-      console.log('✅ 角色已删除，剩余', newRoles.length, '个角色');
-      alert('✅ 角色已删除');
-      
-      if (selectedRoleId === roleId) {
-        setSelectedRoleId('');
-        setShowForm(false);
-      }
-    } catch (error) {
-      console.error('❌ 删除失败:', error);
-      alert('❌ 删除失败，请重试');
+      console.error('save role failed:', error);
+      alert('\u4fdd\u5b58\u5931\u8d25: ' + (error as Error).message);
     }
   };
 
   const toggleExpand = (nodeId: string) => {
     setExpandedNodes(prev => {
       const next = new Set(prev);
-      if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
       return next;
     });
   };
@@ -428,7 +348,7 @@ const PermissionsModule: React.FC = () => {
             onClick={() => hasChild && toggleExpand(node.id)}
           >
             {hasChild ? (
-              <span style={{ fontSize: '0.7rem', color: '#9ca3af', width: '0.8rem' }}>{isExpanded ? '▼' : '▶'}</span>
+              <span style={{ fontSize: '0.7rem', color: '#9ca3af', width: '0.8rem' }}>{isExpanded ? '-' : '+'}</span>
             ) : (
               <span style={{ width: '0.8rem' }} />
             )}
@@ -455,10 +375,35 @@ const PermissionsModule: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.5rem', background: '#f3f4f6' }}>
       {/* 头部 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0 }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>🔐 权限管理</h1>
-        <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
-          固定角色：店长 / 收银 / 服务生 / 厨师
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0, gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>权限管理</h1>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+            固定角色：店长 / 收银 / 服务生 / 厨师
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {lastSyncedAt && (
+            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            onClick={refreshRoles}
+            disabled={isRefreshing}
+            style={{
+              padding: '0.45rem 0.9rem',
+              backgroundColor: isRefreshing ? '#9ca3af' : '#6366f1',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.5rem',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              fontSize: '0.85rem',
+            }}
+          >
+            {isRefreshing ? '同步中...' : '刷新云端数据'}
+          </button>
         </div>
       </div>
 
@@ -472,7 +417,7 @@ const PermissionsModule: React.FC = () => {
           <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
             {roles.length === 0 && (
               <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                暂无角色数据，点击“添加角色”开始创建
+                暂无角色数据，请点击刷新云端数据
               </div>
             )}
             {roles.map(role => (
@@ -513,7 +458,7 @@ const PermissionsModule: React.FC = () => {
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>👈</div>
-                <div style={{ fontSize: '1rem' }}>请点击左侧角色或添加新角色</div>
+                <div style={{ fontSize: '1rem' }}>请点击左侧角色修改权限</div>
               </div>
             </div>
           ) : (
@@ -522,16 +467,8 @@ const PermissionsModule: React.FC = () => {
               <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                   <span style={{ fontWeight: 600, fontSize: '1rem' }}>
-                    {editingRoleId ? `编辑: ${formName}` : '添加新角色'}
+                    编辑: {formName}
                   </span>
-                  {false && editingRoleId && (
-                    <button
-                      onClick={() => handleDelete(editingRoleId!)}
-                      style={{ padding: '0.35rem 0.75rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.8rem' }}
-                    >
-                      🗑️ 删除
-                    </button>
-                  )}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 50px', gap: '0.75rem', alignItems: 'end' }}>
                   <div>

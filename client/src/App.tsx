@@ -24,7 +24,6 @@ import ManagerCustomers from './pages/Manager/ManagerCustomers';
 import Stores from './pages/Manager/Stores';
 import ExchangeRateSettings from './pages/Manager/ExchangeRateSettings';
 import PermissionsModule from './pages/Settings/PermissionsModule';
-import DataSyncPage from './pages/Settings/DataSyncPage';
 import FirebaseTest from './pages/FirebaseTest';
 import OfflineTest from './pages/OfflineTest';
 import DataInitTest from './pages/DataInitTest';
@@ -118,7 +117,6 @@ function App() {
             <Route path="/settings/stores" element={<ProtectedRoute permissionId="settings:stores"><Stores /></ProtectedRoute>} />
             <Route path="/settings/exchange-rate" element={<ProtectedRoute permissionId="settings:exchange"><ExchangeRateSettings /></ProtectedRoute>} />
             <Route path="/settings/permissions" element={<ProtectedRoute permissionId="settings:permissions"><PermissionsModule /></ProtectedRoute>} />
-            <Route path="/settings/data-sync" element={<ProtectedRoute permissionId="settings:data-sync"><DataSyncPage /></ProtectedRoute>} />
             {/* 旧路径重定向 */}
             <Route path="/stores" element={<Navigate to="/settings/stores" replace />} />
             <Route path="/exchange-rate" element={<Navigate to="/settings/exchange-rate" replace />} />
