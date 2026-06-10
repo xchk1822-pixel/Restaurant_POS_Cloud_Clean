@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
 
 interface Employee {
@@ -114,7 +114,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     dataService.saveData(key, data);
   };
 
-  const recordCashFlow = (flow: Omit<CashFlowRecord, 'id'>) => {
+  const recordCashFlow = async (flow: Omit<CashFlowRecord, 'id'>) => {
     const newFlow: CashFlowRecord = {
       id: Date.now().toString(),
       ...flow,
@@ -123,6 +123,12 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     const updated = [...cashFlowRecords, newFlow];
     setCashFlowRecords(updated);
     saveData('cash_flow_records', updated);
+
+    try {
+      await smartAddDocument('cash_flow_records', newFlow);
+    } catch (error) {
+      console.error('同步工资现金流水失败:', error);
+    }
   };
 
   const getRemainingLoan = (employeeId: string): number => {
@@ -282,6 +288,16 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     setLoanRecords(updatedLoans);
     saveData('loan_records', updatedLoans);
 
+    try {
+      await Promise.all(
+        updatedLoans
+          .filter(loan => loansToDeduct.some(deduction => deduction.loanId === loan.id))
+          .map(loan => smartUpdateDocument('loan_records', loan.id, loan))
+      );
+    } catch (error) {
+      console.error('同步借款扣减记录失败:', error);
+    }
+
     // 更新薪资记录
     salaryRecord.loanRepayment = totalDeduction;
     salaryRecord.remainingLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0) - totalDeduction;
@@ -323,7 +339,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
 
     // 记录现金流
     if (totalDeduction > 0) {
-      recordCashFlow({
+      await recordCashFlow({
         type: 'salary_deduction',
         amount: totalDeduction,
         employeeId: employeeId,
