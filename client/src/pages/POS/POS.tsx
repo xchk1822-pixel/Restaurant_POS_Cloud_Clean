@@ -2221,7 +2221,27 @@ const POS: React.FC = () => {
     
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     if (printWindow) {
-      printWindow.document.write(`<!DOCTYPE html><html><head><title>订单小票</title><style>body { margin: 0; padding: 0; } @media print { body { margin: 0; } }</style></head><body>${printContent}<script>window.onload = function() { window.print(); }</script></body></html>`);
+      printWindow.document.write(`<!DOCTYPE html><html><head><title>订单小票</title><style>
+        body { margin: 0; padding: 0; background: #f3f4f6; }
+        .receipt-toolbar { position: sticky; top: 0; display: flex; gap: 8px; padding: 10px; background: #111827; z-index: 10; }
+        .receipt-toolbar button { flex: 1; border: 0; border-radius: 4px; padding: 10px; color: white; font-weight: 700; cursor: pointer; }
+        .print-btn { background: #2563eb; }
+        .back-btn { background: #6b7280; }
+        .receipt-cut-feed { height: 80px; }
+        @media print {
+          body { margin: 0; padding: 0; background: white; }
+          .no-print { display: none !important; }
+          .receipt-cut-feed { height: 100px; }
+        }
+      </style></head><body>
+        <div class="receipt-toolbar no-print">
+          <button class="print-btn" onclick="window.print()">打印并切纸</button>
+          <button class="back-btn" onclick="window.close()">返回POS</button>
+        </div>
+        ${printContent}
+        <div class="receipt-cut-feed"></div>
+        <script>window.onload = function() { setTimeout(function(){ window.print(); }, 300); }</script>
+      </body></html>`);
       printWindow.document.close();
     }
   };
@@ -3180,6 +3200,35 @@ const POS: React.FC = () => {
                   >
                     🖨️ 打印小票
                   </button>
+
+                  {isReadOnly && (
+                    <button
+                      onClick={() => {
+                        setViewMode('overview');
+                        setCurrentItems([]);
+                        setSelectedOrderId(null);
+                        setSelectedTableId(null);
+                        setSelectedCustomer(null);
+                        setServiceFeeEnabled(false);
+                        setTaxEnabled(false);
+                        setDeliveryFee(0);
+                        setOrderType('dine_in');
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '0.6rem',
+                        backgroundColor: '#6b7280',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      ← 返回主界面
+                    </button>
+                  )}
 
                   {/* 鉁?鍙妯″紡闅愯棌鎵€鏈夋搷浣滄寜閽?*/}
                   {!isReadOnly && (
