@@ -1297,13 +1297,24 @@ const POS: React.FC = () => {
         ? { ...i, quantity, subtotal: quantity * i.price }
         : i
     );
+    const nextTotalAmount = newCurrentItems.reduce((sum, item) => sum + item.subtotal, 0);
 
     setCurrentItems(newCurrentItems);
 
     // 鉁?鍚屾鏇存柊璁㈠崟锛堝鏋滄湁娲诲姩璁㈠崟锛?
     if (selectedOrderId) {
       setOrders(orders.map(o =>
-        o.id === selectedOrderId ? { ...o, items: newCurrentItems } : o
+        o.id === selectedOrderId ? {
+          ...o,
+          items: newCurrentItems,
+          totalAmount: nextTotalAmount,
+          paymentStatus: (o.settledAmount || o.paidAmount || 0) >= nextTotalAmount - 0.001
+            ? 'paid'
+            : (o.settledAmount || o.paidAmount || 0) > 0
+              ? 'partial'
+              : 'unpaid',
+          lastModified: Date.now()
+        } : o
       ));
     }
   };
@@ -3017,13 +3028,7 @@ const POS: React.FC = () => {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (item.quantity > item.sentQuantity) {
-                              handleUpdateQuantity(item.id, item.quantity + 1);
-                            } else {
-                              setItemToDelete(item.id);
-                              setCancelAction('add');
-                              setShowCancelModal(true);
-                            }
+                            handleUpdateQuantity(item.id, item.quantity + 1);
                           }}
                           style={{
                             width: '24px',
@@ -4347,91 +4352,6 @@ const POS: React.FC = () => {
                         <span style={{ color: '#f59e0b', fontWeight: '600', marginLeft: '0.5rem' }}>
                           (还差 C${(order.totalAmount - order.paidAmount).toFixed(2)})
                         </span>
-                      </div>
-                    )}
-
-                    {order.paidAmount > 0 && (
-                      <div style={{
-                        padding: '0.4rem 0.6rem',
-                        backgroundColor: order.status === 'completed' ? '#f3f4f6' : (order.orderType === 'dine_in' ? '#d1fae5' : '#dbeafe'),
-                        borderRadius: '0.25rem',
-                        marginBottom: '0.5rem',
-                        fontSize: '0.8rem',
-                        color: order.status === 'completed' ? '#6b7280' : (order.orderType === 'dine_in' ? '#059669' : '#1e40af'),
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}>
-                        <div>
-                          {order.status === 'completed' ? (
-                            <>
-                              ✅ 已完成
-                              {order.completedAt && (
-                                <span style={{ marginLeft: '0.5rem' }}>
-                                  ({new Date(order.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })})
-                                </span>
-                              )}
-                            </>
-                          ) : order.orderType === 'dine_in' ? (
-                            <>
-                              ✅ 已全额付款
-                              {order.lastPaidAt && (
-                                <span style={{ marginLeft: '0.5rem' }}>
-                                  ({new Date(order.lastPaidAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })})
-                                </span>
-                              )}
-                            </>
-                          ) : order.orderType === 'takeout' ? (
-                            <>
-                              {order.status === 'preparing' ? '🍳 制作中' : 
-                               order.status === 'served' ? '✅ 已完成' : 
-                               order.status === 'confirmed' ? '⏳ 待制作' : '📦 打包订单'}
-                              {order.lastPaidAt && (
-                                <span style={{ marginLeft: '0.5rem' }}>
-                                  ({new Date(order.lastPaidAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })})
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              {order.status === 'preparing' ? '🍳 制作中' : 
-                               order.status === 'served' ? '🚚 配送中' : 
-                               order.status === 'confirmed' ? '⏳ 待制作' : '🛵 外卖订单'}
-                              {order.lastPaidAt && (
-                                <span style={{ marginLeft: '0.5rem' }}>
-                                  ({new Date(order.lastPaidAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })})
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                        
-                        {order.orderType === 'dine_in' && order.status !== 'completed' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.confirm(`确认桌${order.tableNumber}的顾客已离开？\n\n点击确定后将完成订单并清理桌台`)) {
-                                completeOrderWithStockDeduction(order, { releaseTable: true });
-                                setTimeout(() => {
-                                  alert('✅ 订单已完成，桌台已清理\n\n可以接待新顾客了');
-                                }, 100);
-                              }
-                            }}
-                            style={{
-                              padding: '0.2rem 0.5rem',
-                              backgroundColor: '#f59e0b',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '0.25rem',
-                              cursor: 'pointer',
-                              fontSize: '0.7rem',
-                              fontWeight: '600'
-                            }}
-                          >
-                            🚪 顾客离开
-                          </button>
-                        )}
-                        
                       </div>
                     )}
 
