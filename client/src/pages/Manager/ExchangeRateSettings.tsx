@@ -1,75 +1,152 @@
-import React, { useState, useEffect } from 'react';
-import { dataService } from '../../services/DataService';
+import React, { useCallback, useEffect, useState } from 'react';
+import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 
 interface ExchangeRateConfig {
-  usdToNio: number; // 1美元 = ? 尼加拉瓜科多巴
-  pointsToCurrency: number; // 多少积分 = 1货币单位
+  id: string;
+  usdToNio: number;
+  pointsToCurrency: number;
   lastUpdated: string;
   updatedBy?: string;
 }
 
+const STORAGE_KEY = 'global_exchange_rate';
+const COLLECTION = 'exchange_rate';
+const DOC_ID = 'global';
+
+const defaultConfig = (): ExchangeRateConfig => ({
+  id: DOC_ID,
+  usdToNio: 36.5,
+  pointsToCurrency: 100,
+  lastUpdated: new Date().toISOString(),
+});
+
+const readLocalConfig = (): ExchangeRateConfig => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      return { ...defaultConfig(), ...JSON.parse(saved), id: DOC_ID };
+    }
+  } catch (error) {
+    console.error('读取本地汇率配置失败:', error);
+  }
+  return defaultConfig();
+};
+
+const saveLocalConfig = (config: ExchangeRateConfig) => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
+};
+
 const ExchangeRateSettings: React.FC = () => {
-  const [config, setConfig] = useState<ExchangeRateConfig>({
-    usdToNio: 36.5,
-    pointsToCurrency: 100,
-    lastUpdated: new Date().toISOString(),
-  });
+  const [config, setConfig] = useState<ExchangeRateConfig>(() => readLocalConfig());
+  const [tempConfig, setTempConfig] = useState<ExchangeRateConfig>(() => readLocalConfig());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  const [tempConfig, setTempConfig] = useState<ExchangeRateConfig>(config);
-
-  useEffect(() => {
-    loadConfig();
+  const refreshConfig = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const cloudConfigs = await smartGetDocuments(COLLECTION, true);
+      const cloudConfig = cloudConfigs.find((item: any) => item.id === DOC_ID) || cloudConfigs[0];
+      if (cloudConfig) {
+        const nextConfig: ExchangeRateConfig = {
+          ...defaultConfig(),
+          ...cloudConfig,
+          id: DOC_ID,
+          usdToNio: Number(cloudConfig.usdToNio) || defaultConfig().usdToNio,
+          pointsToCurrency: Number(cloudConfig.pointsToCurrency) || defaultConfig().pointsToCurrency,
+        };
+        setConfig(nextConfig);
+        setTempConfig(nextConfig);
+        saveLocalConfig(nextConfig);
+      } else {
+        const localConfig = readLocalConfig();
+        setConfig(localConfig);
+        setTempConfig(localConfig);
+      }
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新云端汇率失败:', error);
+      const localConfig = readLocalConfig();
+      setConfig(localConfig);
+      setTempConfig(localConfig);
+      alert('刷新云端汇率失败，请检查网络后重试');
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
 
-  const loadConfig = () => {
-    try {
-      const saved = localStorage.getItem('global_exchange_rate');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setConfig(parsed);
-        setTempConfig(parsed);
-      }
-    } catch (e) {
-      console.error('加载汇率配置失败:', e);
-    }
-  };
+  useEffect(() => {
+    refreshConfig();
+  }, [refreshConfig]);
 
-  const saveConfig = () => {
+  const saveConfig = async () => {
+    if (tempConfig.usdToNio <= 0 || tempConfig.pointsToCurrency <= 0) {
+      alert('汇率和积分兑换比例必须大于 0');
+      return;
+    }
+
     try {
-      const updatedConfig = {
+      const updatedConfig: ExchangeRateConfig = {
         ...tempConfig,
+        id: DOC_ID,
+        usdToNio: Number(tempConfig.usdToNio),
+        pointsToCurrency: Number(tempConfig.pointsToCurrency),
         lastUpdated: new Date().toISOString(),
       };
-      
-      dataService.saveData('exchange_rate', [updatedConfig]);
+
+      saveLocalConfig(updatedConfig);
       setConfig(updatedConfig);
-      
-      // 通知其他组件更新（通过自定义事件）
-      window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: updatedConfig }));
-      
-      alert('✅ 汇率配置已保存，全系统生效！');
-    } catch (e) {
-      console.error('保存汇率配置失败:', e);
-      alert('❌ 保存失败');
+      await smartSetDocument(COLLECTION, DOC_ID, updatedConfig);
+      setLastSyncedAt(new Date());
+
+      alert('汇率配置已保存，并同步到云端');
+    } catch (error) {
+      console.error('保存汇率配置失败:', error);
+      alert('保存失败，请检查网络后重试');
     }
   };
 
   const resetToDefault = () => {
     if (window.confirm('确定要恢复默认汇率吗？')) {
-      const defaultConfig: ExchangeRateConfig = {
-        usdToNio: 36.5,
-        pointsToCurrency: 100,
-        lastUpdated: new Date().toISOString(),
-      };
-      setTempConfig(defaultConfig);
+      setTempConfig(defaultConfig());
     }
   };
 
   const styles = {
     container: {
       padding: '2rem',
-      maxWidth: '800px',
+      maxWidth: '820px',
       margin: '0 auto',
+    },
+    header: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: '1rem',
+      marginBottom: '1.5rem',
+      flexWrap: 'wrap' as const,
+    },
+    title: {
+      fontSize: '1.875rem',
+      fontWeight: 'bold',
+      margin: 0,
+      color: '#1f2937',
+    },
+    subtitle: {
+      color: '#6b7280',
+      margin: '0.5rem 0 0 0',
+    },
+    actions: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.5rem',
+      flexWrap: 'wrap' as const,
+    },
+    syncInfo: {
+      fontSize: '0.8rem',
+      color: '#6b7280',
+      whiteSpace: 'nowrap' as const,
     },
     card: {
       background: 'white',
@@ -77,16 +154,6 @@ const ExchangeRateSettings: React.FC = () => {
       boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
       padding: '2rem',
       marginBottom: '1.5rem',
-    },
-    title: {
-      fontSize: '1.875rem',
-      fontWeight: 'bold',
-      marginBottom: '0.5rem',
-      color: '#1f2937',
-    },
-    subtitle: {
-      color: '#6b7280',
-      marginBottom: '2rem',
     },
     formGroup: {
       marginBottom: '1.5rem',
@@ -121,9 +188,11 @@ const ExchangeRateSettings: React.FC = () => {
       display: 'flex',
       gap: '1rem',
       marginTop: '2rem',
+      flexWrap: 'wrap' as const,
     },
     btnPrimary: {
       flex: 1,
+      minWidth: '180px',
       padding: '0.75rem 1.5rem',
       backgroundColor: '#3b82f6',
       color: 'white',
@@ -143,6 +212,16 @@ const ExchangeRateSettings: React.FC = () => {
       fontWeight: '600',
       fontSize: '1rem',
     },
+    btnRefresh: {
+      padding: '0.55rem 1rem',
+      backgroundColor: isRefreshing ? '#9ca3af' : '#6366f1',
+      color: 'white',
+      border: 'none',
+      borderRadius: '0.5rem',
+      cursor: isRefreshing ? 'not-allowed' : 'pointer',
+      fontWeight: '600',
+      fontSize: '0.875rem',
+    },
     lastUpdated: {
       fontSize: '0.875rem',
       color: '#9ca3af',
@@ -153,41 +232,64 @@ const ExchangeRateSettings: React.FC = () => {
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>💱 全局汇率设置</h1>
-      <p style={styles.subtitle}>配置全系统通用的汇率，所有页面自动同步</p>
+      <div style={styles.header}>
+        <div>
+          <h1 style={styles.title}>全局汇率设置</h1>
+          <p style={styles.subtitle}>配置全系统通用汇率，保存后写入本地和云端。</p>
+        </div>
+        <div style={styles.actions}>
+          {lastSyncedAt && (
+            <span style={styles.syncInfo}>
+              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={refreshConfig}
+            disabled={isRefreshing}
+            style={styles.btnRefresh}
+          >
+            {isRefreshing ? '同步中...' : '刷新云端数据'}
+          </button>
+        </div>
+      </div>
 
       <div style={styles.infoBox}>
-        <strong>💡 提示：</strong>
+        <strong>提示：</strong>
         <ul style={{ margin: '0.5rem 0 0 0', paddingLeft: '1.5rem' }}>
-          <li>此处设置的汇率将在整个系统中生效</li>
-          <li>POS收银、交接班、客户管理等页面会自动使用此汇率</li>
-          <li>修改后无需刷新页面，实时生效</li>
+          <li>汇率会保存到浏览器本地缓存，并同步到 Firebase。</li>
+          <li>POS 收银、交班对账、客户积分等页面会读取本地最新汇率。</li>
+          <li>其他设备需要点击刷新云端数据后获取最新配置。</li>
         </ul>
       </div>
 
       <div style={styles.card}>
         <div style={styles.formGroup}>
-          <label style={styles.label}>美元兑尼加拉瓜科多巴 (USD → NIO)</label>
+          <label style={styles.label}>美元兑换尼加拉瓜科多巴 (USD 到 NIO)</label>
           <input
             type="number"
             step="0.01"
             value={tempConfig.usdToNio}
-            onChange={(e) => setTempConfig({ ...tempConfig, usdToNio: parseFloat(e.target.value) || 0 })}
+            onChange={(event) =>
+              setTempConfig({ ...tempConfig, usdToNio: Number(event.target.value) || 0 })
+            }
             style={styles.input}
             placeholder="例如：36.5"
           />
           <div style={styles.helpText}>
-            1美元 = C${tempConfig.usdToNio} 尼加拉瓜科多巴
+            1 美元 = C${tempConfig.usdToNio} 尼加拉瓜科多巴
           </div>
         </div>
 
         <div style={styles.formGroup}>
-          <label style={styles.label}>积分兑换率</label>
+          <label style={styles.label}>积分兑换比例</label>
           <input
             type="number"
             step="1"
             value={tempConfig.pointsToCurrency}
-            onChange={(e) => setTempConfig({ ...tempConfig, pointsToCurrency: parseInt(e.target.value) || 0 })}
+            onChange={(event) =>
+              setTempConfig({ ...tempConfig, pointsToCurrency: Number(event.target.value) || 0 })
+            }
             style={styles.input}
             placeholder="例如：100"
           />
@@ -198,40 +300,15 @@ const ExchangeRateSettings: React.FC = () => {
 
         <div style={styles.buttonGroup}>
           <button onClick={saveConfig} style={styles.btnPrimary}>
-            💾 保存配置
+            保存配置
           </button>
           <button onClick={resetToDefault} style={styles.btnSecondary}>
-            🔄 恢复默认
+            恢复默认
           </button>
         </div>
 
         <div style={styles.lastUpdated}>
-          上次更新：{new Date(config.lastUpdated).toLocaleString('zh-CN')}
-        </div>
-      </div>
-
-      {/* 使用说明 */}
-      <div style={styles.card}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>📖 使用说明</h2>
-        
-        <div style={{ lineHeight: '2' }}>
-          <h3 style={{ fontWeight: '600', marginTop: '1rem', marginBottom: '0.5rem' }}>1. POS收银台</h3>
-          <ul style={{ paddingLeft: '1.5rem', color: '#4b5563' }}>
-            <li>混合支付时，美元金额会自动按此汇率转换为科多巴</li>
-            <li>显示参考金额帮助收银员核对</li>
-          </ul>
-
-          <h3 style={{ fontWeight: '600', marginTop: '1rem', marginBottom: '0.5rem' }}>2. 交接班报表</h3>
-          <ul style={{ paddingLeft: '1.5rem', color: '#4b5563' }}>
-            <li>统计总收入时，美元部分会按此汇率转换</li>
-            <li>确保财务数据准确性</li>
-          </ul>
-
-          <h3 style={{ fontWeight: '600', marginTop: '1rem', marginBottom: '0.5rem' }}>3. 客户积分</h3>
-          <ul style={{ paddingLeft: '1.5rem', color: '#4b5563' }}>
-            <li>积分兑换现金券时按此比率计算</li>
-            <li>会员消费累积积分也基于此比率</li>
-          </ul>
+          当前配置更新时间：{new Date(config.lastUpdated).toLocaleString('es-NI', { hour12: false })}
         </div>
       </div>
     </div>
