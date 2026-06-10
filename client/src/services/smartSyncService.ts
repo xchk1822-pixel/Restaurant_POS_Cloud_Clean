@@ -171,6 +171,10 @@ const shouldReplaceLocalRecord = (existing: any, incoming: any): boolean => {
   return incomingVersion >= existingVersion;
 };
 
+const excludeDeletedRecords = (records: any[]): any[] => {
+  return records.filter(record => !record?.isDeleted);
+};
+
 const sanitizeFirestoreValue = (value: any): any => {
   if (value === undefined || value === null) return undefined;
 
@@ -524,15 +528,15 @@ export const smartGetDocuments = async (collectionName: string) => {
       // localStorage.setItem(collectionName, JSON.stringify(docs));
       console.log(`✅ 从云端获取: ${collectionName} (${docs.length}条)`);
 
-      return docs;
+      return excludeDeletedRecords(docs);
     } catch (error) {
       console.error('❌ Firestore读取失败，从本地读取', error);
-      return getFromLocalStorage(collectionName);
+      return excludeDeletedRecords(getFromLocalStorage(collectionName));
     }
   } else {
     // 离线模式
     console.log('⚠️ 离线模式，从本地读取');
-    return getFromLocalStorage(collectionName);
+    return excludeDeletedRecords(getFromLocalStorage(collectionName));
   }
 };
 

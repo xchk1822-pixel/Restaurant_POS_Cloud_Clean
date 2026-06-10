@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { smartAddDocument, smartDeleteDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
 
 interface Employee {
@@ -96,10 +96,17 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     
     // 🔥 先计算更新后的数据
     const updated = employees.filter(emp => emp.id !== id);
+    const employee = employees.find(emp => emp.id === id);
+    if (!employee) return;
     
     // 🔥 先从 Firestore 删除
     try {
-      await smartDeleteDocument('employees', id);
+      await smartUpdateDocument('employees', id, {
+        ...employee,
+        status: 'inactive',
+        isDeleted: true,
+        deletedAt: Date.now(),
+      });
       console.log('✅ 已从 Firestore 删除员工:', id);
       
       // 删除成功后，更新本地状态
