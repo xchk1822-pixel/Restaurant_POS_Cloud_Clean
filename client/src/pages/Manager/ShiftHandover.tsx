@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
-import { smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
+import { smartAddDocument, smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
 
 interface CashCount {
   [key: string]: number;
@@ -89,7 +89,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   }, [refreshHandovers]);
 
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   // 保存当前输入
   useEffect(() => {
@@ -131,6 +131,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   };
 
   // 保存交班记录
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSave = async () => {
     if (usdTotal === 0 && nioTotal === 0) {
       alert('当前金额为0，未保存');
@@ -166,6 +167,57 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   };
 
   // 清空当前输入
+  const handleSubmitHandover = async () => {
+    if (saveStatus === 'saving') return;
+
+    if (usdTotal === 0 && nioTotal === 0) {
+      alert('\u5f53\u524d\u91d1\u989d\u4e3a0\uff0c\u672a\u4fdd\u5b58');
+      return;
+    }
+
+    setSaveStatus('saving');
+
+    try {
+      let diff = '--';
+      if (history.length > 0) {
+        const lastG = history[0].rawG;
+        const d = grandTotal - lastG;
+        diff = d === 0
+          ? '\u65e0\u53d8\u52a8'
+          : (d > 0 ? '+' : '') + d.toLocaleString('en-US', { minimumFractionDigits: 2 });
+      }
+
+      const now = new Date();
+      const createdAt = now.toISOString();
+      const dateTimeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+      const record = {
+        id: `handover-${now.getTime()}-${Math.random().toString(36).slice(2)}`,
+        t: dateTimeStr,
+        u: usdTotal.toFixed(2),
+        n: nioTotal.toFixed(2),
+        g: grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 }),
+        rawG: grandTotal,
+        diff,
+        createdAt,
+        updatedAt: createdAt,
+      } as HistoryRecord & { createdAt: string; updatedAt: string };
+
+      const newHistory = [record, ...history];
+      setHistory(newHistory);
+      await dataManager.saveData('handovers', newHistory, { syncFirestore: false, notify: false });
+      await smartAddDocument('handovers', record);
+      setLastSyncedAt(new Date());
+
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    } catch (error) {
+      console.error('\u4ea4\u73ed\u5bf9\u8d26\u4fdd\u5b58\u5931\u8d25:', error);
+      alert('\u4ea4\u73ed\u5bf9\u8d26\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      setSaveStatus('idle');
+    }
+  };
+
   const resetInputs = () => {
     if (window.confirm('确定要清空所有输入框吗？')) {
       setUsdCount(USD_UNITS.reduce((acc, v) => ({ ...acc, [v]: 0 }), {}));
@@ -337,8 +389,8 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       fontSize: '2rem',
       fontWeight: 'bold',
     },
-    btnSave: (status: 'idle' | 'saved') => ({
-      background: status === 'saved' ? '#3498db' : '#27ae60',
+    btnSave: (status: 'idle' | 'saving' | 'saved') => ({
+      background: status === 'saved' ? '#3498db' : status === 'saving' ? '#f59e0b' : '#27ae60',
       color: 'white',
       border: 'none',
       padding: '12px',
@@ -483,9 +535,10 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
 
           <button
             style={styles.btnSave(saveStatus)}
-            onClick={handleSave}
+            onClick={handleSubmitHandover}
+            disabled={saveStatus === 'saving'}
           >
-            {saveStatus === 'saved' ? '✅ 已提交' : '💾 保存提交'}
+            {saveStatus === 'saving' ? '\u4fdd\u5b58\u4e2d...' : saveStatus === 'saved' ? '\u5df2\u63d0\u4ea4' : '\u4fdd\u5b58\u63d0\u4ea4'}
           </button>
         </div>
 
