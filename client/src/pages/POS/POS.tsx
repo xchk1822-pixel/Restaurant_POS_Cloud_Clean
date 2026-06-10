@@ -1453,16 +1453,7 @@ const POS: React.FC = () => {
         return;
       }
 
-      const updatedOrder = deductStockForOrder({
-        ...orderToClear,
-        status: 'completed' as const,
-        completedAt: new Date(),
-        clearedAt: new Date(),
-        lastModified: Date.now()
-      });
-      setOrders(prevOrders => prevOrders.map(o =>
-        o.id === tableActionData.orderId ? updatedOrder : o
-      ));
+      completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
 
       // 鉂?绂佺敤 Firestore 鍚屾锛堝厛涓撴敞鏈湴鍔熻兘锛?
       /*
@@ -1757,6 +1748,33 @@ const POS: React.FC = () => {
       stockDeductionOperationId: operationId,
       lastModified: Date.now()
     };
+  };
+
+  const completeOrderWithStockDeduction = (order: Order, options: { releaseTable?: boolean } = {}) => {
+    const now = new Date();
+    const completedOrder = deductStockForOrder({
+      ...order,
+      status: 'completed' as const,
+      completedAt: order.completedAt || now,
+      clearedAt: order.clearedAt || now,
+      lastModified: Date.now()
+    });
+
+    setOrders(prevOrders => prevOrders.map(o =>
+      o.id === order.id ? completedOrder : o
+    ));
+    pendingOrderSyncIdsRef.current.add(order.id);
+    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+
+    if (options.releaseTable && order.tableId) {
+      setTables(prevTables => prevTables.map(t =>
+        t.id === order.tableId
+          ? { ...t, status: 'available' as const, currentOrderId: undefined, lastModified: Date.now() }
+          : t
+      ));
+    }
+
+    return completedOrder;
   };
 
   const handleCompletePayment = () => {
@@ -4356,19 +4374,7 @@ const POS: React.FC = () => {
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`确认桌${order.tableNumber}的顾客已离开？\n\n点击确定后将完成订单并清理桌台`)) {
-                                const completedOrder = deductStockForOrder({
-                                  ...order,
-                                  status: 'completed' as const,
-                                  completedAt: new Date(),
-                                  clearedAt: new Date(),
-                                  lastModified: Date.now()
-                                });
-                                setOrders(prevOrders => prevOrders.map(o => 
-                                  o.id === order.id ? completedOrder : o
-                                ));
-                                setTables(prevTables => prevTables.map(t => 
-                                  t.id === order.tableId ? { ...t, status: 'available' as const, lastModified: Date.now() } : t
-                                ));
+                                completeOrderWithStockDeduction(order, { releaseTable: true });
                                 setTimeout(() => {
                                   alert('✅ 订单已完成，桌台已清理\n\n可以接待新顾客了');
                                 }, 100);
@@ -4389,21 +4395,12 @@ const POS: React.FC = () => {
                           </button>
                         )}
                         
-                        {order.orderType !== 'dine_in' && order.status === 'served' && (
+                        {order.orderType !== 'dine_in' && order.status !== 'completed' && order.status !== 'cancelled' && (order.paymentStatus === 'paid' || order.status === 'served') && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '订单已完成'}？`)) {
-                                const completedOrder = deductStockForOrder({
-                                  ...order,
-                                  status: 'completed' as const,
-                                  completedAt: new Date(),
-                                  clearedAt: new Date(),
-                                  lastModified: Date.now()
-                                });
-                                setOrders(prevOrders => prevOrders.map(o => 
-                                  o.id === order.id ? completedOrder : o
-                                ));
+                                completeOrderWithStockDeduction(order);
                                 alert('✅ 订单已完成');
                               }
                             }}
