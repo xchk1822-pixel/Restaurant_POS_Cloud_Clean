@@ -97,6 +97,80 @@ const getLocalStorageKey = (collectionName: string): string => {
   return storeId ? `store_${storeId}_${collectionKey}` : collectionKey;
 };
 
+const shouldAttachStoreId = (collectionName: string): boolean => {
+  const collectionKey = getCollectionKey(collectionName);
+  return !GLOBAL_COLLECTIONS.includes(collectionKey) && !collectionName.includes('/');
+};
+
+const toNumberVersion = (value: any): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getComparableTimestamp = (value: any): number => {
+  if (!value) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (typeof value === 'object' && typeof value.toDate === 'function') {
+    return value.toDate().getTime();
+  }
+  return 0;
+};
+
+const getRecordVersion = (record: any): number => {
+  return Math.max(
+    toNumberVersion(record?.version),
+    getComparableTimestamp(record?.lastModified),
+    getComparableTimestamp(record?.updatedAt),
+    getComparableTimestamp(record?.lastUpdated),
+    getComparableTimestamp(record?.createdAt)
+  );
+};
+
+const withSyncMetadata = (
+  collectionName: string,
+  data: any,
+  id: string,
+  existing?: any,
+  includeCreatedAt = false
+) => {
+  const now = Date.now();
+  const storeId = getCurrentStoreId();
+  const existingVersion = toNumberVersion(existing?.version);
+  const incomingVersion = toNumberVersion(data?.version);
+  const nextVersion = Math.max(existingVersion + 1, incomingVersion || 0, 1);
+
+  const normalized: any = {
+    ...existing,
+    ...data,
+    id,
+    version: nextVersion,
+    lastModified: now,
+    isDeleted: data?.isDeleted ?? existing?.isDeleted ?? false,
+  };
+
+  if (includeCreatedAt && !normalized.createdAt) {
+    normalized.createdAt = new Date(now);
+  }
+
+  if (shouldAttachStoreId(collectionName) && storeId && !normalized.storeId) {
+    normalized.storeId = storeId;
+  }
+
+  return normalized;
+};
+
+const shouldReplaceLocalRecord = (existing: any, incoming: any): boolean => {
+  if (!existing) return true;
+  const existingVersion = getRecordVersion(existing);
+  const incomingVersion = getRecordVersion(incoming);
+  return incomingVersion >= existingVersion;
+};
+
 const sanitizeFirestoreValue = (value: any): any => {
   if (value === undefined || value === null) return undefined;
 
@@ -210,15 +284,17 @@ const clearPendingChanges = () => {
 export const smartAddDocument = async (collectionName: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
   const docId = data.id || doc(collection(db, storeCollectionPath)).id;
+  const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
+  const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
 
   if (!FIRESTORE_ENABLED) {
     console.log('⚠️ Firestore已禁用，仅使用本地存储');
-    saveToLocalStorage(collectionName, data, docId);
+    saveToLocalStorage(collectionName, normalizedData, docId);
     return { id: docId, success: true };
   }
 
   const docData = {
-    ...toFirestoreData(data, true),
+    ...toFirestoreData(normalizedData, true),
     id: docId,
   };
 
@@ -239,7 +315,7 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
   } else {
     // 离线模式
     console.log('⚠️ 离线模式，保存到本地');
-    return fallbackToLocalAdd(collectionName, { ...data, id: docId });
+    return fallbackToLocalAdd(collectionName, normalizedData);
   }
 };
 
@@ -250,8 +326,10 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
  */
 export const smartSetDocument = async (collectionName: string, docId: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
+  const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
   const docData = {
-    ...toFirestoreData(data, true),
+    ...toFirestoreData(normalizedData, true),
     id: docId,
   };
 
@@ -297,15 +375,18 @@ export const smartSetDocument = async (collectionName: string, docId: string, da
  * - 🔥 冲突解决：以服务器时间戳为准（last-write-wins）
  */
 export const smartUpdateDocument = async (collectionName: string, docId: string, data: any) => {
+  const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
+  const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal);
+
   if (!FIRESTORE_ENABLED) {
     console.log('⚠️ Firestore已禁用，仅使用本地存储');
-    updateInLocalStorage(collectionName, docId, data);
+    updateInLocalStorage(collectionName, docId, normalizedData);
     return { success: true };
   }
 
   const storeCollectionPath = getStoreCollectionPath(collectionName);
   const firestoreUpdateData = {
-    ...toFirestoreData(data),
+    ...toFirestoreData(normalizedData),
     id: docId,
   };
 
@@ -329,15 +410,15 @@ export const smartUpdateDocument = async (collectionName: string, docId: string,
         console.log(`✅ 已创建并同步到云端: ${collectionName}/${docId}`);
       }
 
-      updateInLocalStorage(collectionName, docId, { ...data, id: docId });
+      updateInLocalStorage(collectionName, docId, normalizedData);
     } catch (error) {
       console.error('❌ Firestore更新失败，降级到本地', error);
-      fallbackToLocalUpdate(collectionName, docId, data);
+      fallbackToLocalUpdate(collectionName, docId, normalizedData);
     }
   } else {
     // 离线模式
     console.log('⚠️ 离线模式，更新本地数据');
-    fallbackToLocalUpdate(collectionName, docId, data);
+    fallbackToLocalUpdate(collectionName, docId, normalizedData);
   }
 };
 
@@ -579,21 +660,8 @@ export const manualSyncToFirestore = async () => {
       for (const item of localData) {
         try {
           const docRef = doc(db, storeCollectionPath, item.id);
-          const firestoreData: any = {
-            updatedAt: Timestamp.now(),
-          };
-
-          for (const [key, value] of Object.entries(item)) {
-            if (value === undefined || value === null) continue;
-
-            if (value instanceof Date) {
-              if (!isNaN(value.getTime())) {
-                firestoreData[key] = Timestamp.fromDate(value);
-              }
-            } else {
-              firestoreData[key] = value;
-            }
-          }
+          const normalizedItem = withSyncMetadata(collectionName, item, item.id, item, !item.createdAt);
+          const firestoreData = toFirestoreData(normalizedItem, !item.createdAt);
 
           await setDoc(docRef, firestoreData, { merge: true });
           totalSynced++;
@@ -616,7 +684,12 @@ export const manualSyncToFirestore = async () => {
 const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
   try {
     const existing = getFromLocalStorage(collectionName);
-    const updated = [...existing.filter(item => item.id !== id), { id, ...data }];
+    const currentItem = existing.find(item => item.id === id);
+    const incomingItem = { id, ...data };
+    if (currentItem && !shouldReplaceLocalRecord(currentItem, incomingItem)) {
+      return;
+    }
+    const updated = [...existing.filter(item => item.id !== id), incomingItem];
     localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(updated));
   } catch (error) {
     console.error('❌ localStorage保存失败', error);
@@ -626,10 +699,13 @@ const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
 const updateInLocalStorage = (collectionName: string, id: string, data: any) => {
   try {
     const existing = getFromLocalStorage(collectionName);
+    const currentItem = existing.find(item => item.id === id);
+    const incomingItem = { ...currentItem, ...data, id };
     const updated = existing.map(item =>
-      item.id === id ? { ...item, ...data } : item
+      item.id === id && shouldReplaceLocalRecord(item, incomingItem) ? incomingItem : item
     );
-    localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(updated));
+    const next = existing.some(item => item.id === id) ? updated : [...updated, incomingItem];
+    localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(next));
   } catch (error) {
     console.error('❌ localStorage更新失败', error);
   }
