@@ -61,11 +61,11 @@ const uploadImageSet = async (
   };
 };
 
-const withUploadTimeout = async <T,>(promise: Promise<T>, timeoutMs = 8000): Promise<T> => {
+const withUploadTimeout = async <T,>(promise: Promise<T>, timeoutMs = 30000): Promise<T> => {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error('图片云端上传超时，已先保存到本机缓存')), timeoutMs);
+      window.setTimeout(() => reject(new Error('图片云端上传超时，请检查网络后重试')), timeoutMs);
     })
   ]);
 };
@@ -132,12 +132,7 @@ export const processAndUploadMenuImage = async (
       mediumSize: images.medium.size
     };
   } catch (error) {
-    console.error('菜单图片上传失败，已保留本地缓存:', error);
-    return {
-      imageUpdatedAt,
-      imageUploadPending: true,
-      thumbSize: images.thumb.size,
-      mediumSize: images.medium.size
-    };
+    console.error('菜单图片上传失败:', error);
+    throw new Error('图片没有上传到云端，其他终端不会显示。请检查网络后重新保存。');
   }
 };
