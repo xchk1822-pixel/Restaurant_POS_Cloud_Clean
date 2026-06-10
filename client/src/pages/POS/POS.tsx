@@ -4248,6 +4248,43 @@ const POS: React.FC = () => {
                       </div>
                     )}
 
+                    {order.orderType !== 'dine_in' && order.status !== 'completed' && order.status !== 'cancelled' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const canComplete = order.paymentStatus === 'paid' || order.status === 'served';
+
+                          if (!canComplete) {
+                            alert('请先完成支付，再点击完成订单扣减库存');
+                            handleOrderClick(order);
+                            return;
+                          }
+
+                          if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '外卖订单已完成'}？\n\n点击确定后订单完成，并扣减库存。`)) {
+                            completeOrderWithStockDeduction(order);
+                            alert('✅ 订单已完成，库存已扣减');
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.55rem 0.75rem',
+                          margin: '0.45rem 0 0.6rem 0',
+                          backgroundColor: order.paymentStatus === 'paid' || order.status === 'served' ? '#16a34a' : '#f59e0b',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.375rem',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          fontWeight: '700',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.12)'
+                        }}
+                      >
+                        {order.paymentStatus === 'paid' || order.status === 'served'
+                          ? (order.orderType === 'takeout' ? '✅ 顾客已取餐，完成订单' : '✅ 外卖已完成，完成订单')
+                          : '💳 先支付后完成订单'}
+                      </button>
+                    )}
+
                     {/* 鉁?瀹屾暣鏃堕棿鏄剧ず锛氫笅鍗曘€佷氦浠樸€佸畬鎴?*/}
                     <div style={{
                       display: 'flex',
@@ -4395,29 +4432,6 @@ const POS: React.FC = () => {
                           </button>
                         )}
                         
-                        {order.orderType !== 'dine_in' && order.status !== 'completed' && order.status !== 'cancelled' && (order.paymentStatus === 'paid' || order.status === 'served') && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '订单已完成'}？`)) {
-                                completeOrderWithStockDeduction(order);
-                                alert('✅ 订单已完成');
-                              }
-                            }}
-                            style={{
-                              padding: '0.2rem 0.5rem',
-                              backgroundColor: '#10b981',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '0.25rem',
-                              cursor: 'pointer',
-                              fontSize: '0.7rem',
-                              fontWeight: '600'
-                            }}
-                          >
-                            {order.orderType === 'takeout' ? '✅ 已取餐' : '✅ 完成'}
-                          </button>
-                        )}
                       </div>
                     )}
 
