@@ -587,9 +587,30 @@ export const smartSubscribeToCollection = (
 
         console.log(`📡 Firestore实时更新 ${collectionName}: ${data.length}条`);
 
-        // 🔥 同步到 localStorage（分店专属key）
+        // 🔥 同步到 localStorage（分店专属key），但不能让旧云端快照覆盖本地新编辑
         try {
-          localStorage.setItem(getLocalStorageKey(collectionName), serialized);
+          const localData = getFromLocalStorage(collectionName);
+          const merged = new Map<string, any>();
+
+          localData.forEach(item => {
+            if (item?.id) {
+              merged.set(String(item.id), item);
+            }
+          });
+
+          data.forEach(cloudItem => {
+            if (!cloudItem?.id) return;
+            const id = String(cloudItem.id);
+            const localItem = merged.get(id);
+            if (!localItem || shouldReplaceLocalRecord(localItem, cloudItem)) {
+              merged.set(id, cloudItem);
+            }
+          });
+
+          const mergedData = Array.from(merged.values());
+          localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(mergedData));
+          callback(mergedData);
+          return;
         } catch (error) {
           console.error('保存localStorage失败:', error);
         }

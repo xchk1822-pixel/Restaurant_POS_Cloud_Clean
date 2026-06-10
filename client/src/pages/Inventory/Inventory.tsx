@@ -1397,30 +1397,32 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   if (editingItem.id) {
                     // 编辑现有物品
                     const oldItem = inventoryItems.find(item => item.id === editingItem.id);
-                    const newId = editingItem.barcode || editingItem.id; // 使用新条码作为ID
+                    const barcodeChanged = false;
+                    const newId = editingItem.id;
                     const now = Date.now();
+                    const updatedInventoryItem = {
+                      ...(oldItem || {}),
+                      id: newId,
+                      barcode: editingItem.barcode!,
+                      name: editingItem.name!,
+                      category: editingItem.category!,
+                      unit: editingItem.unit || '克',
+                      currentStock: editingItem.currentStock || 0,
+                      minStock: editingItem.minStock || 0,
+                      costPrice: editingItem.costPrice || 0,
+                      salePrice: editingItem.salePrice || 0,
+                      tags: editingItem.tags || [],
+                      location: editingItem.location,
+                      lastUpdated: new Date(),
+                      lastModified: now
+                    };
                     
                     setInventoryItems(items => items.map(item => 
-                      item.id === editingItem.id ? {
-                        ...item,
-                        id: newId, // ✅ 更新 ID
-                        barcode: editingItem.barcode!,
-                        name: editingItem.name!,
-                        category: editingItem.category!,
-                        unit: editingItem.unit || '克',
-                        currentStock: editingItem.currentStock || 0,
-                        minStock: editingItem.minStock || 0,
-                        costPrice: editingItem.costPrice || 0,
-                        salePrice: editingItem.salePrice || 0,
-                        tags: editingItem.tags || [],
-                        location: editingItem.location,
-                        lastUpdated: new Date(),
-                        lastModified: now
-                      } : item
+                      item.id === editingItem.id ? updatedInventoryItem : item
                     ));
                     
                     // ✅ 如果 ID 改变了，也要更新冰箱库存中的引用
-                    if (newId !== editingItem.id && oldItem) {
+                    if (barcodeChanged && oldItem) {
                       setFridgeInventory(invs => invs.map(inv => {
                         if (inv.itemId !== editingItem.id) return inv;
                         const oldFridgeInventoryId = inv.id || `${inv.fridgeId}-${editingItem.id}`;
@@ -1472,21 +1474,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     // 🔥 同步到 Firestore
                     try {
                       await smartUpdateDocument('inventory_items', newId, {
-                        id: newId,
-                        barcode: editingItem.barcode!,
-                        name: editingItem.name!,
-                        category: editingItem.category!,
-                        unit: editingItem.unit || '克',
-                        currentStock: editingItem.currentStock || 0,
-                        minStock: editingItem.minStock || 0,
-                        costPrice: editingItem.costPrice || 0,
-                        salePrice: editingItem.salePrice || 0,
-                        tags: editingItem.tags || [],
-                        location: editingItem.location,
-                        lastUpdated: new Date(),
-                        lastModified: now
+                        ...updatedInventoryItem,
                       });
-                      if (newId !== editingItem.id) {
+                      if (barcodeChanged) {
                         await smartDeleteDocument('inventory_items', editingItem.id);
                       }
                       console.log('✅ 物品已同步到 Firestore');
