@@ -287,6 +287,26 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('normalizedCategories.forEach(category =>');
   });
 
+  test('inventory item deletion waits for linked cloud deletes before local state updates', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+    const deleteBlock = source.slice(
+      source.indexOf('const itemId = editingItem.id;'),
+      source.indexOf("alert('鍒犻櫎鎴愬姛")
+    );
+
+    expect(deleteBlock).toContain('const linkedMenuItems =');
+    expect(deleteBlock).toContain('const linkedFridgeInventory = fridgeInventory');
+    expect(deleteBlock).toContain("await Promise.all(linkedMenuItems.map(menuItem => smartDeleteDocument('menu_items', menuItem.id)))");
+    expect(deleteBlock).toContain("await Promise.all(linkedFridgeInventory.map(inv => smartDeleteDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`)))");
+    expect(deleteBlock).toContain("await smartDeleteDocument('inventory_items', itemId)");
+    expect(deleteBlock.indexOf("await smartDeleteDocument('inventory_items', itemId)")).toBeLessThan(
+      deleteBlock.indexOf('setInventoryItems(items => items.filter')
+    );
+    expect(deleteBlock).not.toContain('.forEach(');
+    expect(deleteBlock).not.toContain("smartDeleteDocument('inventory_items', itemId).catch");
+  });
+
   test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {
     const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');

@@ -1447,48 +1447,42 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
               {editingItem.id && (
                 <button
-                onClick={() => {
+                onClick={async () => {
                   const itemId = editingItem.id;
                   if (!itemId) return;
 
-                  if (!window.confirm(`确定要删除物品“${editingItem.name}”吗？此操作不可恢复！`)) {
+                  if (!window.confirm(`\u786e\u5b9a\u8981\u5220\u9664\u7269\u54c1\u201c${editingItem.name}\u201d\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d\uff01`)) {
                     return;
                   }
-                                  
-                  // 如果是酒水或饮料，同时删除对应的菜单项
-                  if (editingItem.category === 'beverage' || editingItem.category === 'alcohol') {
-                    menuItems
-                      .filter(m => m.stockItemId === itemId)
-                      .forEach(menuItem => {
-                        smartDeleteDocument('menu_items', menuItem.id).catch(error => {
-                          console.error('同步删除菜单项失败:', error);
-                        });
-                      });
-                    setMenuItems(items => items.filter(m => m.stockItemId !== itemId));
+
+                  const linkedMenuItems = (editingItem.category === 'beverage' || editingItem.category === 'alcohol')
+                    ? menuItems.filter(m => m.stockItemId === itemId)
+                    : [];
+                  const linkedFridgeInventory = fridgeInventory.filter(inv => inv.itemId === itemId);
+
+                  try {
+                    await Promise.all(linkedMenuItems.map(menuItem => smartDeleteDocument('menu_items', menuItem.id)));
+                    await Promise.all(linkedFridgeInventory.map(inv => smartDeleteDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`)));
+                    await smartDeleteDocument('inventory_items', itemId);
+                  } catch (error) {
+                    console.error('\u5220\u9664\u5e93\u5b58\u7269\u54c1\u5931\u8d25:', error);
+                    alert('\u5220\u9664\u5e93\u5b58\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                    return;
                   }
 
-                  fridgeInventory
-                    .filter(inv => inv.itemId === itemId)
-                    .forEach(inv => {
-                      const fridgeInventoryId = inv.id || `${inv.fridgeId}-${inv.itemId}`;
-                      smartDeleteDocument('fridge_inventory', fridgeInventoryId).catch(error => {
-                        console.error('同步删除冰箱库存记录失败:', error);
-                      });
-                    });
+                  if (linkedMenuItems.length > 0) {
+                    setMenuItems(items => items.filter(m => m.stockItemId !== itemId));
+                  }
                   setFridgeInventory(items => items.filter(inv => inv.itemId !== itemId));
-                  smartDeleteDocument('inventory_items', itemId).catch(error => {
-                    console.error('同步删除库存物品失败:', error);
-                  });
-                                  
                   setInventoryItems(items => items.filter(item => item.id !== itemId));
-                    
-                    setShowAddModal(false);
-                    setEditingItem({
-                      barcode: generateBarcode(),
-                      category: inventoryCategories[0]?.key || 'ingredient',
-                      unit: '克'
-                    });
-                    alert('删除成功！');
+
+                  setShowAddModal(false);
+                  setEditingItem({
+                    barcode: generateBarcode(),
+                    category: inventoryCategories[0]?.key || 'ingredient',
+                    unit: '\u514b'
+                  });
+                  alert('\u5220\u9664\u6210\u529f\uff01');
                   }}
                   style={{
                     padding: '0.6rem 1.2rem',
