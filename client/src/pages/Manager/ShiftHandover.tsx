@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
 import { smartAddDocument, smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
+import { normalizeHandoverRecords } from '../../utils/handoverRecords';
 
 interface CashCount {
   [key: string]: number;
@@ -66,15 +67,9 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     setIsRefreshing(true);
     try {
       const cloudRecords = await smartGetDocuments('handovers', true);
-      const normalizedRecords = cloudRecords.map((record: any) => ({
-        ...record,
-        id: record.id || ('handover-' + Date.now() + '-' + Math.random().toString(36).slice(2)),
-      })) as HistoryRecord[];
-
-      if (normalizedRecords.length > 0) {
-        setHistory(normalizedRecords);
-        await dataManager.saveData('handovers', normalizedRecords, { syncFirestore: false, notify: false });
-      }
+      const normalizedRecords = normalizeHandoverRecords(cloudRecords) as HistoryRecord[];
+      setHistory(normalizedRecords);
+      await dataManager.saveData('handovers', normalizedRecords, { syncFirestore: false, notify: false });
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25:', error);
@@ -203,7 +198,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         updatedAt: createdAt,
       } as HistoryRecord & { createdAt: string; updatedAt: string };
 
-      const newHistory = [record, ...history];
+      const newHistory = normalizeHandoverRecords([record, ...history]) as HistoryRecord[];
       setHistory(newHistory);
       await dataManager.saveData('handovers', newHistory, { syncFirestore: false, notify: false });
       await smartAddDocument('handovers', record);
