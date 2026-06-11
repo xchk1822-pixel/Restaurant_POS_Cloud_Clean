@@ -213,6 +213,18 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('hourStats[hour].revenue += order.totalAmount || 0');
   });
 
+  test('owner dashboard uses collected revenue and financial order dates', () => {
+    const ownerDashboardPath = path.join(process.cwd(), 'src/pages/Dashboard/OwnerDashboard.tsx');
+    const source = fs.readFileSync(ownerDashboardPath, 'utf8');
+
+    expect(source).toContain('getOrderCollectedAmount(order)');
+    expect(source).toContain('getOrderFinancialDateKey(order)');
+    expect(source).toContain('getOrderPaymentBreakdown(order)');
+    expect(source).toContain('getOrderFinancialTime(order)');
+    expect(source).not.toContain('Number(order.totalAmount || order.total || 0)');
+    expect(source).not.toContain('const timestamp = getRecordTime(order);');
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

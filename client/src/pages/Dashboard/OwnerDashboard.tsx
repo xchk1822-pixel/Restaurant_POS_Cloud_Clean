@@ -17,6 +17,7 @@ import {
   sumOwnerExpenseByKind,
   sumOwnerSupplierDebt,
 } from '../../utils/ownerDashboardData';
+import { getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown } from '../../utils/financeMetrics';
 import { getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 
 interface StoreStats {
@@ -50,7 +51,12 @@ const money = (value: number) =>
 
 const number = (value: number) => value.toLocaleString('es-NI');
 
-const getOrderAmount = (order: any): number => Number(order.totalAmount || order.total || 0);
+const getOrderAmount = (order: any): number => getOrderCollectedAmount(order);
+
+const getOrderFinancialTime = (order: any): number => {
+  const dateKey = getOrderFinancialDateKey(order);
+  return dateKey ? new Date(`${dateKey}T00:00:00-06:00`).getTime() : 0;
+};
 
 const getRecordTime = (record: any): number =>
   toTimestampMillis(record.createdAt || record.orderDate || record.date || record.updatedAt || record.lastModified);
@@ -164,7 +170,7 @@ const OwnerDashboard: React.FC = () => {
   const filteredOrders = useMemo(() => {
     const start = getRangeStart(timeRange);
     return orders.filter(order => {
-      const timestamp = getRecordTime(order);
+      const timestamp = getOrderFinancialTime(order);
       return timestamp && timestamp >= start;
     });
   }, [orders, timeRange]);
@@ -213,7 +219,9 @@ const OwnerDashboard: React.FC = () => {
     filteredOrders.forEach(order => {
       const method = order.paymentMethod || 'cash';
       const label = method === 'cash' ? '现金' : method === 'card' ? '刷卡' : method === 'mixed' ? '混合' : '其他';
-      channels[label] = (channels[label] || 0) + getOrderAmount(order);
+      const breakdown = getOrderPaymentBreakdown(order);
+      const amount = method === 'mixed' ? breakdown.cash + breakdown.card : getOrderAmount(order);
+      channels[label] = (channels[label] || 0) + amount;
     });
     return Object.entries(channels).map(([name, value]) => ({ name, value }));
   }, [filteredOrders]);
@@ -221,9 +229,9 @@ const OwnerDashboard: React.FC = () => {
   const salesTrend = useMemo(() => {
     const trend: Record<string, number> = {};
     filteredOrders.forEach(order => {
-      const timestamp = getRecordTime(order);
-      if (!timestamp) return;
-      const key = getLocalDateString(new Date(timestamp)).slice(5);
+      const dateKey = getOrderFinancialDateKey(order);
+      if (!dateKey) return;
+      const key = dateKey.slice(5);
       trend[key] = (trend[key] || 0) + getOrderAmount(order);
     });
     return Object.entries(trend)
