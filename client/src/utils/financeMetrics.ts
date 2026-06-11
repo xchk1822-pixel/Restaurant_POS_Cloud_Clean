@@ -60,6 +60,23 @@ export const getOrderPaymentBreakdown = (order: any): { cash: number; card: numb
   return { cash: collectedAmount, card: 0 };
 };
 
+export const getOrderFinancialDateKey = (order: any): string => {
+  if (getOrderCollectedAmount(order) <= 0) return '';
+
+  const timestamp = toTimestampMillis(
+    order?.lastPaidAt ||
+    order?.paidAt ||
+    order?.completedAt ||
+    order?.clearedAt ||
+    order?.date ||
+    order?.createdAt ||
+    order?.orderDate ||
+    order?.updatedAt
+  );
+
+  return timestamp ? getLocalDateString(new Date(timestamp)) : '';
+};
+
 export const getExpenseDateKey = (expense: any): string => {
   if (expense?.date && /^\d{4}-\d{2}-\d{2}$/.test(String(expense.date))) {
     return String(expense.date);

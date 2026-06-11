@@ -178,6 +178,7 @@ describe('production data safety guards', () => {
     const source = fs.readFileSync(reportsPath, 'utf8');
 
     expect(source).toContain('getOrderCollectedAmount(order)');
+    expect(source).toContain('getOrderFinancialDateKey(order) === date');
     expect(source).toContain('getOrderPaymentBreakdown(order)');
     expect(source).toContain('getExpenseDateKey(exp)');
     expect(source).toContain('getExpenseDateKey(expense) === selectedDate');

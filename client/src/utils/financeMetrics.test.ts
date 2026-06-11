@@ -1,6 +1,7 @@
 import {
   getExpenseDateKey,
   getOrderCollectedAmount,
+  getOrderFinancialDateKey,
   getOrderPaymentBreakdown,
   isPurchaseRelatedExpense,
   sumExpensesByKind,
@@ -44,5 +45,18 @@ describe('finance metrics helpers', () => {
     expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 120, paymentMethod: 'mixed', cashAmount: 50, cardAmount: 70 })).toEqual({ cash: 50, card: 70 });
     expect(getOrderPaymentBreakdown({ paymentStatus: 'partial', totalAmount: 120, paidAmount: 30, paymentMethod: 'cash' })).toEqual({ cash: 30, card: 0 });
     expect(getOrderPaymentBreakdown({ paymentStatus: 'unpaid', totalAmount: 120, paymentMethod: 'cash' })).toEqual({ cash: 0, card: 0 });
+  });
+
+  test('uses payment date as financial order date', () => {
+    const order = {
+      status: 'served',
+      paymentStatus: 'paid',
+      totalAmount: 100,
+      createdAt: '2026-06-10T23:30:00.000-06:00',
+      lastPaidAt: '2026-06-11T00:10:00.000-06:00',
+    };
+
+    expect(getOrderFinancialDateKey(order)).toBe('2026-06-11');
+    expect(getOrderFinancialDateKey({ ...order, paymentStatus: 'unpaid' })).toBe('');
   });
 });

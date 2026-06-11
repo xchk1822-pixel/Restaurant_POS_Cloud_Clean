@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
-import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { getExpenseDateKey, getOrderCollectedAmount, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
@@ -21,12 +20,6 @@ interface DailyReport {
 interface FinancialReportsModuleProps {
   orders?: any[];
 }
-
-const getRecordDateString = (value: any): string => {
-  if (!value) return '';
-  const timestamp = toTimestampMillis(value);
-  return timestamp ? getLocalDateString(new Date(timestamp)) : '';
-};
 
 const getSupplierDebtTotal = (purchases: any[]): number => {
   return purchases.reduce((sum: number, purchase: any) => {
@@ -97,14 +90,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const generateDailyReport = React.useCallback((date: string): DailyReport => {
     console.log('Generating financial report:', date, 'orders:', orders.length);
 
-    const dayOrders = orders.filter((order: any) => {
-      const orderDate = order.date || order.createdAt;
-      if (!orderDate) return false;
-
-      const orderDateStr = getRecordDateString(orderDate);
-
-      return orderDateStr === date;
-    });
+    const dayOrders = orders.filter((order: any) => getOrderFinancialDateKey(order) === date);
 
     console.log(`  - ${date} orders:`, dayOrders.length);
 
