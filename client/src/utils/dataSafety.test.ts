@@ -318,6 +318,35 @@ describe('production data safety guards', () => {
     expect(addFridgeBlock).not.toContain("smartAddDocument('fridges', newFridge)");
   });
 
+  test('fridge edit and delete wait for deterministic cloud writes before local state updates', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const editBlock = source.slice(
+      source.indexOf('const handleEditFridge = async'),
+      source.indexOf('const handleDeleteFridge = async')
+    );
+    const deleteBlock = source.slice(
+      source.indexOf('const handleDeleteFridge = async'),
+      source.indexOf('const handleSimpleTransfer')
+    );
+
+    expect(editBlock).toContain("await smartSetDocument('fridges', editingFridge.id, updatedFridge)");
+    expect(editBlock.indexOf("await smartSetDocument('fridges', editingFridge.id, updatedFridge)")).toBeLessThan(
+      editBlock.indexOf('setFridges(fridges.map')
+    );
+    expect(editBlock).not.toContain("smartUpdateDocument('fridges', editingFridge.id");
+
+    expect(deleteBlock).toContain("await smartDeleteDocument('fridges', fridge.id)");
+    expect(deleteBlock).toContain("return smartDeleteDocument('fridge_inventory', recordId)");
+    expect(deleteBlock.indexOf("await smartDeleteDocument('fridges', fridge.id)")).toBeLessThan(
+      deleteBlock.indexOf('setFridges(fridges.filter')
+    );
+    expect(deleteBlock.indexOf("return smartDeleteDocument('fridge_inventory', recordId)")).toBeLessThan(
+      deleteBlock.indexOf('setFridgeInventory(fridgeInventory.filter')
+    );
+    expect(deleteBlock).not.toContain('recordsToDelete.forEach');
+  });
+
   test('employee refresh persists deletion tombstones and delete writes are single-document', () => {
     const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
     const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');

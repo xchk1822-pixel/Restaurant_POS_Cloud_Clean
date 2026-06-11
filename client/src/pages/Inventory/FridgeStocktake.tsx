@@ -239,7 +239,7 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // 编辑冰箱
-  const handleEditFridge = () => {
+  const handleEditFridge = async () => {
     if (!editingFridge || !newFridgeName.trim()) return;
     
     const updatedFridge = {
@@ -249,14 +249,17 @@ const FridgeStocktake: React.FC = () => {
       lastModified: Date.now()
     };
 
+    await smartSetDocument('fridges', editingFridge.id, updatedFridge).catch(error => {
+      console.error('保存编辑冰箱失败:', error);
+      alert('保存编辑冰箱失败，请检查网络后重试');
+      throw error;
+    });
+
     setFridges(fridges.map(f =>
       f.id === editingFridge.id
         ? updatedFridge
         : f
     ));
-    smartUpdateDocument('fridges', editingFridge.id, updatedFridge).catch(error => {
-      console.error('同步编辑冰箱失败:', error);
-    });
     
     setEditingFridge(null);
     setNewFridgeName('');
@@ -265,23 +268,29 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // 删除冰箱
-  const handleDeleteFridge = (fridge: any) => {
+  const handleDeleteFridge = async (fridge: any) => {
     if (!window.confirm(`确定要删除冰箱“${fridge.name}”吗？该冰箱的所有库存记录也将被删除。`)) {
       return;
     }
     
     const recordsToDelete = fridgeInventory.filter(inv => inv.fridgeId === fridge.id);
+    await smartDeleteDocument('fridges', fridge.id).catch(error => {
+      console.error('\u5220\u9664\u51b0\u7bb1\u5931\u8d25:', error);
+      alert('\u5220\u9664\u51b0\u7bb1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      throw error;
+    });
+
+    await Promise.all(recordsToDelete.map(record => {
+      const recordId = record.id || `${record.fridgeId}-${record.itemId}`;
+      return smartDeleteDocument('fridge_inventory', recordId);
+    })).catch(error => {
+      console.error('\u5220\u9664\u51b0\u7bb1\u5e93\u5b58\u8bb0\u5f55\u5931\u8d25:', error);
+      alert('\u5220\u9664\u51b0\u7bb1\u5e93\u5b58\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      throw error;
+    });
+
     setFridges(fridges.filter(f => f.id !== fridge.id));
     setFridgeInventory(fridgeInventory.filter(inv => inv.fridgeId !== fridge.id));
-    smartDeleteDocument('fridges', fridge.id).catch(error => {
-      console.error('同步删除冰箱失败:', error);
-    });
-    recordsToDelete.forEach(record => {
-      const recordId = record.id || `${record.fridgeId}-${record.itemId}`;
-      smartDeleteDocument('fridge_inventory', recordId).catch(error => {
-        console.error('同步删除冰箱库存记录失败:', error);
-      });
-    });
     
     if (selectedFridge === fridge.id && fridges.length > 1) {
       setSelectedFridge(fridges.find(f => f.id !== fridge.id)?.id || '');
