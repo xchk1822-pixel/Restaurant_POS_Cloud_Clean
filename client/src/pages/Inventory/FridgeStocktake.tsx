@@ -3,6 +3,8 @@ import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
+import { dataService } from '../../services/DataService';
+import { normalizeFridgeInventoryForRefresh, normalizeFridgesForRefresh, normalizeInventoryItemsForRefresh, saveFridgeRefreshCache, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
 
 interface FridgeItem {
   fridgeId: string;
@@ -105,26 +107,26 @@ const FridgeStocktake: React.FC = () => {
     setIsRefreshing(true);
     try {
       const [cloudFridges, cloudFridgeInventory, cloudItems, cloudHistory] = await Promise.all([
-        smartGetDocuments('fridges'),
-        smartGetDocuments('fridge_inventory'),
-        smartGetDocuments('inventory_items'),
-        smartGetDocuments('fridge_stocktake_history')
+        smartGetDocuments('fridges', true),
+        smartGetDocuments('fridge_inventory', true),
+        smartGetDocuments('inventory_items', true),
+        smartGetDocuments('fridge_stocktake_history', true)
       ]);
 
-      if (cloudFridges.length > 0) {
-        setFridges(prev => mergeRecordsByVersion(prev, cloudFridges));
-      }
+      const storeId = dataService.getCurrentStoreId();
+      const normalizedFridges = normalizeFridgesForRefresh(cloudFridges);
+      const normalizedFridgeInventory = normalizeFridgeInventoryForRefresh(cloudFridgeInventory);
+      const normalizedCloudItems = normalizeInventoryItemsForRefresh(cloudItems);
 
-      if (cloudFridgeInventory.length > 0) {
-        setFridgeInventory(prev => mergeRecordsByVersion(prev, cloudFridgeInventory));
+      setFridges(normalizedFridges);
+      if (normalizedFridges.length > 0 && !normalizedFridges.some((fridge: any) => fridge.id === selectedFridge)) {
+        setSelectedFridge(normalizedFridges[0].id);
       }
+      setFridgeInventory(normalizedFridgeInventory);
+      setInventoryItems(normalizedCloudItems);
 
-      if (cloudItems.length > 0) {
-        setInventoryItems(prev => mergeRecordsByVersion(prev, cloudItems, item => ({
-          ...item,
-          lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
-        })));
-      }
+      saveFridgeRefreshCache(storeId, normalizedFridges, normalizedFridgeInventory);
+      saveInventoryRefreshCache(storeId, normalizedCloudItems);
 
       if (cloudHistory.length > 0) {
         const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);

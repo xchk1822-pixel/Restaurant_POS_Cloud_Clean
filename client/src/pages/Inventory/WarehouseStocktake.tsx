@@ -3,6 +3,8 @@ import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
+import { dataService } from '../../services/DataService';
+import { normalizeInventoryItemsForRefresh, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -61,16 +63,13 @@ const WarehouseStocktake: React.FC = () => {
     setIsRefreshing(true);
     try {
       const [cloudItems, cloudHistory] = await Promise.all([
-        smartGetDocuments('inventory_items'),
-        smartGetDocuments('warehouse_stocktake_history')
+        smartGetDocuments('inventory_items', true),
+        smartGetDocuments('warehouse_stocktake_history', true)
       ]);
 
-      if (cloudItems.length > 0) {
-        setInventoryItems(prev => mergeRecordsByVersion(prev, cloudItems, item => ({
-          ...item,
-          lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
-        })));
-      }
+      const normalizedCloudItems = normalizeInventoryItemsForRefresh(cloudItems);
+      setInventoryItems(normalizedCloudItems);
+      saveInventoryRefreshCache(dataService.getCurrentStoreId(), normalizedCloudItems);
 
       if (cloudHistory.length > 0) {
         const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
