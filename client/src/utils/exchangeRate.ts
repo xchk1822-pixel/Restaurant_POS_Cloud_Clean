@@ -8,9 +8,10 @@ import {
   getLocalDateTimeString as getNicaraguaDateTimeString,
 } from './localTime';
 
-interface ExchangeRateConfig {
+export interface ExchangeRateConfig {
   usdToNio: number;
   pointsToCurrency: number;
+  pointsEarnPerCurrency: number;
   lastUpdated: string;
 }
 
@@ -36,6 +37,7 @@ export const getLocalDateTimeString = (date: Date = new Date()): string => {
 const DEFAULT_CONFIG: ExchangeRateConfig = {
   usdToNio: 36.5,
   pointsToCurrency: 100,
+  pointsEarnPerCurrency: 1,
   lastUpdated: getLocalDateString(), // 🔥 使用本地时间
 };
 
@@ -46,7 +48,10 @@ export const getExchangeRateConfig = (): ExchangeRateConfig => {
   try {
     const saved = localStorage.getItem(EXCHANGE_RATE_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      return {
+        ...DEFAULT_CONFIG,
+        ...JSON.parse(saved),
+      };
     }
   } catch (e) {
     console.error('读取汇率配置失败:', e);
@@ -66,6 +71,10 @@ export const getUSDToNioRate = (): number => {
  */
 export const getPointsExchangeRate = (): number => {
   return getExchangeRateConfig().pointsToCurrency;
+};
+
+export const getPointsEarnRate = (): number => {
+  return getExchangeRateConfig().pointsEarnPerCurrency;
 };
 
 /**
@@ -96,7 +105,7 @@ export const pointsToAmount = (points: number): number => {
  * 金额转积分
  */
 export const amountToPoints = (amount: number): number => {
-  const rate = getPointsExchangeRate();
+  const rate = getPointsEarnRate();
   return Math.floor(amount * rate);
 };
 

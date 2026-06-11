@@ -3,10 +3,10 @@ import MenuSelection from '../../components/MenuSelection';
 import SplitBillModal from '../../components/SplitBillModal';
 import { useAppContext } from '../../contexts/AppContext';
 import { dataService } from '../../services/DataService';
-import { getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
+import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
-import { smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
+import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
 // 鉂?涓存椂绂佺敤 Firestore 鍚屾
 // import { smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
 
@@ -79,6 +79,18 @@ interface Customer {
   notes?: string;
 }
 
+interface PointsTransaction {
+  id: string;
+  customerId: string;
+  orderId: string;
+  orderNumber?: string;
+  type: 'earn' | 'redeem' | 'adjust';
+  points: number;
+  amount?: number;
+  description: string;
+  createdAt: string;
+}
+
 interface Order {
   id: string;
   orderNumber?: string; // 璁㈠崟鍙凤紙鏍煎紡锛歁MDD + 搴忓彿锛?
@@ -115,6 +127,11 @@ interface Order {
   stockDeductedAt?: Date;
   stockDeductedItems?: Record<string, number>;
   stockDeductionOperationId?: string;
+  pointsProcessed?: boolean;
+  pointsProcessedAt?: Date;
+  pointsEarned?: number;
+  pointsUsed?: number;
+  pointsDiscount?: number;
   lastModified?: number; // 馃敟 鏈€鍚庝慨鏀规椂闂存埑锛堟绉掞級锛岀敤浜庡璁惧鍚屾鐗堟湰鎺у埗
 }
 
@@ -164,6 +181,11 @@ const getOrdersSignature = (orders: Array<Partial<Order>> = []): string => {
         stockDeductedAt: normalizeDateForSignature(order.stockDeductedAt),
         stockDeductedItems: order.stockDeductedItems || {},
         stockDeductionOperationId: order.stockDeductionOperationId || null,
+        pointsProcessed: !!order.pointsProcessed,
+        pointsProcessedAt: normalizeDateForSignature(order.pointsProcessedAt),
+        pointsEarned: order.pointsEarned || 0,
+        pointsUsed: order.pointsUsed || 0,
+        pointsDiscount: order.pointsDiscount || 0,
         items: (order.items || []).map(item => ({
           id: item.id,
           menuItemId: item.menuItemId,
@@ -210,6 +232,7 @@ const serializeOrderForFirestore = (order: Order): any => {
     clearedAt: order.clearedAt instanceof Date ? order.clearedAt.toISOString() : order.clearedAt,
     lastPaidAt: order.lastPaidAt instanceof Date ? order.lastPaidAt.toISOString() : order.lastPaidAt,
     stockDeductedAt: order.stockDeductedAt instanceof Date ? order.stockDeductedAt.toISOString() : order.stockDeductedAt,
+    pointsProcessedAt: order.pointsProcessedAt instanceof Date ? order.pointsProcessedAt.toISOString() : order.pointsProcessedAt,
     lastModified: order.lastModified || Date.now(),
   });
 };
@@ -423,6 +446,7 @@ const POS: React.FC = () => {
   const publishedTablesSignatureRef = useRef('');
   const deletedTableIdsRef = useRef<Set<string>>(new Set());
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
+  const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
 
   // 绂佹椤甸潰鏁翠綋婊氬姩
   useEffect(() => {
@@ -984,6 +1008,7 @@ const POS: React.FC = () => {
             completedAt: order.completedAt instanceof Date ? order.completedAt.toISOString() : order.completedAt,
             clearedAt: order.clearedAt instanceof Date ? order.clearedAt.toISOString() : order.clearedAt,
             stockDeductedAt: order.stockDeductedAt instanceof Date ? order.stockDeductedAt.toISOString() : order.stockDeductedAt,
+            pointsProcessedAt: order.pointsProcessedAt instanceof Date ? order.pointsProcessedAt.toISOString() : order.pointsProcessedAt,
             lastModified: order.lastModified || Date.now(),
           };
           smartUpdateDocument('pos_orders', order.id, orderData).catch(error => {
@@ -1202,25 +1227,91 @@ const POS: React.FC = () => {
     setViewMode('order');
   };
 
-  // 鏇存柊椤惧绉垎鍜屾秷璐硅褰?
-  const updateCustomerAfterOrder = (customerId: string | undefined, amount: number, usedPoints: number = 0) => {
-    if (!customerId) return;
+  const processCustomerPointsForCompletedOrder = async (order: Order): Promise<Order> => {
+    if (!order.customerId || order.pointsProcessed) {
+      return order;
+    }
 
-    setCustomers(prevCustomers => prevCustomers.map(cust => {
-      if (cust.id === customerId) {
-        // 姣忔秷璐?1 鍏冭幏寰?1 绉垎锛岀劧鍚庢墸鍑忎娇鐢ㄧ殑绉垎
-        const earnedPoints = Math.floor(amount);
-        const finalPoints = Math.max(0, cust.points + earnedPoints - usedPoints);
-        return {
-          ...cust,
-          points: finalPoints,
-          totalSpent: cust.totalSpent + amount,
-          visitCount: cust.visitCount + 1,
-          lastVisitAt: getLocalDateTimeString()  // 馃攧 浣跨敤鏈湴鏃堕棿瀛楃涓?
-        };
-      }
-      return cust;
-    }));
+    if (pointsProcessingOrderIdsRef.current.has(order.id)) {
+      return order;
+    }
+    pointsProcessingOrderIdsRef.current.add(order.id);
+
+    const customer = customers.find(cust => cust.id === order.customerId);
+    if (!customer) {
+      console.warn('completed order has no matching customer for points:', order.id, order.customerId);
+      pointsProcessingOrderIdsRef.current.delete(order.id);
+      return order;
+    }
+
+    const redeemedPoints = Math.max(0, Number(order.pointsUsed || 0));
+    const redeemedAmount = Math.max(0, Number(order.pointsDiscount || 0));
+    const earningBaseAmount = Math.max(0, Number(order.totalAmount || 0));
+    const earnedPoints = amountToPoints(earningBaseAmount);
+    const finalPoints = Math.max(0, Number(customer.points || 0) + earnedPoints - redeemedPoints);
+    const processedAt = new Date();
+
+    const updatedCustomer: Customer = {
+      ...customer,
+      points: finalPoints,
+      totalSpent: Number(customer.totalSpent || 0) + earningBaseAmount,
+      visitCount: Number(customer.visitCount || 0) + 1,
+      lastVisitAt: getLocalDateTimeString(processedAt),
+    };
+
+    const updatedCustomers = customers.map(cust =>
+      cust.id === customer.id ? updatedCustomer : cust
+    );
+
+    setCustomers(updatedCustomers);
+    await dataManager.saveData('customers', updatedCustomers, { syncFirestore: false, notify: false });
+    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+
+    const transactions: PointsTransaction[] = [];
+    if (earnedPoints > 0) {
+      transactions.push({
+        id: `POINTS-${order.id}-earn`,
+        customerId: customer.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        type: 'earn',
+        points: earnedPoints,
+        amount: earningBaseAmount,
+        description: `消费获得积分 C$ ${earningBaseAmount.toFixed(2)} +${earnedPoints}`,
+        createdAt: processedAt.toISOString(),
+      });
+    }
+
+    if (redeemedPoints > 0) {
+      transactions.push({
+        id: `POINTS-${order.id}-redeem`,
+        customerId: customer.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        type: 'redeem',
+        points: -redeemedPoints,
+        amount: redeemedAmount,
+        description: `订单积分抵扣 C$ ${redeemedAmount.toFixed(2)} -${redeemedPoints}`,
+        createdAt: processedAt.toISOString(),
+      });
+    }
+
+    await Promise.all(transactions.map(transaction =>
+      smartSetDocument('points_transactions', transaction.id, transaction)
+    ));
+
+    const processedOrder = {
+      ...order,
+      pointsProcessed: true,
+      pointsProcessedAt: processedAt,
+      pointsEarned: earnedPoints,
+      pointsUsed: redeemedPoints,
+      pointsDiscount: redeemedAmount,
+      lastModified: Date.now(),
+    };
+
+    pointsProcessingOrderIdsRef.current.delete(order.id);
+    return processedOrder;
   };
 
   const normalizeMenuItemType = (item: any): 'recipe' | 'direct' => {
@@ -1350,6 +1441,8 @@ const POS: React.FC = () => {
         status: 'draft',
         createdAt: new Date(),
         totalAmount: subtotal,
+        pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
+        pointsDiscount: pointsRedemptionAmount,
         paidAmount: 0,
         paymentStatus: 'unpaid',
         settledAmount: 0
@@ -1625,6 +1718,8 @@ const POS: React.FC = () => {
         createdAt: now,
         preparingAt: now,
         totalAmount: finalTotal,
+        pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
+        pointsDiscount: pointsRedemptionAmount,
         paidAmount: 0,
         paymentStatus: 'unpaid',
         settledAmount: 0,
@@ -1662,6 +1757,8 @@ const POS: React.FC = () => {
             ...o,
             items: updatedItems,
             totalAmount: finalTotal,
+            pointsUsed: pointsRedemptionEnabled ? pointsToUse : (o.pointsUsed || 0),
+            pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (o.pointsDiscount || 0),
             paymentStatus: nextPaymentStatus,
             updatedAt: new Date(),
             lastModified: Date.now()
@@ -1783,6 +1880,33 @@ const POS: React.FC = () => {
     pendingOrderSyncIdsRef.current.add(order.id);
     savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
 
+    processCustomerPointsForCompletedOrder(completedOrder)
+      .then(pointsProcessedOrder => {
+        if (!pointsProcessedOrder.pointsProcessed) return;
+        setOrders(prevOrders => prevOrders.map(o =>
+          o.id === pointsProcessedOrder.id ? pointsProcessedOrder : o
+        ));
+        pendingOrderSyncIdsRef.current.add(pointsProcessedOrder.id);
+        savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+        smartUpdateDocument('pos_orders', pointsProcessedOrder.id, {
+          ...pointsProcessedOrder,
+          createdAt: pointsProcessedOrder.createdAt instanceof Date ? pointsProcessedOrder.createdAt.toISOString() : pointsProcessedOrder.createdAt,
+          preparingAt: pointsProcessedOrder.preparingAt instanceof Date ? pointsProcessedOrder.preparingAt.toISOString() : pointsProcessedOrder.preparingAt,
+          servedAt: pointsProcessedOrder.servedAt instanceof Date ? pointsProcessedOrder.servedAt.toISOString() : pointsProcessedOrder.servedAt,
+          completedAt: pointsProcessedOrder.completedAt instanceof Date ? pointsProcessedOrder.completedAt.toISOString() : pointsProcessedOrder.completedAt,
+          clearedAt: pointsProcessedOrder.clearedAt instanceof Date ? pointsProcessedOrder.clearedAt.toISOString() : pointsProcessedOrder.clearedAt,
+          lastPaidAt: pointsProcessedOrder.lastPaidAt instanceof Date ? pointsProcessedOrder.lastPaidAt.toISOString() : pointsProcessedOrder.lastPaidAt,
+          stockDeductedAt: pointsProcessedOrder.stockDeductedAt instanceof Date ? pointsProcessedOrder.stockDeductedAt.toISOString() : pointsProcessedOrder.stockDeductedAt,
+          pointsProcessedAt: pointsProcessedOrder.pointsProcessedAt instanceof Date ? pointsProcessedOrder.pointsProcessedAt.toISOString() : pointsProcessedOrder.pointsProcessedAt,
+        }).catch(error => {
+          console.error('sync points-processed order failed:', pointsProcessedOrder.id, error);
+        });
+      })
+      .catch(error => {
+        pointsProcessingOrderIdsRef.current.delete(order.id);
+        console.error('process customer points failed:', order.id, error);
+      });
+
     if (options.releaseTable && order.tableId) {
       setTables(prevTables => prevTables.map(t =>
         t.id === order.tableId
@@ -1846,6 +1970,8 @@ const POS: React.FC = () => {
           ...existingOrder,
           items: currentItems,
           totalAmount: finalTotal,
+          pointsUsed: pointsRedemptionEnabled ? pointsToUse : (existingOrder.pointsUsed || 0),
+          pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (existingOrder.pointsDiscount || 0),
           status: 'served',
           servedAt: existingOrder.servedAt || now,
           paymentStatus: nextPaymentStatus,
@@ -1891,6 +2017,8 @@ const POS: React.FC = () => {
           servedAt: now,
           completedAt: undefined,
           totalAmount: finalTotal,
+          pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
+          pointsDiscount: pointsRedemptionAmount,
           paidAmount: newSettledAmount,
           paymentStatus: nextPaymentStatus,
           settledAmount: newSettledAmount,
@@ -1918,9 +2046,6 @@ const POS: React.FC = () => {
       if (paidOrderForSideEffects?.orderType === 'delivery' && paidOrderForSideEffects.deliveryType === 'outsourced' && deliveryFee > 0) {
         createDeliveryExpense(paidOrderForSideEffects, deliveryFee);
       }
-
-      const usedPoints = pointsRedemptionEnabled ? pointsToUse : 0;
-      updateCustomerAfterOrder(paidOrderForSideEffects?.customerId || selectedCustomer?.id, finalTotal, usedPoints);
 
       let successMessage = `\u2705 \u652f\u4ed8\u6210\u529f\uff01
 
@@ -1951,6 +2076,8 @@ const POS: React.FC = () => {
       setCashUSD('');
       setCardNIO('');
       setCardUSD('');
+      setPointsRedemptionEnabled(false);
+      setPointsToUse(0);
 
       if (finalOrderId) {
         console.log('payment completed:', finalOrderId);

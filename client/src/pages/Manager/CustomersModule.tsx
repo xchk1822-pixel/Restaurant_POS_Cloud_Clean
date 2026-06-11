@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { getPointsExchangeRate } from '../../utils/exchangeRate';
+import { getExchangeRateConfig, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 
 interface Customer {
@@ -57,6 +57,11 @@ const saveLocalPointsTransactions = (records: PointsTransaction[]) => {
   localStorage.setItem('points_transactions', JSON.stringify(records));
 };
 
+const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
+  localStorage.setItem('global_exchange_rate', JSON.stringify(config));
+  window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
+};
+
 const CustomersModule: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>(() => dataManager.getData('customers'));
   const [transactions, setTransactions] = useState<PointsTransaction[]>(() => loadLocalPointsTransactions());
@@ -84,17 +89,22 @@ const CustomersModule: React.FC = () => {
   const [redeemAmount, setRedeemAmount] = useState<number>(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [pointsConfig, setPointsConfig] = useState<ExchangeRateConfig>(() => getExchangeRateConfig());
+  const [tempPointsConfig, setTempPointsConfig] = useState<ExchangeRateConfig>(() => getExchangeRateConfig());
+  const [isSavingPointsSettings, setIsSavingPointsSettings] = useState(false);
   
   // 使用全局积分兑换率
-  const pointsExchangeRate = getPointsExchangeRate();
+  const pointsExchangeRate = pointsConfig.pointsToCurrency || getPointsExchangeRate();
+  const pointsEarnRate = pointsConfig.pointsEarnPerCurrency || 1;
 
   // 🔄 实时监听客户数据变化
   const refreshCustomerData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudCustomers, cloudTransactions] = await Promise.all([
+      const [cloudCustomers, cloudTransactions, cloudPointsConfigs] = await Promise.all([
         smartGetDocuments('customers', true),
         smartGetDocuments('points_transactions', true),
+        smartGetDocuments('exchange_rate', true),
       ]);
 
       await dataManager.saveData('customers', cloudCustomers, { syncFirestore: false, notify: false });
@@ -102,6 +112,19 @@ const CustomersModule: React.FC = () => {
       setCustomers(cloudCustomers);
       setTransactions(cloudTransactions as PointsTransaction[]);
       saveLocalPointsTransactions(cloudTransactions as PointsTransaction[]);
+
+      const cloudPointsConfig = (cloudPointsConfigs as ExchangeRateConfig[]).find((item: any) => item.id === 'global') || cloudPointsConfigs[0] as ExchangeRateConfig | undefined;
+      if (cloudPointsConfig) {
+        const nextConfig: ExchangeRateConfig = {
+          ...getExchangeRateConfig(),
+          ...cloudPointsConfig,
+          pointsEarnPerCurrency: Number(cloudPointsConfig.pointsEarnPerCurrency || 1),
+          pointsToCurrency: Number(cloudPointsConfig.pointsToCurrency || 100),
+        };
+        saveLocalPointsConfig(nextConfig);
+        setPointsConfig(nextConfig);
+        setTempPointsConfig(nextConfig);
+      }
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u5ba2\u6237\u6570\u636e\u5931\u8d25:', error);
@@ -295,6 +318,43 @@ const CustomersModule: React.FC = () => {
     setSelectedCustomer(null);
     setPointsAmount(0);
     alert(`✅ 已成功添加 ${pointsAmount} 积分`);
+  };
+
+  const handleSavePointsSettings = async () => {
+    const earnRate = Number(tempPointsConfig.pointsEarnPerCurrency);
+    const redeemRate = Number(tempPointsConfig.pointsToCurrency);
+
+    if (!Number.isFinite(earnRate) || earnRate < 0) {
+      alert('请输入有效的消费积分比例');
+      return;
+    }
+
+    if (!Number.isFinite(redeemRate) || redeemRate <= 0) {
+      alert('请输入有效的积分抵扣比例');
+      return;
+    }
+
+    setIsSavingPointsSettings(true);
+    try {
+      const nextConfig: ExchangeRateConfig = {
+        ...getExchangeRateConfig(),
+        ...tempPointsConfig,
+        pointsEarnPerCurrency: earnRate,
+        pointsToCurrency: redeemRate,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      saveLocalPointsConfig(nextConfig);
+      setPointsConfig(nextConfig);
+      setTempPointsConfig(nextConfig);
+      await smartSetDocument('exchange_rate', 'global', nextConfig);
+      alert('✅ 积分设置已保存');
+    } catch (error) {
+      console.error('保存积分设置失败:', error);
+      alert('保存积分设置失败，请检查网络后重试');
+    } finally {
+      setIsSavingPointsSettings(false);
+    }
   };
 
   // 积分兑换
@@ -572,6 +632,71 @@ const CustomersModule: React.FC = () => {
         <div style={styles.statCard('#8b5cf6')}>
           <div style={styles.statLabel}>总消费次数</div>
           <div style={styles.statValue('#8b5cf6')}>{stats.totalVisits.toLocaleString()}</div>
+        </div>
+      </div>
+
+      <div style={{
+        backgroundColor: 'white',
+        borderRadius: '0.5rem',
+        padding: '1rem',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        marginBottom: '1rem',
+        flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>积分设置</div>
+            <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.2rem' }}>
+              当前规则：消费 C$1 得 {pointsEarnRate} 分，{pointsExchangeRate} 分抵扣 C$1
+            </div>
+          </div>
+          <button
+            onClick={handleSavePointsSettings}
+            disabled={isSavingPointsSettings}
+            style={{
+              ...styles.btn(isSavingPointsSettings ? '#9ca3af' : '#10b981', 'white'),
+              cursor: isSavingPointsSettings ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isSavingPointsSettings ? '保存中...' : '保存积分设置'}
+          </button>
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '0.75rem',
+          marginTop: '0.9rem',
+        }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.85rem', fontWeight: 600, color: '#374151' }}>
+            消费积分比例
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={tempPointsConfig.pointsEarnPerCurrency}
+              onChange={(event) => setTempPointsConfig({
+                ...tempPointsConfig,
+                pointsEarnPerCurrency: parseFloat(event.target.value) || 0,
+              })}
+              style={styles.formInput}
+            />
+            <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 400 }}>每消费 C$1 获得多少积分</span>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.85rem', fontWeight: 600, color: '#374151' }}>
+            积分抵扣比例
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={tempPointsConfig.pointsToCurrency}
+              onChange={(event) => setTempPointsConfig({
+                ...tempPointsConfig,
+                pointsToCurrency: parseFloat(event.target.value) || 1,
+              })}
+              style={styles.formInput}
+            />
+            <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 400 }}>多少积分抵扣 C$1</span>
+          </label>
         </div>
       </div>
 
