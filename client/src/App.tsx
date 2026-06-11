@@ -1,9 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login/Login';
-import DataMigrationPage from './pages/DataMigrationPage';
-import UserMigrationPage from './pages/UserMigrationPage';
-import EmergencyFix from './pages/EmergencyFix';
 import OwnerDashboard from './pages/Dashboard/OwnerDashboard';
 import POS from './pages/POS/POS';
 import Kitchen from './pages/Kitchen/Kitchen';
@@ -24,9 +21,6 @@ import Stores from './pages/Manager/Stores';
 import ExchangeRateSettings from './pages/Manager/ExchangeRateSettings';
 import PermissionsModule from './pages/Settings/PermissionsModule';
 import DataBackup from './pages/Settings/DataBackup';
-import FirebaseTest from './pages/FirebaseTest';
-import OfflineTest from './pages/OfflineTest';
-import DataInitTest from './pages/DataInitTest';
 import MainLayout from './components/Layout/MainLayout';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AppProvider } from './contexts/AppContext';
@@ -89,9 +83,9 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/migrate" element={<DataMigrationPage />} />
-            <Route path="/migrate-users" element={<UserMigrationPage />} />
-            <Route path="/emergency-fix" element={<EmergencyFix />} />
+            <Route path="/migrate" element={<Navigate to="/settings/backup" replace />} />
+            <Route path="/migrate-users" element={<Navigate to="/settings/backup" replace />} />
+            <Route path="/emergency-fix" element={<Navigate to="/settings/backup" replace />} />
             <Route path="/data-recovery" element={<Navigate to="/settings/backup" replace />} />
             {/* 🔥 老板全局仪表板 - 使用真实 Firestore 数据 */}
             <Route path="/dashboard" element={<ProtectedRoute permissionId="dashboard"><OwnerDashboard /></ProtectedRoute>} />
@@ -122,9 +116,9 @@ function App() {
             <Route path="/stores" element={<Navigate to="/settings/stores" replace />} />
             <Route path="/exchange-rate" element={<Navigate to="/settings/exchange-rate" replace />} />
             <Route path="/reports" element={<Navigate to="/manager" replace />} />
-            <Route path="/firebase-test" element={<FirebaseTest />} />
-            <Route path="/offline-test" element={<OfflineTest />} />
-            <Route path="/data-init" element={<DataInitTest />} />
+            <Route path="/firebase-test" element={<Navigate to="/settings/backup" replace />} />
+            <Route path="/offline-test" element={<Navigate to="/settings/backup" replace />} />
+            <Route path="/data-init" element={<Navigate to="/settings/backup" replace />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>
