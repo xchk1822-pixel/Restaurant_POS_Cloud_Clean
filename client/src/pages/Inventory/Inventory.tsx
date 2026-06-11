@@ -104,41 +104,6 @@ const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory
 
 const mergeInventoryCategories = (...groups: any[][]): InventoryCategory[] => normalizeInventoryCategories(groups.flat());
 
-const getInventoryItemVersion = (item: any): number => {
-  if (!item) return 0;
-  const value = item.lastModified || item.lastUpdated || item.updatedAt || item.createdAt;
-  if (!value) return 0;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'object' && typeof value.seconds === 'number') {
-    return value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1000000);
-  }
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-const mergeInventoryItemsByVersion = (localItems: InventoryItem[], cloudItems: any[]): InventoryItem[] => {
-  const merged = new Map<string, InventoryItem>();
-
-  localItems.forEach(item => {
-    if (item?.id) merged.set(String(item.id), item);
-  });
-
-  cloudItems.forEach(cloudItem => {
-    if (!cloudItem?.id) return;
-    const id = String(cloudItem.id);
-    const localItem = merged.get(id);
-    if (!localItem || getInventoryItemVersion(cloudItem) >= getInventoryItemVersion(localItem)) {
-      merged.set(id, {
-        ...cloudItem,
-        lastUpdated: cloudItem.lastUpdated ? new Date(cloudItem.lastUpdated) : new Date()
-      } as InventoryItem);
-    }
-  });
-
-  return Array.from(merged.values());
-};
-
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const {
     inventoryItems,
@@ -285,19 +250,35 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     setIsRefreshingInventory(true);
     try {
       const [cloudItems, cloudCategories] = await Promise.all([
-        smartGetDocuments('inventory_items'),
-        smartGetDocuments('inventory_categories')
+        smartGetDocuments('inventory_items', true),
+        smartGetDocuments('inventory_categories', true)
       ]);
 
-      if (cloudItems.length > 0) {
-        setInventoryItems(prev => mergeInventoryItemsByVersion(prev, cloudItems));
+      const normalizedCloudItems = cloudItems.map((item: any) => ({
+        ...item,
+        currentStock: Number(item.currentStock) || 0,
+        minStock: Number(item.minStock) || 0,
+        costPrice: Number(item.costPrice) || 0,
+        salePrice: item.salePrice === undefined ? undefined : Number(item.salePrice) || 0,
+        lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
+      })) as InventoryItem[];
+
+      setInventoryItems(normalizedCloudItems);
+      const storeId = dataService.getCurrentStoreId();
+      if (storeId) {
+        localStorage.setItem(`store_${storeId}_inventory_items`, JSON.stringify(normalizedCloudItems));
+        localStorage.setItem(`store_${storeId}_inventory`, JSON.stringify(normalizedCloudItems));
+      } else {
+        localStorage.setItem('inventory_items', JSON.stringify(normalizedCloudItems));
+        localStorage.setItem('inventory', JSON.stringify(normalizedCloudItems));
       }
 
       const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
-      if (normalizedCloudCategories.length > 0) {
-        inventoryCategoryRemoteUpdateRef.current = true;
-        setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories));
-      }
+      inventoryCategoryRemoteUpdateRef.current = true;
+      setInventoryCategories(normalizedCloudCategories);
+      const categoryStorageKey = getInventoryCategoryStorageKey();
+      localStorage.setItem(categoryStorageKey, JSON.stringify(normalizedCloudCategories));
+      localStorage.setItem('inventory_categories', JSON.stringify(normalizedCloudCategories));
 
       setInventoryLastSyncedAt(new Date());
     } catch (error) {
@@ -306,7 +287,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     } finally {
       setIsRefreshingInventory(false);
     }
-  }, [setInventoryItems]);
+  }, [getInventoryCategoryStorageKey, setInventoryItems]);
 
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
