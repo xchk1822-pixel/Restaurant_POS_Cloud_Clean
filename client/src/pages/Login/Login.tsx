@@ -3,18 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { firebaseLogin, createFirebaseUser } from '../../services/FirebaseAuthService';
 
-interface User {
-  id: string;
-  username: string;
-  password: string;
-  name: string;
-  role: 'super_admin' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
-  storeId?: string;
-  storeName?: string;
-  createdAt: string;
-  status: 'active' | 'inactive';
-}
-
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -48,6 +36,9 @@ const Login: React.FC = () => {
         appUser = await firebaseLogin(username, password);
         console.log('✅ Firebase Auth 登录成功:', appUser.username);
       } catch (firebaseError: any) {
+        if (process.env.REACT_APP_ENABLE_LOCAL_LOGIN_FALLBACK !== 'true') {
+          throw firebaseError;
+        }
         console.warn('⚠️ Firebase Auth 登录失败，尝试本地验证:', firebaseError.message);
         
         // 🔥 Fallback：尝试旧的本地验证方式

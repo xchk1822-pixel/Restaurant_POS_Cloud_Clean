@@ -17,16 +17,18 @@ service cloud.firestore {
       return getUserStoreId() == storeId || 
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
     }
+
+    function isSuperAdmin() {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
     
     // ==================== 全局集合（所有认证用户可访问）====================
     
     // 用户集合
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (
-        request.auth.uid == userId || 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
-      );
+      allow create, update, delete: if isSuperAdmin();
     }
     
     // 分店集合
