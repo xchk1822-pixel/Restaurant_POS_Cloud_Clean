@@ -146,4 +146,22 @@ describe('production data safety guards', () => {
     expect(source).toContain('setInventoryCategories(normalizedCloudCategories)');
     expect(source).not.toContain('setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories))');
   });
+
+  test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+
+    expect(warehouseSource).toContain('setInventoryItems(normalizedCloudItems)');
+    expect(warehouseSource).toContain("dataService.getStoreKey('warehouse_stocktake_history')");
+    expect(warehouseSource).not.toContain("localStorage.getItem('warehouse_stocktake_history')");
+    expect(warehouseSource).not.toContain("localStorage.setItem('warehouse_stocktake_history'");
+
+    expect(fridgeSource).toContain('setFridges(normalizedFridges)');
+    expect(fridgeSource).toContain('setFridgeInventory(normalizedFridgeInventory)');
+    expect(fridgeSource).toContain("dataService.getStoreKey('fridge_stocktake_history')");
+    expect(fridgeSource).not.toContain("localStorage.getItem('fridge_stocktake_history')");
+    expect(fridgeSource).not.toContain("localStorage.setItem('fridge_stocktake_history'");
+  });
 });

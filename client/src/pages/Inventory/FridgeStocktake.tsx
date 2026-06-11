@@ -66,10 +66,12 @@ const FridgeStocktake: React.FC = () => {
     }
   });
   
+  const stocktakeHistoryStorageKey = dataService.getStoreKey('fridge_stocktake_history');
+
   // 盘点历史
   const [stocktakeHistory, setStocktakeHistory] = useState<any[]>(() => {
     try {
-      const saved = localStorage.getItem('fridge_stocktake_history');
+      const saved = localStorage.getItem(stocktakeHistoryStorageKey);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -131,7 +133,7 @@ const FridgeStocktake: React.FC = () => {
       if (cloudHistory.length > 0) {
         const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
         setStocktakeHistory(mergedHistory);
-        localStorage.setItem('fridge_stocktake_history', JSON.stringify(mergedHistory.slice(0, 50)));
+        localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(mergedHistory.slice(0, 50)));
       }
 
       setLastSyncedAt(new Date());
@@ -555,7 +557,7 @@ const FridgeStocktake: React.FC = () => {
 
     // 保存盘点历史
     try {
-      const saved = localStorage.getItem('fridge_stocktake_history');
+      const saved = localStorage.getItem(stocktakeHistoryStorageKey);
       const history = saved ? JSON.parse(saved) : [];
       const stocktakeRecord = {
         id: `stocktake-${Date.now()}`,
@@ -585,7 +587,7 @@ const FridgeStocktake: React.FC = () => {
         totalDiscrepancies: discrepancies.length
       };
       history.unshift(stocktakeRecord);
-      localStorage.setItem('fridge_stocktake_history', JSON.stringify(history.slice(0, 50)));
+      localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(history.slice(0, 50)));
       setStocktakeHistory(history.slice(0, 50));
       smartAddDocument('fridge_stocktake_history', stocktakeRecord).catch(error => {
         console.error('同步冰箱盘点历史失败:', error);
@@ -1688,7 +1690,7 @@ const FridgeStocktake: React.FC = () => {
         // 每次打开时重新加载历史
         const reloadHistory = () => {
           try {
-            const saved = localStorage.getItem('fridge_stocktake_history');
+                const saved = localStorage.getItem(stocktakeHistoryStorageKey);
             return saved ? JSON.parse(saved) : [];
           } catch {
             return [];
