@@ -1,3 +1,5 @@
+import { isPurchaseRelatedExpense } from './financeMetrics';
+
 const toNumber = (value: any): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -38,4 +40,21 @@ export const dedupeOwnerRecordsById = <T extends { id?: string; isDeleted?: bool
   });
 
   return Array.from(byId.values());
+};
+
+export const sumOwnerExpenseByKind = (expenses: any[], kind: 'purchase' | 'operating'): number => {
+  return expenses
+    .filter(expense => !expense?.isDeleted)
+    .filter(expense => kind === 'purchase' ? isPurchaseRelatedExpense(expense) : !isPurchaseRelatedExpense(expense))
+    .reduce((sum, expense) => sum + toNumber(expense?.amount), 0);
+};
+
+export const sumOwnerSupplierDebt = (purchases: any[]): number => {
+  return purchases
+    .filter(purchase => !purchase?.isDeleted)
+    .reduce((sum, purchase) => {
+      const total = toNumber(purchase?.totalAmount || purchase?.amount);
+      const paid = toNumber(purchase?.paidAmount);
+      return sum + Math.max(total - paid, 0);
+    }, 0);
 };

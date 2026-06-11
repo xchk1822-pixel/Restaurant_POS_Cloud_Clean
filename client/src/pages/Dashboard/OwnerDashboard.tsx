@@ -12,7 +12,11 @@ import {
   YAxis,
 } from 'recharts';
 import { smartGetDocuments } from '../../services/smartSyncService';
-import { dedupeOwnerRecordsById } from '../../utils/ownerDashboardData';
+import {
+  dedupeOwnerRecordsById,
+  sumOwnerExpenseByKind,
+  sumOwnerSupplierDebt,
+} from '../../utils/ownerDashboardData';
 import { getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 
 interface StoreStats {
@@ -173,18 +177,11 @@ const OwnerDashboard: React.FC = () => {
     });
   }, [expenses, timeRange]);
 
-  const filteredPurchases = useMemo(() => {
-    const start = getRangeStart(timeRange);
-    return purchases.filter(purchase => {
-      const timestamp = getRecordTime(purchase);
-      return timestamp && timestamp >= start;
-    });
-  }, [purchases, timeRange]);
-
   const totalSales = filteredOrders.reduce((sum, order) => sum + getOrderAmount(order), 0);
   const totalOrders = filteredOrders.length;
-  const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const totalPurchases = filteredPurchases.reduce((sum, purchase) => sum + Number(purchase.totalAmount || 0), 0);
+  const totalExpenses = sumOwnerExpenseByKind(filteredExpenses, 'operating');
+  const totalPurchases = sumOwnerExpenseByKind(filteredExpenses, 'purchase');
+  const totalSupplierDebt = sumOwnerSupplierDebt(purchases);
   const totalProfit = totalSales - totalExpenses - totalPurchases;
   const avgTicket = totalOrders > 0 ? totalSales / totalOrders : 0;
 
@@ -193,10 +190,9 @@ const OwnerDashboard: React.FC = () => {
       .map(store => {
         const storeOrders = filteredOrders.filter(order => order.storeId === store.id);
         const storeExpenses = filteredExpenses.filter(expense => expense.storeId === store.id);
-        const storePurchases = filteredPurchases.filter(purchase => purchase.storeId === store.id);
         const sales = storeOrders.reduce((sum, order) => sum + getOrderAmount(order), 0);
-        const expenseAmount = storeExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-        const purchaseAmount = storePurchases.reduce((sum, purchase) => sum + Number(purchase.totalAmount || 0), 0);
+        const expenseAmount = sumOwnerExpenseByKind(storeExpenses, 'operating');
+        const purchaseAmount = sumOwnerExpenseByKind(storeExpenses, 'purchase');
 
         return {
           id: store.id,
@@ -210,7 +206,7 @@ const OwnerDashboard: React.FC = () => {
         };
       })
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredExpenses, filteredOrders, filteredPurchases, stores]);
+  }, [filteredExpenses, filteredOrders, stores]);
 
   const paymentChannels = useMemo(() => {
     const channels: Record<string, number> = {};
@@ -522,7 +518,7 @@ const OwnerDashboard: React.FC = () => {
 
         <section className="metric-grid">
           <MetricCard label="营业额" value={money(totalSales)} note={`${number(totalOrders)} 笔订单`} />
-          <MetricCard label="净利润估算" value={money(totalProfit)} note={`采购 ${money(totalPurchases)}`} />
+          <MetricCard label="净利润估算" value={money(totalProfit)} note={`已付采购 ${money(totalPurchases)}`} />
           <MetricCard label="平均客单价" value={money(avgTicket)} note="按当前筛选时间计算" />
           <MetricCard label="分店/员工" value={`${stores.length} / ${employees.length}`} note="云端分店与员工汇总" />
         </section>
@@ -612,8 +608,9 @@ const OwnerDashboard: React.FC = () => {
 
             <div className="panel">
               <h2 className="panel-title">成本汇总</h2>
-              <div className="list-row"><span>采购支出</span><strong>{money(totalPurchases)}</strong></div>
+              <div className="list-row"><span>已付采购支出</span><strong>{money(totalPurchases)}</strong></div>
               <div className="list-row"><span>日常开支</span><strong>{money(totalExpenses)}</strong></div>
+              <div className="list-row"><span>供应商欠款</span><strong>{money(totalSupplierDebt)}</strong></div>
               <div className="list-row"><span>库存物品</span><strong>{number(inventory.length)}</strong></div>
             </div>
 

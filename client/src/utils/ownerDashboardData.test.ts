@@ -1,4 +1,8 @@
-import { dedupeOwnerRecordsById } from './ownerDashboardData';
+import {
+  dedupeOwnerRecordsById,
+  sumOwnerExpenseByKind,
+  sumOwnerSupplierDebt,
+} from './ownerDashboardData';
 
 describe('owner dashboard data helpers', () => {
   test('deduplicates records by id and keeps the newest version', () => {
@@ -23,5 +27,26 @@ describe('owner dashboard data helpers', () => {
     expect(dedupeOwnerRecordsById(records)).toEqual([
       { id: 'store-a', name: 'Active Store', lastModified: 1 },
     ]);
+  });
+
+  test('splits paid purchase expense from operating expense', () => {
+    const expenses = [
+      { id: 'purchase-1', amount: 100, relatedType: 'purchase' },
+      { id: 'repayment-1', amount: 40, relatedType: 'supplier_repayment' },
+      { id: 'rent-1', amount: 25, categoryId: 'rent' },
+    ];
+
+    expect(sumOwnerExpenseByKind(expenses, 'purchase')).toBe(140);
+    expect(sumOwnerExpenseByKind(expenses, 'operating')).toBe(25);
+  });
+
+  test('calculates supplier debt from unpaid purchase balance', () => {
+    const purchases = [
+      { id: 'cash-1', totalAmount: 100, paidAmount: 100 },
+      { id: 'credit-1', totalAmount: 300, paidAmount: 80 },
+      { id: 'deleted-1', totalAmount: 999, paidAmount: 0, isDeleted: true },
+    ];
+
+    expect(sumOwnerSupplierDebt(purchases)).toBe(220);
   });
 });
