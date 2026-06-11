@@ -305,6 +305,34 @@ describe('production data safety guards', () => {
     expect(fridgeSource).not.toContain("localStorage.setItem('fridge_stocktake_history'");
   });
 
+  test('stocktake completion awaits cloud writes before local success state', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+    const warehouseCompleteBlock = warehouseSource.slice(
+      warehouseSource.indexOf('const completeStocktake = async'),
+      warehouseSource.indexOf('const exportToCSV')
+    );
+    const fridgeCompleteBlock = fridgeSource.slice(
+      fridgeSource.indexOf('const completeStocktake = async'),
+      fridgeSource.indexOf('const moveItem')
+    );
+
+    expect(warehouseCompleteBlock).not.toContain('Promise.allSettled');
+    expect(fridgeCompleteBlock).not.toContain('Promise.allSettled');
+    expect(warehouseCompleteBlock).toContain("await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)))");
+    expect(fridgeCompleteBlock).toContain("updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))");
+    expect(warehouseCompleteBlock).toContain("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)");
+    expect(fridgeCompleteBlock).toContain("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)");
+    expect(warehouseCompleteBlock.indexOf("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)")).toBeLessThan(
+      warehouseCompleteBlock.indexOf('setStocktakeHistory(history.slice(0, 50))')
+    );
+    expect(fridgeCompleteBlock.indexOf("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)")).toBeLessThan(
+      fridgeCompleteBlock.indexOf('setStocktakeHistory(history.slice(0, 50))')
+    );
+  });
+
   test('fridge creation waits for deterministic cloud write before local state update', () => {
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
     const source = fs.readFileSync(fridgePath, 'utf8');

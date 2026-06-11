@@ -150,20 +150,7 @@ const WarehouseStocktake: React.FC = () => {
         lastModified: now
       }));
 
-    // 更新库存
-    setInventoryItems(items => {
-      return items.map(item => {
-        if (actualQuantities[item.id] !== undefined) {
-          const updatedItem = updatedItems.find(nextItem => nextItem.id === item.id);
-          return updatedItem || item;
-        }
-        return item;
-      });
-    });
-
-    await Promise.allSettled(
-      updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item))
-    );
+    await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)));
 
     // 保存盘点历史
     try {
@@ -189,14 +176,25 @@ const WarehouseStocktake: React.FC = () => {
         }),
         totalDiscrepancies: discrepancies.length
       };
+      await smartAddDocument('warehouse_stocktake_history', stocktakeRecord);
+
+      // 更新库存
+      setInventoryItems(items => {
+        return items.map(item => {
+          if (actualQuantities[item.id] !== undefined) {
+            const updatedItem = updatedItems.find(nextItem => nextItem.id === item.id);
+            return updatedItem || item;
+          }
+          return item;
+        });
+      });
       history.unshift(stocktakeRecord);
       localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(history.slice(0, 50)));
       setStocktakeHistory(history.slice(0, 50));
-      smartAddDocument('warehouse_stocktake_history', stocktakeRecord).catch(error => {
-        console.error('同步仓库盘点历史失败:', error);
-      });
     } catch (error) {
       console.error('保存盘点历史失败:', error);
+      alert('保存盘点结果失败，请检查网络后重试');
+      return;
     }
 
     alert('盘点完成！');

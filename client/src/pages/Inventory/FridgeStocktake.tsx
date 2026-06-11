@@ -555,15 +555,12 @@ const FridgeStocktake: React.FC = () => {
       }
       return inv;
     });
-    setFridgeInventory(newInventory);
 
     const updatedFridgeRecords = newInventory.filter(inv =>
       inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined
     );
-    await Promise.allSettled(
-      updatedFridgeRecords.map(inv =>
-        smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv)
-      )
+    await Promise.all(
+      updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))
     );
 
     // 保存盘点历史
@@ -597,14 +594,16 @@ const FridgeStocktake: React.FC = () => {
         }),
         totalDiscrepancies: discrepancies.length
       };
+      await smartAddDocument('fridge_stocktake_history', stocktakeRecord);
+
+      setFridgeInventory(newInventory);
       history.unshift(stocktakeRecord);
       localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(history.slice(0, 50)));
       setStocktakeHistory(history.slice(0, 50));
-      smartAddDocument('fridge_stocktake_history', stocktakeRecord).catch(error => {
-        console.error('同步冰箱盘点历史失败:', error);
-      });
     } catch (error) {
       console.error('保存盘点历史失败:', error);
+      alert('\u4fdd\u5b58\u76d8\u70b9\u7ed3\u679c\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      return;
     }
 
     alert('盘点完成！');
