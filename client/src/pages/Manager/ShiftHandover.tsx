@@ -240,12 +240,13 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
 
   const styles = {
     container: {
-      display: 'flex',
-      flexDirection: 'column' as const,
-      minHeight: '100%',
+      display: 'grid',
+      gridTemplateRows: '320px minmax(0, 1fr)',
+      height: '100%',
+      boxSizing: 'border-box' as const,
       padding: '1rem 1.5rem 2rem',
       background: '#f5f7fa',
-      overflowY: 'auto' as const,
+      overflow: 'hidden',
       gap: '10px',
     },
     header: {
@@ -311,7 +312,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
       gap: '8px 12px',
-      overflowY: 'auto' as const,
+      overflow: 'visible',
       paddingRight: '8px',
       minHeight: 0,
     },
@@ -354,8 +355,8 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       gridTemplateColumns: '300px 1fr',
       gap: '15px',
       marginTop: 0,
-      minHeight: '190px',
-      flexShrink: 0 as const,
+      minHeight: 0,
+      height: '100%',
     },
     summary: {
       background: '#1a1a2e',
@@ -365,7 +366,9 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'flex',
       flexDirection: 'column' as const,
       justifyContent: 'space-between',
-      minHeight: '190px',
+      minHeight: 0,
+      height: '100%',
+      boxSizing: 'border-box' as const,
     },
     sumLine: {
       display: 'flex',
@@ -410,7 +413,9 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'flex',
       flexDirection: 'column' as const,
       overflow: 'hidden',
-      minHeight: '190px',
+      minHeight: 0,
+      height: '100%',
+      boxSizing: 'border-box' as const,
     },
     tableScroll: {
       flex: 1,
@@ -463,33 +468,6 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
 
   return (
     <div style={embedded ? {} : styles.container}>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: '12px',
-        background: '#ffffff',
-        border: '1px solid #e5e7eb',
-        borderRadius: '12px',
-        padding: '12px 16px',
-        marginBottom: '12px',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
-        flexShrink: 0,
-      }}>
-        <div>
-          <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '4px' }}>交班对账</div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827' }}>
-            本次合计 C$ {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-          </div>
-        </div>
-        <button
-          style={{ ...styles.btnSave(saveStatus), minWidth: '140px', padding: '14px 18px' }}
-          onClick={handleSubmitHandover}
-          disabled={saveStatus === 'saving'}
-        >
-          {saveStatus === 'saving' ? '保存中...' : saveStatus === 'saved' ? '已提交' : '保存提交'}
-        </button>
-      </div>
       {/* 主网格 */}
       <div style={{ flexShrink: 0, marginBottom: 0 }}>
         <div style={embedded ? { ...styles.mainGrid, minHeight: 'auto' } : styles.mainGrid}>
