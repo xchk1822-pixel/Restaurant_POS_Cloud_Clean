@@ -47,6 +47,19 @@ const dedupeStores = (records: any[]): Store[] => {
   return Array.from(map.values()) as Store[];
 };
 
+const findDuplicateStoreDocumentIds = (records: any[], keeper: Store, previousStore?: Store | null): string[] => {
+  const keepId = String(keeper.id || '');
+  const keys = new Set([
+    getStoreDedupeKey(keeper),
+    previousStore ? getStoreDedupeKey(previousStore) : '',
+  ].filter(Boolean));
+
+  return records
+    .filter(record => record?.id && String(record.id) !== keepId)
+    .filter(record => keys.has(getStoreDedupeKey(record)))
+    .map(record => String(record.id));
+};
+
 const dedupeUsers = (records: any[]): any[] => {
   const map = new Map<string, any>();
   records.forEach(record => {
@@ -76,6 +89,7 @@ interface User {
 const StoresModule: React.FC = () => {
   const [stores, setStores] = useState<Store[]>(() => dedupeStores(getLocalRecords('stores')));
   const [users, setUsers] = useState<User[]>(() => dedupeUsers(getLocalRecords('users')));
+  const [cloudStoreRecords, setCloudStoreRecords] = useState<any[]>([]);
   const [selectedStore, setSelectedStore] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'info' | 'users'>('info');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -121,7 +135,6 @@ const StoresModule: React.FC = () => {
     const normalizedStores = dedupeStores(nextStores);
     setStores(normalizedStores);
     saveLocalRecords('stores', normalizedStores);
-    await Promise.all(normalizedStores.map(store => smartSetDocument('stores', store.id, store)));
   };
 
   const toCloudUser = (user: User): User => {
@@ -133,7 +146,6 @@ const StoresModule: React.FC = () => {
     const normalizedUsers = (dedupeUsers(nextUsers) as User[]).map(toCloudUser);
     setUsers(normalizedUsers);
     saveLocalRecords('users', normalizedUsers);
-    await Promise.all(normalizedUsers.map(user => smartSetDocument('users', user.id, user)));
   };
 
   const createAuthBackedUser = async (user: User): Promise<User> => {
@@ -167,6 +179,7 @@ const StoresModule: React.FC = () => {
       ]);
       const normalizedUsers = (dedupeUsers(cloudUsers) as User[]).map(toCloudUser);
       const normalizedStores = dedupeStores(cloudStores);
+      setCloudStoreRecords(cloudStores);
       setStores(normalizedStores);
       setUsers(normalizedUsers);
       saveLocalRecords('stores', normalizedStores);
@@ -298,9 +311,12 @@ const StoresModule: React.FC = () => {
         for (const newUser of newUsers) {
           createdUsers.push(await createAuthBackedUser(newUser));
         }
+        await smartSetDocument('stores', store.id, store);
+        await Promise.all(createdUsers.map(user => smartSetDocument('users', user.id, toCloudUser(user))));
         await persistStores(updatedStores);
         await persistUsers([...users, ...createdUsers]);
       } else {
+        await smartSetDocument('stores', store.id, store);
         await persistStores(updatedStores);
       }
     } catch (error: any) {
@@ -366,10 +382,28 @@ const StoresModule: React.FC = () => {
 
   const handleSaveStore = async () => {
     if (!editingStore) return;
+    const duplicateVisibleStore = stores.find(store =>
+      store.id !== editingStore.id &&
+      String(store.code || '').trim().toLowerCase() === String(editingStore.code || '').trim().toLowerCase()
+    );
+    if (duplicateVisibleStore) {
+      alert('\u5206\u5e97\u4ee3\u7801\u5df2\u5b58\u5728\uff0c\u8bf7\u66f4\u6362\u540e\u518d\u4fdd\u5b58');
+      return;
+    }
+
+    const previousStore = stores.find(store => store.id === editingStore.id);
+    const duplicateStoreIds = findDuplicateStoreDocumentIds(cloudStoreRecords, editingStore, previousStore);
     const updated = dedupeStores(stores.map(s => s.id === editingStore.id ? editingStore : s));
     setStores(updated);
     saveLocalRecords('stores', updated);
-    await smartSetDocument('stores', editingStore.id, editingStore);
+    await Promise.all([
+      smartSetDocument('stores', editingStore.id, editingStore),
+      ...duplicateStoreIds.map(id => smartDeleteDocument('stores', id)),
+    ]);
+    setCloudStoreRecords(prev => dedupeStores([
+      ...prev.filter(record => !duplicateStoreIds.includes(String(record.id))),
+      editingStore,
+    ]));
     setShowEditStore(false);
     setEditingStore(null);
     alert('✅ 分店信息已更新');
@@ -423,7 +457,8 @@ const StoresModule: React.FC = () => {
       };
       const updated = users.map(u => u.id === editingUser.id ? updatedUser : u);
       setUsers(updated);
-    await persistUsers(updated);
+      await smartSetDocument('users', updatedUser.id, toCloudUser(updatedUser));
+      await persistUsers(updated);
       alert('✅ 账号已更新');
     } else {
       // 添加新用户
@@ -448,7 +483,8 @@ const StoresModule: React.FC = () => {
       }
       const updated = [...users, authUser];
       setUsers(updated);
-    await persistUsers(updated);
+      await smartSetDocument('users', authUser.id, toCloudUser(authUser));
+      await persistUsers(updated);
       alert('✅ 账号已创建');
     }
 

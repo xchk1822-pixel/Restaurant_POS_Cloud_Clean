@@ -150,6 +150,18 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('syncToFirestore');
   });
 
+  test('store management uses single-document cloud writes and cleans duplicate stores on edit', () => {
+    const storesPath = path.join(process.cwd(), 'src/pages/Manager/Stores.tsx');
+    const source = fs.readFileSync(storesPath, 'utf8');
+
+    expect(source).toContain('findDuplicateStoreDocumentIds');
+    expect(source).toContain('duplicateStoreIds.map(id => smartDeleteDocument');
+    expect(source).not.toContain('normalizedStores.map(store => smartSetDocument');
+    expect(source).not.toContain('normalizedUsers.map(user => smartSetDocument');
+    expect(source).toContain("smartSetDocument('stores', store.id, store)");
+    expect(source).toContain("smartSetDocument('users', user.id, toCloudUser(user))");
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
