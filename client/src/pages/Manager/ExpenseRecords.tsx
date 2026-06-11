@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { dataService } from '../../services/DataService';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
@@ -97,12 +96,6 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     refreshExpenseData();
   }, [refreshExpenseData]);
 
-  useEffect(() => {
-    if (categories.length > 0) {
-      dataService.saveData('expense_categories', categories);
-    }
-  }, [categories]);
-
   // ✅ 添加开支 - 使用 dataManager 统一保存
   const handleAddExpense = async () => {
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
@@ -120,10 +113,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
 
-    // ✅ 通过 dataManager 保存，自动触发所有订阅者
+    // Keep the local cache current, then write only the new document to Firestore.
     const nextExpenses = [...expenses, newExpense];
     setExpenses(nextExpenses);
-    await dataManager.saveData('expenses', nextExpenses);
+    await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+    await smartSetDocument('expenses', newExpense.id, newExpense);
 
     setFormData({
       categoryId: categories[0]?.id || '',
@@ -210,8 +204,12 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       const updatedExpenses = expenses.map(exp =>
         exp.id === expenseId ? { ...exp, receipt: reader.result as string } : exp
       );
+      const updatedExpense = updatedExpenses.find(exp => exp.id === expenseId);
       setExpenses(updatedExpenses);
-      await dataManager.saveData('expenses', updatedExpenses);
+      await dataManager.saveData('expenses', updatedExpenses, { syncFirestore: false });
+      if (updatedExpense) {
+        await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
+      }
     };
     reader.readAsDataURL(file);
   };

@@ -58,4 +58,14 @@ describe('production data safety guards', () => {
 
     expect(source).not.toContain('dataService.saveData(');
   });
+
+  test('expense records use explicit single-document cloud writes', () => {
+    const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
+    const source = fs.readFileSync(expensePath, 'utf8');
+
+    expect(source).not.toContain("dataService.saveData('expense_categories'");
+    expect(source).not.toContain("dataManager.saveData('expenses', nextExpenses);");
+    expect(source).not.toContain("dataManager.saveData('expenses', updatedExpenses);");
+    expect(source).toContain("smartSetDocument('expenses', newExpense.id, newExpense)");
+  });
 });
