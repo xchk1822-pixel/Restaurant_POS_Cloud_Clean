@@ -75,6 +75,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         { path: '/settings/stores', icon: '🏪', label: '分店管理' },
         { path: '/settings/exchange-rate', icon: '💱', label: '汇率设置' },
         { path: '/settings/permissions', icon: '🔐', label: '权限管理' },
+        { path: '/settings/backup', icon: '💾', label: '数据备份' },
         // 未来扩展
         // { path: '/settings/notifications', icon: '🔔', label: '通知设置' },
         // { path: '/settings/print', icon: '🖨️', label: '打印设置' },

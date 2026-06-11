@@ -1,7 +1,7 @@
 import { UserRole } from '../contexts/AuthContext';
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  super_admin: ['dashboard', 'settings', 'settings:stores', 'settings:exchange', 'settings:permissions'],
+  super_admin: ['dashboard', 'settings', 'settings:stores', 'settings:exchange', 'settings:permissions', 'settings:backup'],
   store_manager: [
     'pos',
     'waiter',

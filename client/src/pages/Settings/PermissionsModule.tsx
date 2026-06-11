@@ -50,6 +50,7 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'settings:stores', name: '分店管理', icon: '🏪' },
       { id: 'settings:exchange', name: '汇率设置', icon: '💱' },
       { id: 'settings:permissions', name: '权限管理', icon: '🔐' },
+      { id: 'settings:backup', name: '数据备份', icon: '💾' },
     ]
   },
   { id: 'reports', name: '报表中心', icon: '📈' }
