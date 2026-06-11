@@ -320,6 +320,18 @@ describe('production data safety guards', () => {
     expect(employeeListSource).toContain('syncFirestore: false');
   });
 
+  test('attendance changes use awaited deterministic single-document writes', () => {
+    const attendancePath = path.join(process.cwd(), 'src/pages/Employees/AttendanceManagement.tsx');
+    const source = fs.readFileSync(attendancePath, 'utf8');
+
+    expect(source).toContain("import { smartSetDocument }");
+    expect(source).toContain('const handleCheckIn = async');
+    expect(source).toContain('const handleQuickMark = async');
+    expect(source).toContain("await smartSetDocument('attendance_records', recordToSave.id, recordToSave)");
+    expect(source).not.toContain("smartAddDocument('attendance_records'");
+    expect(source).not.toContain("smartUpdateDocument('attendance_records'");
+  });
+
   test('shift handover drafts and history use store-scoped local storage', () => {
     const handoverPath = path.join(process.cwd(), 'src/pages/Manager/ShiftHandover.tsx');
     const source = fs.readFileSync(handoverPath, 'utf8');

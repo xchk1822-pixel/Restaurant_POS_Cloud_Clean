@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartSetDocument } from '../../services/smartSyncService';
 
 interface Employee {
   id: string;
@@ -41,7 +41,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
 
 
 
-  const handleCheckIn = (employeeId: string, type: 'in' | 'out') => {
+  const handleCheckIn = async (employeeId: string, type: 'in' | 'out') => {
     const now = new Date();
     const today = getLocalDateString(now); // ✅ 使用本地日期
     const timeStr = now.toTimeString().slice(0, 5);
@@ -51,19 +51,24 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     );
 
     let updatedRecords;
+    let recordToSave: AttendanceRecord;
     if (existingRecord) {
       if (type === 'out') {
+        recordToSave = {
+          ...existingRecord,
+          checkOut: timeStr,
+          workHours: calculateWorkHours(existingRecord.checkIn, timeStr),
+          status: 'normal' as const
+        };
         updatedRecords = attendanceRecords.map(r =>
-          r.id === existingRecord.id
-            ? { ...r, checkOut: timeStr, workHours: calculateWorkHours(existingRecord.checkIn, timeStr), status: 'normal' as const }
-            : r
+          r.id === existingRecord.id ? recordToSave : r
         );
       } else {
         alert('已经打过上班卡了！');
         return;
       }
     } else {
-      const newRecord: AttendanceRecord = {
+      recordToSave = {
         id: Date.now().toString(),
         employeeId,
         date: today,
@@ -71,15 +76,15 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
         workHours: 0,
         status: 'normal',
       };
-      updatedRecords = [...attendanceRecords, newRecord];
+      updatedRecords = [...attendanceRecords, recordToSave];
     }
 
-    setAttendanceRecords(updatedRecords);
-    // 🔥 同步到 Firestore
-    if (existingRecord) {
-      smartUpdateDocument('attendance_records', existingRecord.id, updatedRecords.find(r => r.id === existingRecord.id)!);
-    } else {
-      smartAddDocument('attendance_records', updatedRecords[updatedRecords.length - 1]);
+    try {
+      await smartSetDocument('attendance_records', recordToSave.id, recordToSave);
+      setAttendanceRecords(updatedRecords);
+    } catch (error) {
+      console.error('保存考勤记录失败:', error);
+      alert('保存考勤记录失败，请检查网络后重试');
     }
   };
 
@@ -91,7 +96,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   };
 
   // 快速标记考勤状态
-  const handleQuickMark = (employeeId: string, status: 'rest' | 'absent') => {
+  const handleQuickMark = async (employeeId: string, status: 'rest' | 'absent') => {
     const today = selectedDate;
     
     const existingRecord = attendanceRecords.find(
@@ -99,14 +104,18 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     );
 
     let updatedRecords;
+    let recordToSave: AttendanceRecord;
     if (existingRecord) {
+      recordToSave = {
+        ...existingRecord,
+        status,
+        workHours: status === 'rest' ? 0 : existingRecord.workHours
+      };
       updatedRecords = attendanceRecords.map(r =>
-        r.id === existingRecord.id
-          ? { ...r, status, workHours: status === 'rest' ? 0 : r.workHours }
-          : r
+        r.id === existingRecord.id ? recordToSave : r
       );
     } else {
-      const newRecord: AttendanceRecord = {
+      recordToSave = {
         id: Date.now().toString(),
         employeeId,
         date: today,
@@ -115,15 +124,15 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
         workHours: 0,
         status,
       };
-      updatedRecords = [...attendanceRecords, newRecord];
+      updatedRecords = [...attendanceRecords, recordToSave];
     }
 
-    setAttendanceRecords(updatedRecords);
-    // 🔥 同步到 Firestore
-    if (existingRecord) {
-      smartUpdateDocument('attendance_records', existingRecord.id, updatedRecords.find(r => r.id === existingRecord.id)!);
-    } else {
-      smartAddDocument('attendance_records', updatedRecords[updatedRecords.length - 1]);
+    try {
+      await smartSetDocument('attendance_records', recordToSave.id, recordToSave);
+      setAttendanceRecords(updatedRecords);
+    } catch (error) {
+      console.error('保存考勤记录失败:', error);
+      alert('保存考勤记录失败，请检查网络后重试');
     }
   };
 
