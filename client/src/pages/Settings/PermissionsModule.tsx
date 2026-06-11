@@ -152,6 +152,23 @@ const findNode = (nodes: PermissionNode[], id: string): PermissionNode | null =>
   return null;
 };
 
+const findParentNode = (nodes: PermissionNode[], childId: string): PermissionNode | null => {
+  for (const node of nodes) {
+    if (node.children?.some(child => child.id === childId)) {
+      return node;
+    }
+    if (node.children) {
+      const found = findParentNode(node.children, childId);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+const areAllChildPermissionsSelected = (node: PermissionNode, selectedPermissions: string[]): boolean => {
+  return Boolean(node.children?.every(child => selectedPermissions.includes(child.id)));
+};
+
 const PermissionsModule: React.FC = () => {
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
@@ -219,10 +236,10 @@ const PermissionsModule: React.FC = () => {
         // ✅ 检查父节点是否应该自动勾选（所有子节点都已勾选）
         let currentNode = permId;
         while (true) {
-          const parent = PERMISSION_TREE.find(n => n.children && n.children.some(c => c.id === currentNode));
+          const parent = findParentNode(PERMISSION_TREE, currentNode);
           if (!parent) break;
           
-          const allChildrenChecked = parent.children!.every(c => next.includes(c.id));
+          const allChildrenChecked = areAllChildPermissionsSelected(parent, next);
           if (allChildrenChecked && !next.includes(parent.id)) {
             next.push(parent.id);
             console.log('    ➕ 自动添加父节点:', parent.id);
@@ -251,7 +268,7 @@ const PermissionsModule: React.FC = () => {
         // ❌ 取消父节点
         let currentNode = permId;
         while (true) {
-          const parent = PERMISSION_TREE.find(n => n.children && n.children.some(c => c.id === currentNode));
+          const parent = findParentNode(PERMISSION_TREE, currentNode);
           if (!parent) break;
           
           const idx = next.indexOf(parent.id);
