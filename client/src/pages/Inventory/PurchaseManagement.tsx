@@ -12,6 +12,7 @@ interface Supplier {
   balance: number;
   status: 'active' | 'inactive';
   lastUpdated: Date;
+  lastModified?: number;
 }
 
 interface PurchaseOrder {
@@ -35,6 +36,7 @@ interface PurchaseOrder {
   notes?: string;
   invoiceNumber?: string; // 发票号
   invoiceImage?: string; // 发票图片
+  lastModified?: number;
 }
 
 interface InventoryItem {
@@ -185,6 +187,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     if (!supplier) return;
 
     const totalAmount = calculateTotal();
+    const now = Date.now();
 
     const order: PurchaseOrder = {
       id: `po-${Date.now()}`,
@@ -198,10 +201,12 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       status: 'completed', // ✅ 所有采购单创建后立即入库
       orderDate: new Date(), // ✅ 采购日期使用当前时间
       receivedDate: new Date(), // ✅ 入库日期使用当前时间
-      notes: newOrder.notes
+      notes: newOrder.notes,
+      lastModified: now
     };
 
-    setPurchaseOrders([order, ...purchaseOrders]);
+    const nextPurchaseOrders = [order, ...purchaseOrders];
+    setPurchaseOrders(nextPurchaseOrders);
     try {
       await smartAddDocument('purchase_orders', order);
     } catch (error) {
@@ -253,9 +258,12 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     if (newOrder.paymentType === 'credit') {
       setSuppliers(suppliers => suppliers.map(sup => {
         if (sup.id === newOrder.supplierId) {
-          const updatedSupplier = { ...sup, balance: sup.balance + totalAmount };
+          const recalculatedBalance = nextPurchaseOrders
+            .filter(order => order.supplierId === sup.id)
+            .reduce((sum, order) => sum + Math.max((Number(order.totalAmount) || 0) - (Number(order.paidAmount) || 0), 0), 0);
+          const updatedSupplier = { ...sup, balance: recalculatedBalance, lastUpdated: new Date(), lastModified: now };
           smartUpdateDocument('suppliers', sup.id, updatedSupplier).catch(error => {
-            console.error('同步供应商欠款到 Firestore 失败:', error);
+            console.error('Failed to sync supplier debt to Firestore:', error);
           });
           return updatedSupplier;
         }
