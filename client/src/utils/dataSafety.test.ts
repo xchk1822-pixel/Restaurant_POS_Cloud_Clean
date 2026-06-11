@@ -460,6 +460,23 @@ describe('production data safety guards', () => {
     expect(addItemBlock).not.toContain('.catch(error =>');
   });
 
+  test('fridge remove-item flow waits for warehouse return and fridge delete before local state updates', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const removeStart = source.indexOf('const fridgeInventoryId = `${selectedFridge}-${item.itemId}`;');
+    const removeBlock = source.slice(removeStart, source.indexOf('title=', removeStart));
+
+    expect(removeBlock).toContain("await smartIncrementField('inventory_items', item.itemId");
+    expect(removeBlock).toContain("await smartDeleteDocument('fridge_inventory', fridgeInventoryId)");
+    expect(removeBlock.indexOf("await smartIncrementField('inventory_items', item.itemId")).toBeLessThan(
+      removeBlock.indexOf('setInventoryItems(items => items.map')
+    );
+    expect(removeBlock.indexOf("await smartDeleteDocument('fridge_inventory', fridgeInventoryId)")).toBeLessThan(
+      removeBlock.indexOf('setFridgeInventory(inv => inv.filter')
+    );
+    expect(removeBlock).not.toContain('.catch(error =>');
+  });
+
   test('employee refresh persists deletion tombstones and delete writes are single-document', () => {
     const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
     const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');

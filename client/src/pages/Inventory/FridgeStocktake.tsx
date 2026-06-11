@@ -1067,30 +1067,30 @@ const FridgeStocktake: React.FC = () => {
                                                     
                             {/* 删除商品 */}
                             <button
-                              onClick={() => {
-                                if (window.confirm(`确定要从冰箱中删除"${item.itemName}"吗？\n\n冰箱中的 ${fridgeStock} ${warehouseItem?.unit || '瓶'} 将退回到仓库`)) {
+                              onClick={async () => {
+                                if (window.confirm(`\u786e\u5b9a\u8981\u4ece\u51b0\u7bb1\u4e2d\u5220\u9664\u201c${item.itemName}\u201d\u5417\uff1f\n\n\u51b0\u7bb1\u4e2d\u7684 ${fridgeStock} ${warehouseItem?.unit || '\u74f6'} \u5c06\u9000\u56de\u5230\u4ed3\u5e93`)) {
                                   const now = Date.now();
                                   const fridgeInventoryId = `${selectedFridge}-${item.itemId}`;
-                                  // ✅ 1. 把冰箱库存退回到仓库
+
+                                  try {
+                                    await smartIncrementField('inventory_items', item.itemId, 'currentStock', fridgeStock, {
+                                      lastModified: now,
+                                      lastUpdated: new Date()
+                                    });
+                                    await smartDeleteDocument('fridge_inventory', fridgeInventoryId);
+                                  } catch (error) {
+                                    console.error('\u4ece\u51b0\u7bb1\u79fb\u9664\u5546\u54c1\u5931\u8d25:', error);
+                                    alert('\u4ece\u51b0\u7bb1\u79fb\u9664\u5546\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                                    return;
+                                  }
+
                                   setInventoryItems(items => items.map(i =>
                                     i.id === item.itemId ? { ...i, currentStock: i.currentStock + fridgeStock, lastModified: now, lastUpdated: new Date() } : i
                                   ));
-                                  smartIncrementField('inventory_items', item.itemId, 'currentStock', fridgeStock, {
-                                    lastModified: now,
-                                    lastUpdated: new Date()
-                                  }).catch(error => {
-                                    console.error('同步移除冰箱商品退回仓库失败:', error);
-                                  });
-                                  
-                                  // ✅ 2. 删除冰箱记录
-                                  setFridgeInventory(inv => inv.filter(i => 
+                                  setFridgeInventory(inv => inv.filter(i =>
                                     !(i.fridgeId === selectedFridge && i.itemId === item.itemId)
                                   ));
-                                  smartDeleteDocument('fridge_inventory', fridgeInventoryId).catch(error => {
-                                    console.error('同步删除冰箱商品失败:', error);
-                                  });
-                                }
-                              }}
+                                }                              }}
                               style={{
                                 padding: '0.3rem 0.6rem',
                                 backgroundColor: '#f3f4f6',
