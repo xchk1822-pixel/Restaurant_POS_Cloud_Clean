@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { smartGetDocuments } from '../../services/smartSyncService';
+import { dedupeOwnerRecordsById } from '../../utils/ownerDashboardData';
 import { getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 
 interface StoreStats {
@@ -82,7 +83,7 @@ const OwnerDashboard: React.FC = () => {
   const cached = useMemo(() => getCachedData(), []);
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
-  const [stores, setStores] = useState<any[]>(cached.stores);
+  const [stores, setStores] = useState<any[]>(dedupeOwnerRecordsById(cached.stores));
   const [orders, setOrders] = useState<any[]>(cached.orders);
   const [expenses, setExpenses] = useState<any[]>(cached.expenses);
   const [purchases, setPurchases] = useState<any[]>(cached.purchases);
@@ -125,8 +126,9 @@ const OwnerDashboard: React.FC = () => {
       }
 
       const syncedAt = new Date();
+      const activeStores = dedupeOwnerRecordsById(loadedStores);
       const nextCache: OwnerCache = {
-        stores: loadedStores,
+        stores: activeStores,
         orders: buckets.pos_orders,
         expenses: buckets.expenses,
         purchases: buckets.purchase_orders,
