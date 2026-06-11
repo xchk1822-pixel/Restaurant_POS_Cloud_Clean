@@ -76,4 +76,13 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("dataManager.saveData('expenses', updatedExpenses);");
     expect(source).toContain("smartSetDocument('expenses', newExpense.id, newExpense)");
   });
+
+  test('waiter orders publish directly to shared POS orders', () => {
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const source = fs.readFileSync(waiterPath, 'utf8');
+
+    expect(source).toContain("smartUpdateDocument('pos_orders', newOrder.id");
+    expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
+    expect(source).toContain('currentOrderId: newOrder.id');
+  });
 });

@@ -61,7 +61,19 @@ interface Order {
   lastPaidAt?: Date;
   settledAmount: number;
   updatedAt?: Date;
+  lastModified?: number;
 }
+
+const serializeOrderForFirestore = (order: Order) => ({
+  ...order,
+  createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
+  confirmedAt: order.confirmedAt instanceof Date ? order.confirmedAt.toISOString() : order.confirmedAt,
+  completedAt: order.completedAt instanceof Date ? order.completedAt.toISOString() : order.completedAt,
+  clearedAt: order.clearedAt instanceof Date ? order.clearedAt.toISOString() : order.clearedAt,
+  lastPaidAt: order.lastPaidAt instanceof Date ? order.lastPaidAt.toISOString() : order.lastPaidAt,
+  updatedAt: order.updatedAt instanceof Date ? order.updatedAt.toISOString() : order.updatedAt,
+  lastModified: order.lastModified || Date.now(),
+});
 
 const WaiterInterface: React.FC = () => {
   const { menuItems: contextMenuItems, orders: appOrders, setOrders: setAppOrders } = useAppContext();
@@ -193,10 +205,14 @@ const WaiterInterface: React.FC = () => {
       paidAmount: 0,
       paymentStatus: 'unpaid',
       settledAmount: 0,
+      lastModified: Date.now(),
       ...orderData
     } as Order;
     
     setAppOrders(prev => [...prev, newOrder]);
+    smartUpdateDocument('pos_orders', newOrder.id, serializeOrderForFirestore(newOrder)).catch(error => {
+      console.error('服务生订单同步到 POS 失败:', newOrder.id, error);
+    });
     return newOrder;
   };
   
@@ -331,15 +347,22 @@ const WaiterInterface: React.FC = () => {
     // 创建或更新订单
     if (currentOrder) {
       // 更新现有订单（加菜）
-      updateOrder(currentOrder.id, {
+      const updatedOrder: Order = {
+        ...currentOrder,
         items: updatedItems,
-        updatedAt: new Date()
+        totalAmount: updatedItems.reduce((sum, item) => sum + item.subtotal, 0),
+        updatedAt: new Date(),
+        lastModified: Date.now(),
+      };
+      updateOrder(updatedOrder.id, updatedOrder);
+      smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
+        console.error('服务生加菜同步到 POS 失败:', updatedOrder.id, error);
       });
       showNotification(`✅ 已发送 ${itemsToSend.length} 个菜品到厨房（加菜）`);
     } else {
       // 创建新订单
       const table = tables.find(t => t.id === selectedTableId);
-      createOrder({
+      const newOrder = createOrder({
         tableId: selectedTableId,
         tableNumber: table?.number || '',
         items: updatedItems,
@@ -349,7 +372,7 @@ const WaiterInterface: React.FC = () => {
       
       // 更新桌台状态为占用
       if (table) {
-        updateTable(selectedTableId, { status: 'occupied' });
+        updateTable(selectedTableId, { status: 'occupied', currentOrderId: newOrder.id });
       }
       
       showNotification(`✅ 订单已发送到厨房`);
