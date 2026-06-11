@@ -188,7 +188,10 @@ const CustomersModule: React.FC = () => {
       }
     };
 
-    dataManager.addData('customers', newCustomer);
+    const nextCustomers = [...customers, newCustomer];
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
+    await smartSetDocument('customers', newCustomer.id, newCustomer);
     setShowAddModal(false);
     setFormData({ name: '', phone: '', notes: '', whatsapp: '', facebook: '', instagram: '', telegram: '' });
     alert('✅ 客户添加成功！');
@@ -229,7 +232,8 @@ const CustomersModule: React.FC = () => {
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
     setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
+    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
     setShowEditModal(false);
     setSelectedCustomer(null);
     setFormData({ name: '', phone: '', notes: '', whatsapp: '', facebook: '', instagram: '', telegram: '' });
@@ -269,7 +273,8 @@ const CustomersModule: React.FC = () => {
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
     setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
+    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -320,7 +325,8 @@ const CustomersModule: React.FC = () => {
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
     setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
+    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -350,8 +356,12 @@ const CustomersModule: React.FC = () => {
     const nextCustomers = customers.map(customer =>
       customer.id === customerId ? { ...customer, points: 0 } : customer
     );
+    const updatedCustomer = nextCustomers.find(customer => customer.id === customerId);
     setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
+    if (updatedCustomer) {
+      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+    }
     alert('✅ 积分已重置为 0');
   };
 
