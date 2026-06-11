@@ -29,8 +29,17 @@ const getRecordDateString = (value: any): string => {
 
 const isPurchaseRelatedExpense = (expense: any): boolean => {
   return expense?.relatedType === 'purchase' ||
+    expense?.relatedType === 'supplier_repayment' ||
     expense?.categoryId === 'supplier_payment' ||
     (typeof expense?.id === 'string' && expense.id.startsWith('purchase_'));
+};
+
+const getSupplierDebtTotal = (purchases: any[]): number => {
+  return purchases.reduce((sum: number, purchase: any) => {
+    const totalAmount = Number(purchase.totalAmount) || 0;
+    const paidAmount = Number(purchase.paidAmount) || 0;
+    return sum + Math.max(totalAmount - paidAmount, 0);
+  }, 0);
 };
 
 const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders: propOrders }) => {
@@ -134,20 +143,19 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     }
 
     // 🔄 使用统一数据管理服务读取采购和开支数据
-    const purchases = dataManager.getData('purchases');
-    console.log('  - 采购记录数:', purchases.length);
-
-    const purchaseAmount = purchases.reduce((sum: number, purchase: any) => {
-      const purchaseDate = getRecordDateString(purchase.orderDate || purchase.receivedDate || purchase.date || purchase.createdAt);
-      if (purchaseDate === date) {
-        return sum + (purchase.totalAmount || 0);
-      }
-      return sum;
-    }, 0);
-
     // 读取开支数据
     const expenses = dataManager.getData('expenses');
     console.log('  - 开支记录数:', expenses.length);
+
+    const purchaseAmount = expenses.reduce((sum: number, exp: any) => {
+      if (!isPurchaseRelatedExpense(exp)) {
+        return sum;
+      }
+      if (exp.date === date) {
+        return sum + (exp.amount || 0);
+      }
+      return sum;
+    }, 0);
 
     const expenseAmount = expenses.reduce((sum: number, exp: any) => {
       if (isPurchaseRelatedExpense(exp)) {
@@ -220,6 +228,8 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     });
   }, [orders]);
 
+  const supplierDebtTotal = getSupplierDebtTotal(dataManager.getData('purchases'));
+
   // 计算汇总
   const summary = dailyReports.reduce((acc, report) => ({
     totalSales: acc.totalSales + report.totalSales,
@@ -228,8 +238,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     cardPayment: acc.cardPayment + report.cardPayment,
     purchaseAmount: acc.purchaseAmount + report.purchaseAmount,
     expenseAmount: acc.expenseAmount + report.expenseAmount,
-    profit: acc.profit + report.profit
-  }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0 });
+    profit: acc.profit + report.profit,
+    supplierDebt: supplierDebtTotal
+  }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, supplierDebt: supplierDebtTotal });
 
   const styles = {
     container: {
@@ -456,7 +467,13 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard('#f59e0b', '#f59e0b')}>
               <div style={styles.statLabel}>📦 采购支出</div>
               <div style={styles.statValue('#f59e0b')}>C$ {summary.purchaseAmount.toFixed(2)}</div>
-              <div style={styles.statSub}>库存补充</div>
+              <div style={styles.statSub}>已付款货款</div>
+            </div>
+
+            <div style={styles.statCard('#d97706', '#d97706')}>
+              <div style={styles.statLabel}>📒 供应商货款</div>
+              <div style={styles.statValue('#d97706')}>C$ {summary.supplierDebt.toFixed(2)}</div>
+              <div style={styles.statSub}>当前剩余欠款</div>
             </div>
 
             <div style={styles.statCard('#ef4444', '#ef4444')}>
@@ -492,7 +509,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                       <th style={{ ...styles.th, textAlign: 'right' }}>订单数</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>现金</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>刷卡</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>采购</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>采购付款</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>开支</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>利润</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>实交</th>
