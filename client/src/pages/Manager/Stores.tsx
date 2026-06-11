@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getLocalDateString } from '../../utils/localTime';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import { createFirebaseUser } from '../../services/FirebaseAuthService';
 
 interface Store {
   id: string;
@@ -44,11 +45,12 @@ const dedupeUsers = (records: any[]): any[] => {
 interface User {
   id: string;
   username: string;
-  password: string;
+  password?: string;
   name: string;
   role: 'store_manager' | 'cashier' | 'waiter' | 'chef';
   storeId: string;
   storeName: string;
+  email?: string;
   createdAt: string;
   status: 'active' | 'inactive';
 }
@@ -103,11 +105,38 @@ const StoresModule: React.FC = () => {
     await Promise.all(nextStores.map(store => smartSetDocument('stores', store.id, store)));
   };
 
+  const toCloudUser = (user: User): User => {
+    const { password, ...safeUser } = user;
+    return safeUser as User;
+  };
+
   const persistUsers = async (nextUsers: User[]) => {
-    const normalizedUsers = dedupeUsers(nextUsers) as User[];
+    const normalizedUsers = (dedupeUsers(nextUsers) as User[]).map(toCloudUser);
     setUsers(normalizedUsers);
     saveLocalRecords('users', normalizedUsers);
     await Promise.all(normalizedUsers.map(user => smartSetDocument('users', user.id, user)));
+  };
+
+  const createAuthBackedUser = async (user: User): Promise<User> => {
+    if (!user.password) {
+      throw new Error(`账号 ${user.username} 缺少初始密码`);
+    }
+
+    const created = await createFirebaseUser(user.username, user.password, {
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      storeId: user.storeId,
+      storeName: user.storeName,
+      email: `${user.username}@restaurant.local`,
+    });
+
+    return {
+      ...user,
+      id: created.id,
+      email: created.email,
+      password: undefined,
+    };
   };
 
   const refreshStoresData = useCallback(async () => {
@@ -117,7 +146,7 @@ const StoresModule: React.FC = () => {
         smartGetDocuments('stores', true),
         smartGetDocuments('users', true),
       ]);
-      const normalizedUsers = dedupeUsers(cloudUsers) as User[];
+      const normalizedUsers = (dedupeUsers(cloudUsers) as User[]).map(toCloudUser);
       setStores(cloudStores as Store[]);
       setUsers(normalizedUsers);
       saveLocalRecords('stores', cloudStores);
@@ -243,12 +272,21 @@ const StoresModule: React.FC = () => {
       });
     }
 
-    if (newUsers.length > 0) {
-      const updatedUsers = [...users, ...newUsers];
-      await persistStores(updatedStores);
-      await persistUsers(updatedUsers);
-    } else {
-      await persistStores(updatedStores);
+    try {
+      if (newUsers.length > 0) {
+        const createdUsers: User[] = [];
+        for (const newUser of newUsers) {
+          createdUsers.push(await createAuthBackedUser(newUser));
+        }
+        await persistStores(updatedStores);
+        await persistUsers([...users, ...createdUsers]);
+      } else {
+        await persistStores(updatedStores);
+      }
+    } catch (error: any) {
+      console.error('创建分店账号失败:', error);
+      alert(error?.message || '创建分店账号失败，请检查网络后重试');
+      return;
     }
 
     alert('✅ 分店及账号创建成功！');
@@ -296,13 +334,8 @@ const StoresModule: React.FC = () => {
     await persistUsers(updated);
   };
 
-  const handleResetPassword = async (userId: string) => {
-    const newPassword = prompt('请输入新密码：');
-    if (!newPassword) return;
-    const updated = users.map(u => u.id === userId ? { ...u, password: newPassword } : u);
-    setUsers(updated);
-    await persistUsers(updated);
-    alert('✅ 密码已重置');
+  const handleResetPassword = async () => {
+    alert('密码现在由 Firebase Auth 管理。为了避免本地密码和云端登录密码不一致，后台重置密码需要后续接入安全管理接口。');
   };
 
   // 编辑分店
@@ -333,7 +366,7 @@ const StoresModule: React.FC = () => {
     setEditingUser(user);
     setUserForm({
       username: user.username,
-      password: user.password,
+      password: user.password || '',
       name: user.name,
       role: user.role,
     });
@@ -341,7 +374,7 @@ const StoresModule: React.FC = () => {
   };
 
   const handleSaveUser = async () => {
-    if (!userForm.username || !userForm.password || !selectedStore) {
+    if (!userForm.username || !selectedStore || (!editingUser && !userForm.password)) {
       alert('请填写完整信息');
       return;
     }
@@ -355,11 +388,15 @@ const StoresModule: React.FC = () => {
     }
 
     if (editingUser) {
+      if (userForm.username.trim().toLowerCase() !== editingUser.username.trim().toLowerCase()) {
+        alert('用户名对应 Firebase Auth 登录账号，暂不支持直接修改用户名；如需更换，请新建账号。');
+        return;
+      }
       // 编辑现有用户
       const updatedUser = {
         ...editingUser,
-        username: userForm.username,
-        password: userForm.password,
+        username: editingUser.username,
+        password: undefined,
         name: userForm.name,
         role: userForm.role,
       };
@@ -370,7 +407,7 @@ const StoresModule: React.FC = () => {
     } else {
       // 添加新用户
       const newUser: User = {
-        id: `user_${Date.now()}`,
+        id: `pending_${Date.now()}`,
         username: userForm.username,
         password: userForm.password,
         name: userForm.name,
@@ -380,7 +417,15 @@ const StoresModule: React.FC = () => {
         createdAt: getLocalDateString(), // 🔥 使用本地时间
         status: 'active',
       };
-      const updated = [...users, newUser];
+      let authUser: User;
+      try {
+        authUser = await createAuthBackedUser(newUser);
+      } catch (error: any) {
+        console.error('创建账号失败:', error);
+        alert(error?.message || '创建账号失败，请检查网络后重试');
+        return;
+      }
+      const updated = [...users, authUser];
       setUsers(updated);
     await persistUsers(updated);
       alert('✅ 账号已创建');
@@ -706,7 +751,7 @@ const StoresModule: React.FC = () => {
                             </td>
                             <td style={styles.td}>
                               <button onClick={() => handleEditUser(user)} style={{ ...styles.btn('#3b82f6'), marginRight: '0.5rem', padding: '0.5rem 1rem' }}>✏️ 编辑</button>
-                              <button onClick={() => handleResetPassword(user.id)} style={{ ...styles.btn('#f59e0b'), marginRight: '0.5rem', padding: '0.5rem 1rem' }}>🔑 重置密码</button>
+                              <button onClick={handleResetPassword} style={{ ...styles.btn('#f59e0b'), marginRight: '0.5rem', padding: '0.5rem 1rem' }}>🔑 重置密码</button>
                               <button onClick={() => handleDeleteUser(user.id)} style={{ ...styles.btn('#ef4444'), padding: '0.5rem 1rem' }}>🗑️ 删除</button>
                             </td>
                           </tr>

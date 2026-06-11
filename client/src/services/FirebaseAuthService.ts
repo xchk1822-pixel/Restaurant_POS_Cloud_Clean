@@ -1,5 +1,7 @@
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { 
   createUserWithEmailAndPassword, 
+  getAuth,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
@@ -7,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { firebaseConfig } from '../firebase/config';
 
 export interface AppUser {
   id: string;
@@ -17,6 +20,10 @@ export interface AppUser {
   storeName?: string;
   email?: string;
 }
+
+const getUserCreationApp = (): FirebaseApp => {
+  return getApps().find(app => app.name === 'user-creation') || initializeApp(firebaseConfig, 'user-creation');
+};
 
 /**
  * 🔥 使用 Firebase Authentication 登录
@@ -94,7 +101,8 @@ export const createFirebaseUser = async (
     console.log('🔐 创建 Firebase Auth 用户:', username);
     
     // 创建 Firebase Auth 用户
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const userCreationAuth = getAuth(getUserCreationApp());
+    const userCredential = await createUserWithEmailAndPassword(userCreationAuth, email, password);
     const firebaseUser = userCredential.user;
     
     // 更新显示名称
