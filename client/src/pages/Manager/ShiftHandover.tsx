@@ -242,9 +242,11 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     container: {
       display: 'flex',
       flexDirection: 'column' as const,
-      height: '100%',
-      padding: '1.5rem',
+      minHeight: '100%',
+      padding: '1rem 1.5rem 2rem',
       background: '#f5f7fa',
+      overflowY: 'auto' as const,
+      gap: '10px',
     },
     header: {
       display: 'flex',
@@ -285,31 +287,33 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
       gap: '15px',
-      flex: 1,
+      height: '320px',
       minHeight: 0,
     },
     card: {
       background: 'white',
       borderRadius: '16px',
-      padding: '15px',
+      padding: '12px',
       display: 'flex',
       flexDirection: 'column' as const,
       boxShadow: '0 4px 15px rgba(0,0,0,0.05)',
+      minHeight: 0,
     },
     cardHeader: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: '12px',
+      marginBottom: '8px',
       borderBottom: '2px solid #f8f9fa',
       paddingBottom: '8px',
     },
     listContainer: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
-      gap: '12px',
+      gap: '8px 12px',
       overflowY: 'auto' as const,
       paddingRight: '8px',
+      minHeight: 0,
     },
     rowItem: {
       display: 'flex',
@@ -319,7 +323,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     },
     labelPill: (color: string, bg: string) => ({
       width: '75px',
-      padding: '9px 0',
+      padding: '7px 0',
       textAlign: 'center' as const,
       fontWeight: 900,
       fontSize: '1.1rem',
@@ -338,9 +342,9 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     input: {
       width: '100%',
       border: 'none',
-      padding: '10px',
+      padding: '8px',
       textAlign: 'center' as const,
-      fontSize: '1.3rem',
+      fontSize: '1.15rem',
       fontWeight: 'bold',
       outline: 'none',
       color: '#333',
@@ -349,19 +353,19 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'grid',
       gridTemplateColumns: '300px 1fr',
       gap: '15px',
-      marginTop: '10px',
-      height: '340px',
+      marginTop: 0,
+      minHeight: '190px',
       flexShrink: 0 as const,
     },
     summary: {
       background: '#1a1a2e',
       color: 'white',
       borderRadius: '16px',
-      padding: '18px',
+      padding: '14px',
       display: 'flex',
       flexDirection: 'column' as const,
       justifyContent: 'space-between',
-      height: '100%',
+      minHeight: '190px',
     },
     sumLine: {
       display: 'flex',
@@ -386,7 +390,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     grandTotalValue: {
       display: 'block',
       color: '#f1c40f',
-      fontSize: '2rem',
+      fontSize: '1.65rem',
       fontWeight: 'bold',
     },
     btnSave: (status: 'idle' | 'saving' | 'saved') => ({
@@ -406,7 +410,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       display: 'flex',
       flexDirection: 'column' as const,
       overflow: 'hidden',
-      height: '100%',
+      minHeight: '190px',
     },
     tableScroll: {
       flex: 1,
@@ -487,7 +491,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         </button>
       </div>
       {/* 主网格 */}
-      <div style={{ flex: 1, overflow: 'hidden', marginBottom: '10px' }}>
+      <div style={{ flexShrink: 0, marginBottom: 0 }}>
         <div style={embedded ? { ...styles.mainGrid, minHeight: 'auto' } : styles.mainGrid}>
         {/* 美金 */}
         <div style={styles.card}>
