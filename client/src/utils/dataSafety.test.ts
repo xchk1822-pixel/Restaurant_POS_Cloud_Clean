@@ -67,6 +67,19 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('dataService.saveData(');
   });
 
+  test('app context keeps only active orders realtime and loads low-frequency data from server snapshots', () => {
+    const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
+    const source = fs.readFileSync(appContextPath, 'utf8');
+    const liveSubscriptionBlock = source.slice(source.indexOf('const unsubscribers = ['));
+    const snapshotLoadBlock = source.slice(source.indexOf('const loadSnapshotData = async () => {'), source.indexOf('loadSnapshotData();'));
+
+    expect(liveSubscriptionBlock).toContain("smartSubscribeToCollection('pos_orders'");
+    expect(liveSubscriptionBlock).not.toContain("smartSubscribeToCollection('menu_items'");
+    expect(snapshotLoadBlock).toContain('const data = await smartGetDocuments(config.name, true)');
+    expect(snapshotLoadBlock).toContain('applyCloudData(data, config.setter, config.label);');
+    expect(snapshotLoadBlock).not.toContain('applyCloudData(data, config.setter, config.label, { merge: true });');
+  });
+
   test('expense records use explicit single-document cloud writes', () => {
     const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
     const source = fs.readFileSync(expensePath, 'utf8');

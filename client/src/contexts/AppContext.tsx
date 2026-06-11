@@ -608,9 +608,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       for (const config of snapshotLoads) {
         try {
-          const data = await smartGetDocuments(config.name);
+          const data = await smartGetDocuments(config.name, true);
           if (!cancelled) {
-            applyCloudData(data, config.setter, config.label, { merge: true });
+            applyCloudData(data, config.setter, config.label);
           }
         } catch (error) {
           console.error(`加载 ${config.name} 失败:`, error);
@@ -621,7 +621,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     loadSnapshotData();
 
     const unsubscribers = [
-      smartSubscribeToCollection('menu_items', data => applyCloudData(data, setMenuItems, '菜单', { merge: true })),
       smartSubscribeToCollection('pos_orders', data => applyCloudData(data, setOrders, '订单', { merge: true })),
     ];
     return () => {
