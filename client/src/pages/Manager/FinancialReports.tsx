@@ -3,6 +3,7 @@ import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate';
+import { getExpenseDateKey, getOrderCollectedAmount, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
@@ -25,13 +26,6 @@ const getRecordDateString = (value: any): string => {
   if (!value) return '';
   const timestamp = toTimestampMillis(value);
   return timestamp ? getLocalDateString(new Date(timestamp)) : '';
-};
-
-const isPurchaseRelatedExpense = (expense: any): boolean => {
-  return expense?.relatedType === 'purchase' ||
-    expense?.relatedType === 'supplier_repayment' ||
-    expense?.categoryId === 'supplier_payment' ||
-    (typeof expense?.id === 'string' && expense.id.startsWith('purchase_'));
 };
 
 const getSupplierDebtTotal = (purchases: any[]): number => {
@@ -114,30 +108,17 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     console.log(`  - ${date} orders:`, dayOrders.length);
 
-    const totalSales = dayOrders.reduce((sum: number, order: any) => sum + (order.totalAmount || 0), 0);
-    const orderCount = dayOrders.length;
+    const totalSales = dayOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+    const orderCount = dayOrders.filter((order: any) => getOrderCollectedAmount(order) > 0).length;
 
     // Calculate cash and card income from settled orders.
     let cashPayment = 0;
     let cardPayment = 0;
 
     dayOrders.forEach((order: any) => {
-      const totalAmount = order.totalAmount || 0;
-      const paymentMethod = order.paymentMethod;
-      const orderCashAmount = order.cashAmount;
-      const orderCardAmount = order.cardAmount;
-
-      if (paymentMethod === 'cash') {
-        // Cash payment: use order total, not received cash amount.
-        cashPayment += totalAmount;
-      } else if (paymentMethod === 'card') {
-        // Card payment: use order total.
-        cardPayment += totalAmount;
-      } else if (paymentMethod === 'mixed') {
-        // Mixed payment: add cash and card parts separately.
-        cashPayment += (orderCashAmount !== undefined && orderCashAmount !== null) ? orderCashAmount : 0;
-        cardPayment += (orderCardAmount !== undefined && orderCardAmount !== null) ? orderCardAmount : 0;
-      }
+      const breakdown = getOrderPaymentBreakdown(order);
+      cashPayment += breakdown.cash;
+      cardPayment += breakdown.card;
     });
 
     // Cash plus card should match total sales.
@@ -160,7 +141,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       if (!isPurchaseRelatedExpense(exp)) {
         return sum;
       }
-      if (exp.date === date) {
+      if (getExpenseDateKey(exp) === date) {
         return sum + (exp.amount || 0);
       }
       return sum;
@@ -170,7 +151,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       if (isPurchaseRelatedExpense(exp)) {
         return sum;
       }
-      if (exp.date === date) {
+      if (getExpenseDateKey(exp) === date) {
         return sum + (exp.amount || 0);
       }
       return sum;
@@ -383,7 +364,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     const title = isDaily ? `\u8d22\u52a1\u65e5\u62a5 ${selectedDate}` : `\u8d22\u52a1\u6c47\u603b\u62a5\u8868 ${firstDate} - ${lastDate}`;
     const dailyExpenseDetails = isDaily
       ? dataManager.getData('expenses')
-          .filter((expense: any) => expense.date === selectedDate)
+          .filter((expense: any) => getExpenseDateKey(expense) === selectedDate)
           .sort((a: any, b: any) => String(a.createdAt || a.id || '').localeCompare(String(b.createdAt || b.id || '')))
       : [];
 

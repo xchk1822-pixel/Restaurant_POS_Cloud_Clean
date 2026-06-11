@@ -173,6 +173,17 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("saveData(`payments_${supplierId}`");
   });
 
+  test('financial reports use collected order amounts and normalized expense dates', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+
+    expect(source).toContain('getOrderCollectedAmount(order)');
+    expect(source).toContain('getOrderPaymentBreakdown(order)');
+    expect(source).toContain('getExpenseDateKey(exp)');
+    expect(source).toContain('getExpenseDateKey(expense) === selectedDate');
+    expect(source).not.toContain('sum + (order.totalAmount || 0)');
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

@@ -1,4 +1,10 @@
-import { getExpenseDateKey, isPurchaseRelatedExpense, sumExpensesByKind } from './financeMetrics';
+import {
+  getExpenseDateKey,
+  getOrderCollectedAmount,
+  getOrderPaymentBreakdown,
+  isPurchaseRelatedExpense,
+  sumExpensesByKind,
+} from './financeMetrics';
 
 describe('finance metrics helpers', () => {
   test('detects paid purchase and supplier repayment expenses', () => {
@@ -22,5 +28,21 @@ describe('finance metrics helpers', () => {
 
   test('normalizes expense date keys', () => {
     expect(getExpenseDateKey({ date: '2026-06-11' })).toBe('2026-06-11');
+  });
+
+  test('counts only collected order amounts for financial reports', () => {
+    expect(getOrderCollectedAmount({ status: 'confirmed', paymentStatus: 'unpaid', totalAmount: 100 })).toBe(0);
+    expect(getOrderCollectedAmount({ status: 'served', paymentStatus: 'partial', totalAmount: 100, paidAmount: 40 })).toBe(40);
+    expect(getOrderCollectedAmount({ status: 'served', paymentStatus: 'paid', totalAmount: 100, paidAmount: 100 })).toBe(100);
+    expect(getOrderCollectedAmount({ status: 'completed', totalAmount: 80 })).toBe(80);
+    expect(getOrderCollectedAmount({ status: 'cancelled', paymentStatus: 'paid', totalAmount: 100 })).toBe(0);
+  });
+
+  test('splits collected order amounts by payment method', () => {
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 100, paymentMethod: 'cash' })).toEqual({ cash: 100, card: 0 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 100, paymentMethod: 'card' })).toEqual({ cash: 0, card: 100 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 120, paymentMethod: 'mixed', cashAmount: 50, cardAmount: 70 })).toEqual({ cash: 50, card: 70 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'partial', totalAmount: 120, paidAmount: 30, paymentMethod: 'cash' })).toEqual({ cash: 30, card: 0 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'unpaid', totalAmount: 120, paymentMethod: 'cash' })).toEqual({ cash: 0, card: 0 });
   });
 });

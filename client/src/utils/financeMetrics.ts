@@ -8,6 +8,58 @@ export const isPurchaseRelatedExpense = (expense: any): boolean => {
     (typeof expense?.id === 'string' && expense.id.startsWith('purchase_'));
 };
 
+const toMoneyNumber = (value: any): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+export const getOrderCollectedAmount = (order: any): number => {
+  if (!order || order.status === 'cancelled') return 0;
+
+  const totalAmount = toMoneyNumber(order.totalAmount || order.total);
+  const paidAmount = Math.max(toMoneyNumber(order.settledAmount), toMoneyNumber(order.paidAmount));
+  const paymentParts = toMoneyNumber(order.cashAmount) + toMoneyNumber(order.cardAmount);
+
+  if (order.paymentStatus === 'paid') {
+    return totalAmount || paidAmount || paymentParts;
+  }
+
+  if (order.paymentStatus === 'partial') {
+    return paidAmount || paymentParts;
+  }
+
+  // Legacy completed records may not have paymentStatus but were already settled.
+  if (!order.paymentStatus && order.status === 'completed') {
+    return totalAmount || paidAmount || paymentParts;
+  }
+
+  return 0;
+};
+
+export const getOrderPaymentBreakdown = (order: any): { cash: number; card: number } => {
+  const collectedAmount = getOrderCollectedAmount(order);
+  if (collectedAmount <= 0) return { cash: 0, card: 0 };
+
+  const cashAmount = toMoneyNumber(order.cashAmount);
+  const cardAmount = toMoneyNumber(order.cardAmount);
+  if (cashAmount > 0 || cardAmount > 0) {
+    return {
+      cash: cashAmount,
+      card: cardAmount,
+    };
+  }
+
+  if (order.paymentMethod === 'card') {
+    return { cash: 0, card: collectedAmount };
+  }
+
+  if (order.paymentMethod === 'mixed') {
+    return { cash: collectedAmount, card: 0 };
+  }
+
+  return { cash: collectedAmount, card: 0 };
+};
+
 export const getExpenseDateKey = (expense: any): string => {
   if (expense?.date && /^\d{4}-\d{2}-\d{2}$/.test(String(expense.date))) {
     return String(expense.date);
