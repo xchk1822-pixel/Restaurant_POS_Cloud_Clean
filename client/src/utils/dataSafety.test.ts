@@ -259,6 +259,7 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('setBackupMode(');
     expect(source).not.toContain('restoreFromFirestore(');
     expect(source).not.toContain('syncToFirestoreNow(');
+    expect(source).not.toContain('migrateGlobalDataToStore(');
     expect(source).not.toContain('private async syncToFirestore(');
     expect(source).not.toContain('processSyncQueue(');
   });
