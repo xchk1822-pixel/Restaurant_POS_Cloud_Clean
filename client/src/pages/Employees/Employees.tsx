@@ -150,6 +150,7 @@ const EmployeesModule: React.FC = () => {
       setLoanRecords(loanData);
       setCashFlowRecords(cashFlowData);
       await dataManager.saveData('employees', activeEmployees, { syncFirestore: false, notify: false });
+      saveLocalCollection('employee_deletions', employeeDeletionsData);
       saveLocalCollection('attendance_records', attendanceData);
       saveLocalCollection('salary_records', salaryData);
       saveLocalCollection('loan_records', loanData);

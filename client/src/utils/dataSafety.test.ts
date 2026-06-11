@@ -164,4 +164,19 @@ describe('production data safety guards', () => {
     expect(fridgeSource).not.toContain("localStorage.getItem('fridge_stocktake_history')");
     expect(fridgeSource).not.toContain("localStorage.setItem('fridge_stocktake_history'");
   });
+
+  test('employee refresh persists deletion tombstones and delete writes are single-document', () => {
+    const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
+    const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');
+    const employeesSource = fs.readFileSync(employeesPath, 'utf8');
+    const employeeListSource = fs.readFileSync(employeeListPath, 'utf8');
+
+    expect(employeesSource).toContain("smartGetDocuments('employees', true)");
+    expect(employeesSource).toContain("smartGetDocuments('employee_deletions', true)");
+    expect(employeesSource).toContain("saveLocalCollection('employee_deletions', employeeDeletionsData)");
+    expect(employeeListSource).toContain("smartUpdateDocument('employees', id, deletedEmployee)");
+    expect(employeeListSource).toContain("smartUpdateDocument('employee_deletions', id");
+    expect(employeeListSource).toContain("dataManager.saveData('employees', activeEmployees");
+    expect(employeeListSource).toContain('syncFirestore: false');
+  });
 });
