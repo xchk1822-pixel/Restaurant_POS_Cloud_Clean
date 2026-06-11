@@ -1017,7 +1017,7 @@ const POS: React.FC = () => {
         });
       }
 
-      dataManager.saveData('orders', uniqueOrders);
+      dataManager.saveData('orders', uniqueOrders, { syncFirestore: false });
     } catch (error) {
       console.error('淇濆瓨璁㈠崟澶辫触:', error);
     }

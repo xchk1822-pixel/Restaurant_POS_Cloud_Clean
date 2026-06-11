@@ -35,6 +35,14 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('dataManager.addData(');
   });
 
+  test('pos order cache saves do not replay the full collection to Firestore', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).not.toContain("dataManager.saveData('orders', uniqueOrders);");
+    expect(source).toContain("dataManager.saveData('orders', uniqueOrders, { syncFirestore: false");
+  });
+
   test('smart update uses Firestore upsert instead of update-only writes', () => {
     const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
