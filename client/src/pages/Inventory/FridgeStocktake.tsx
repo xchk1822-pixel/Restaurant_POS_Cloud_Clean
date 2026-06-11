@@ -298,15 +298,15 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // ✅ 简化版调拨：增加/减少冰箱库存
-  const handleSimpleTransfer = () => {
+  const handleSimpleTransfer = async () => {
     const item = inventoryItems.find(i => i.id === transferModal.itemId);
     if (!item) {
-      alert('商品不存在');
+      alert('\u5546\u54c1\u4e0d\u5b58\u5728');
       return;
     }
 
     if (transferQuantity <= 0) {
-      alert('⚠️ 请输入有效的数量（必须大于0）');
+      alert('\u8bf7\u8f93\u5165\u6709\u6548\u7684\u6570\u91cf\uff08\u5fc5\u987b\u5927\u4e8e0\uff09');
       return;
     }
 
@@ -314,29 +314,35 @@ const FridgeStocktake: React.FC = () => {
     const fridgeInventoryId = `${selectedFridge}-${item.id}`;
 
     if (transferModal.type === 'add') {
-      // ✅ 从仓库调拨到冰箱
       if (item.currentStock < transferQuantity) {
-        alert(`⚠️ 仓库库存不足！当前库存：${item.currentStock} ${item.unit}`);
+        alert(`\u4ed3\u5e93\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${item.currentStock} ${item.unit}`);
         return;
       }
 
-      // 1. 减少仓库库存
+      try {
+        await smartIncrementField('inventory_items', item.id, 'currentStock', -transferQuantity, {
+          lastModified: now,
+          lastUpdated: new Date()
+        });
+        await smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', transferQuantity, {
+          fridgeId: selectedFridge,
+          itemId: item.id,
+          lastModified: now
+        });
+      } catch (error) {
+        console.error('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25:', error);
+        alert('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+        return;
+      }
+
       setInventoryItems(items => items.map(i =>
         i.id === item.id ? { ...i, currentStock: i.currentStock - transferQuantity, lastModified: now, lastUpdated: new Date() } : i
       ));
-      smartIncrementField('inventory_items', item.id, 'currentStock', -transferQuantity, {
-        lastModified: now,
-        lastUpdated: new Date()
-      }).catch(error => {
-        console.error('同步仓库调拨扣减失败:', error);
-      });
-
-      // 2. 增加冰箱库存
       setFridgeInventory(inv => {
         const existingIndex = inv.findIndex(
           record => record.fridgeId === selectedFridge && record.itemId === item.id
         );
-        
+
         if (existingIndex !== -1) {
           const newInv = [...inv];
           newInv[existingIndex] = {
@@ -346,54 +352,51 @@ const FridgeStocktake: React.FC = () => {
             lastModified: now
           };
           return newInv;
-        } else {
-          return [...inv, {
-            id: fridgeInventoryId,
-            fridgeId: selectedFridge,
-            itemId: item.id,
-            quantity: transferQuantity,
-            lastModified: now
-          }];
         }
-      });
-      smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', transferQuantity, {
-        fridgeId: selectedFridge,
-        itemId: item.id,
-        lastModified: now
-      }).catch(error => {
-        console.error('同步冰箱调拨增加失败:', error);
-      });
 
-      alert(`✅ 调拨成功！\n\n商品：${item.name}\n数量：${transferQuantity} ${item.unit}\n仓库 → 冰箱`);
-
+        return [...inv, {
+          id: fridgeInventoryId,
+          fridgeId: selectedFridge,
+          itemId: item.id,
+          quantity: transferQuantity,
+          lastModified: now
+        }];
+      });
+      alert(`\u8c03\u62e8\u6210\u529f\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${transferQuantity} ${item.unit}\n\u4ed3\u5e93 -> \u51b0\u7bb1`);
     } else {
-      // ✅ 从冰箱退回仓库
       const fridgeRecord = fridgeInventory.find(
         inv => inv.fridgeId === selectedFridge && inv.itemId === item.id
       );
-      
+
       if (!fridgeRecord || fridgeRecord.quantity < transferQuantity) {
-        alert(`⚠️ 冰箱库存不足！当前库存：${fridgeRecord?.quantity || 0} ${item.unit}`);
+        alert(`\u51b0\u7bb1\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${fridgeRecord?.quantity || 0} ${item.unit}`);
         return;
       }
 
-      // 1. 增加仓库库存
+      try {
+        await smartIncrementField('inventory_items', item.id, 'currentStock', transferQuantity, {
+          lastModified: now,
+          lastUpdated: new Date()
+        });
+        await smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', -transferQuantity, {
+          fridgeId: selectedFridge,
+          itemId: item.id,
+          lastModified: now
+        });
+      } catch (error) {
+        console.error('\u51b0\u7bb1\u9000\u56de\u4fdd\u5b58\u5931\u8d25:', error);
+        alert('\u51b0\u7bb1\u9000\u56de\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+        return;
+      }
+
       setInventoryItems(items => items.map(i =>
         i.id === item.id ? { ...i, currentStock: i.currentStock + transferQuantity, lastModified: now, lastUpdated: new Date() } : i
       ));
-      smartIncrementField('inventory_items', item.id, 'currentStock', transferQuantity, {
-        lastModified: now,
-        lastUpdated: new Date()
-      }).catch(error => {
-        console.error('同步仓库退回增加失败:', error);
-      });
-
-      // 2. 减少冰箱库存
       setFridgeInventory(inv => {
         const existingIndex = inv.findIndex(
           record => record.fridgeId === selectedFridge && record.itemId === item.id
         );
-        
+
         if (existingIndex !== -1) {
           const newInv = [...inv];
           newInv[existingIndex] = {
@@ -406,80 +409,72 @@ const FridgeStocktake: React.FC = () => {
         }
         return inv;
       });
-      smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', -transferQuantity, {
-        fridgeId: selectedFridge,
-        itemId: item.id,
-        lastModified: now
-      }).catch(error => {
-        console.error('同步冰箱退回扣减失败:', error);
-      });
-
-      alert(`✅ 退回成功！\n\n商品：${item.name}\n数量：${transferQuantity} ${item.unit}\n冰箱 → 仓库`);
+      alert(`\u9000\u56de\u6210\u529f\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${transferQuantity} ${item.unit}\n\u51b0\u7bb1 -> \u4ed3\u5e93`);
     }
 
-    // 关闭弹窗
     setTransferModal({ show: false, itemId: '', type: 'add' });
     setTransferQuantity(1);
   };
-
-  // ✅ 添加新商品到冰箱
-  const handleAddNewItem = () => {
+  const handleAddNewItem = async () => {
     if (!newItemData.itemId) {
-      alert('请选择商品');
+      alert('\u8bf7\u9009\u62e9\u5546\u54c1');
       return;
     }
     if (newItemData.quantity <= 0) {
-      alert('⚠️ 请输入有效的数量（必须大于0）');
+      alert('\u8bf7\u8f93\u5165\u6709\u6548\u7684\u6570\u91cf\uff08\u5fc5\u987b\u5927\u4e8e0\uff09');
       return;
     }
 
     const item = inventoryItems.find(i => i.id === newItemData.itemId);
     if (!item) {
-      alert('商品不存在');
+      alert('\u5546\u54c1\u4e0d\u5b58\u5728');
       return;
     }
 
     if (item.currentStock < newItemData.quantity) {
-      alert(`⚠️ 仓库库存不足！当前库存：${item.currentStock} ${item.unit}`);
+      alert(`\u4ed3\u5e93\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${item.currentStock} ${item.unit}`);
       return;
     }
 
-    // 检查是否已在当前冰箱
     const existingInCurrentFridge = fridgeInventory.find(
       inv => inv.fridgeId === selectedFridge && inv.itemId === item.id
     );
-    
     if (existingInCurrentFridge) {
-      alert(`⚠️ 该商品已在当前冰箱中，请使用“+”按钮增加数量`);
+      alert('\u8be5\u5546\u54c1\u5df2\u5b58\u5728\u5f53\u524d\u51b0\u7bb1\u4e2d');
       return;
     }
 
-    // 检查是否在其他冰箱
     const existingInOtherFridge = fridgeInventory.find(
-      inv => inv.itemId === item.id && inv.fridgeId !== selectedFridge
+      inv => inv.fridgeId !== selectedFridge && inv.itemId === item.id
     );
-    
     if (existingInOtherFridge) {
       const otherFridge = fridges.find(f => f.id === existingInOtherFridge.fridgeId);
-      alert(`⚠️ 该商品已存在于"${otherFridge?.name || '其他冰箱'}"中，无法添加到当前冰箱`);
+      alert(`\u8be5\u5546\u54c1\u5df2\u5b58\u5728\u4e8e\u201c${otherFridge?.name || '\u5176\u4ed6\u51b0\u7bb1'}\u201d\u4e2d\uff0c\u65e0\u6cd5\u6dfb\u52a0\u5230\u5f53\u524d\u51b0\u7bb1`);
       return;
     }
 
     const now = Date.now();
     const fridgeInventoryId = `${selectedFridge}-${item.id}`;
 
-    // 1. 减少仓库库存
+    try {
+      await smartIncrementField('inventory_items', item.id, 'currentStock', -newItemData.quantity, {
+        lastModified: now,
+        lastUpdated: new Date()
+      });
+      await smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', newItemData.quantity, {
+        fridgeId: selectedFridge,
+        itemId: item.id,
+        lastModified: now
+      });
+    } catch (error) {
+      console.error('\u6dfb\u52a0\u51b0\u7bb1\u5546\u54c1\u4fdd\u5b58\u5931\u8d25:', error);
+      alert('\u6dfb\u52a0\u51b0\u7bb1\u5546\u54c1\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      return;
+    }
+
     setInventoryItems(items => items.map(i =>
       i.id === item.id ? { ...i, currentStock: i.currentStock - newItemData.quantity, lastModified: now, lastUpdated: new Date() } : i
     ));
-    smartIncrementField('inventory_items', item.id, 'currentStock', -newItemData.quantity, {
-      lastModified: now,
-      lastUpdated: new Date()
-    }).catch(error => {
-      console.error('同步添加冰箱商品的仓库扣减失败:', error);
-    });
-
-    // 2. 添加到冰箱库存
     setFridgeInventory(inv => [...inv, {
       id: fridgeInventoryId,
       fridgeId: selectedFridge,
@@ -487,23 +482,12 @@ const FridgeStocktake: React.FC = () => {
       quantity: newItemData.quantity,
       lastModified: now
     }]);
-    smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', newItemData.quantity, {
-      fridgeId: selectedFridge,
-      itemId: item.id,
-      lastModified: now
-    }).catch(error => {
-      console.error('同步添加冰箱商品失败:', error);
-    });
 
-    alert(`✅ 添加成功！\n\n商品：${item.name}\n数量：${newItemData.quantity} ${item.unit}\n已添加到：${fridges.find(f => f.id === selectedFridge)?.name}`);
-    
-    // 关闭弹窗
+    alert(`\u6dfb\u52a0\u6210\u529f\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${newItemData.quantity} ${item.unit}\n\u5df2\u6dfb\u52a0\u5230\uff1a${fridges.find(f => f.id === selectedFridge)?.name}`);
     setShowAddItemModal(false);
     setNewItemData({ itemId: '', quantity: 1 });
     setAddSearchTerm('');
   };
-
-  // 完成盘点
   const completeStocktake = async () => {
     // ✅ 检查是否有未清点的商品
     const uncountedItems = fridgeItems.filter(item => actualQuantities[item.itemId] === undefined);

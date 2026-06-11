@@ -425,6 +425,41 @@ describe('production data safety guards', () => {
     expect(deleteBlock).not.toContain('recordsToDelete.forEach');
   });
 
+  test('fridge transfer and add-item flows wait for cloud stock writes before local state updates', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const transferBlock = source.slice(
+      source.indexOf('const handleSimpleTransfer = async'),
+      source.indexOf('const handleAddNewItem = async')
+    );
+    const addItemBlock = source.slice(
+      source.indexOf('const handleAddNewItem = async'),
+      source.indexOf('const completeStocktake = async')
+    );
+
+    expect(source).toContain('const handleSimpleTransfer = async');
+    expect(source).toContain('const handleAddNewItem = async');
+    expect(transferBlock).toContain("await smartIncrementField('inventory_items', item.id");
+    expect(transferBlock).toContain("await smartIncrementField('fridge_inventory', fridgeInventoryId");
+    expect(transferBlock.indexOf("await smartIncrementField('inventory_items', item.id")).toBeLessThan(
+      transferBlock.indexOf('setInventoryItems(items => items.map')
+    );
+    expect(transferBlock.indexOf("await smartIncrementField('fridge_inventory', fridgeInventoryId")).toBeLessThan(
+      transferBlock.indexOf('setFridgeInventory(inv =>')
+    );
+    expect(transferBlock).not.toContain('.catch(error =>');
+
+    expect(addItemBlock).toContain("await smartIncrementField('inventory_items', item.id");
+    expect(addItemBlock).toContain("await smartIncrementField('fridge_inventory', fridgeInventoryId");
+    expect(addItemBlock.indexOf("await smartIncrementField('inventory_items', item.id")).toBeLessThan(
+      addItemBlock.indexOf('setInventoryItems(items => items.map')
+    );
+    expect(addItemBlock.indexOf("await smartIncrementField('fridge_inventory', fridgeInventoryId")).toBeLessThan(
+      addItemBlock.indexOf('setFridgeInventory(inv =>')
+    );
+    expect(addItemBlock).not.toContain('.catch(error =>');
+  });
+
   test('employee refresh persists deletion tombstones and delete writes are single-document', () => {
     const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
     const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');
