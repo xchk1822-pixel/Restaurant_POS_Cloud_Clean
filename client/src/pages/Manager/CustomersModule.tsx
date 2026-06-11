@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getExchangeRateConfig, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
+import { loadScopedPointsTransactions, saveScopedPointsTransactions } from '../../utils/customerPoints';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 
 interface Customer {
@@ -31,32 +32,6 @@ interface PointsTransaction {
   createdAt: string;
 }
 
-const getScopedStorageKey = (collectionName: string): string => {
-  try {
-    const userStr = localStorage.getItem('current_user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    return user?.storeId ? `store_${user.storeId}_${collectionName}` : collectionName;
-  } catch {
-    return collectionName;
-  }
-};
-
-const loadLocalPointsTransactions = (): PointsTransaction[] => {
-  const scopedKey = getScopedStorageKey('points_transactions');
-  const saved = localStorage.getItem(scopedKey) || localStorage.getItem('points_transactions');
-  if (!saved) return [];
-  try {
-    return JSON.parse(saved);
-  } catch {
-    return [];
-  }
-};
-
-const saveLocalPointsTransactions = (records: PointsTransaction[]) => {
-  localStorage.setItem(getScopedStorageKey('points_transactions'), JSON.stringify(records));
-  localStorage.setItem('points_transactions', JSON.stringify(records));
-};
-
 const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
   localStorage.setItem('global_exchange_rate', JSON.stringify(config));
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
@@ -64,7 +39,7 @@ const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
 
 const CustomersModule: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>(() => dataManager.getData('customers'));
-  const [transactions, setTransactions] = useState<PointsTransaction[]>(() => loadLocalPointsTransactions());
+  const [transactions, setTransactions] = useState<PointsTransaction[]>(() => loadScopedPointsTransactions());
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'points' | 'totalSpent' | 'visitCount' | 'lastVisit'>('lastVisit');
   
@@ -111,7 +86,7 @@ const CustomersModule: React.FC = () => {
       dataManager.clearCache('customers');
       setCustomers(cloudCustomers);
       setTransactions(cloudTransactions as PointsTransaction[]);
-      saveLocalPointsTransactions(cloudTransactions as PointsTransaction[]);
+      saveScopedPointsTransactions(cloudTransactions as PointsTransaction[]);
 
       const cloudPointsConfig = (cloudPointsConfigs as ExchangeRateConfig[]).find((item: any) => item.id === 'global') || cloudPointsConfigs[0] as ExchangeRateConfig | undefined;
       if (cloudPointsConfig) {
@@ -311,7 +286,7 @@ const CustomersModule: React.FC = () => {
 
     const updatedTransactions = [...transactions, transaction];
     setTransactions(updatedTransactions);
-    saveLocalPointsTransactions(updatedTransactions);
+    saveScopedPointsTransactions(updatedTransactions);
     await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowPointsModal(false);
@@ -400,7 +375,7 @@ const CustomersModule: React.FC = () => {
 
     const updatedTransactions = [...transactions, transaction];
     setTransactions(updatedTransactions);
-    saveLocalPointsTransactions(updatedTransactions);
+    saveScopedPointsTransactions(updatedTransactions);
     await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowRedeemModal(false);
