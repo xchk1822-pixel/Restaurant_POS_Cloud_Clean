@@ -21,6 +21,7 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'inventory:menu', name: '菜品管理', icon: '🍽️' },
       { id: 'inventory:warehouse', name: '仓库盘点', icon: '🏪' },
       { id: 'inventory:fridge', name: '冰箱盘点', icon: '🧊' },
+      { id: 'inventory:suppliers', name: '供应商管理', icon: '👥' },
     ]
   },
   {

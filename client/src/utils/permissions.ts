@@ -11,6 +11,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'inventory:menu',
     'inventory:warehouse',
     'inventory:fridge',
+    'inventory:suppliers',
     'employees',
     'employees:profile',
     'employees:attendance',
