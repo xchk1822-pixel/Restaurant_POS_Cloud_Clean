@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { smartGetDocuments } from '../../services/smartSyncService';
+import { dataManager } from '../../services/dataManager';
 import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
@@ -79,6 +80,20 @@ interface CashFlowRecord {
   salaryPeriod?: string;
 }
 
+const getScopedStorageKey = (collectionName: string): string => {
+  try {
+    const currentUser = localStorage.getItem('current_user');
+    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
+    return storeId ? `store_${storeId}_${collectionName}` : collectionName;
+  } catch {
+    return collectionName;
+  }
+};
+
+const saveLocalCollection = (collectionName: string, records: any[]) => {
+  localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
+};
+
 const EmployeesModule: React.FC = () => {
   const location = useLocation();
 
@@ -130,13 +145,19 @@ const EmployeesModule: React.FC = () => {
       const deletedEmployeeIds = new Set(
         employeeDeletionsData.map((record: any) => String(record.employeeId || record.id))
       );
-      setEmployees(employeesData.filter((employee: any) =>
+      const activeEmployees = employeesData.filter((employee: any) =>
         !employee?.isDeleted && !deletedEmployeeIds.has(String(employee.id))
-      ));
+      );
+      setEmployees(activeEmployees);
       setAttendanceRecords(attendanceData);
       setSalaryRecords(salaryData);
       setLoanRecords(loanData);
       setCashFlowRecords(cashFlowData);
+      await dataManager.saveData('employees', activeEmployees, { syncFirestore: false, notify: false });
+      saveLocalCollection('attendance_records', attendanceData);
+      saveLocalCollection('salary_records', salaryData);
+      saveLocalCollection('loan_records', loanData);
+      saveLocalCollection('cash_flow_records', cashFlowData);
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('加载员工管理数据失败:', error);

@@ -326,8 +326,9 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
     
-    // ✅ 通过 dataManager 保存，自动触发所有订阅者（包括财务模块）
-    dataManager.addData('expenses', salaryExpense);
+    const nextExpenses = [...dataManager.getData('expenses'), salaryExpense];
+    await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+    await smartAddDocument('expenses', salaryExpense);
     
     console.log('💰 已创建薪资开支记录:', salaryExpense);
 

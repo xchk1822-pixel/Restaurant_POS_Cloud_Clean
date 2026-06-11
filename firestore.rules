@@ -49,6 +49,11 @@ service cloud.firestore {
     match /stores/{storeId}/employees/{employeeId} {
       allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
     }
+
+    // 员工删除登记
+    match /stores/{storeId}/employee_deletions/{deletionId} {
+      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+    }
     
     // 考勤记录
     match /stores/{storeId}/attendance_records/{recordId} {

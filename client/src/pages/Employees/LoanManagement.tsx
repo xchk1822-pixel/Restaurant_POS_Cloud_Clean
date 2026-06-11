@@ -140,8 +140,9 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       createdAt: getLocalDateString(),
     };
     
-    // ✅ 通过 dataManager 保存，自动触发所有订阅者（包括财务模块）
-    dataManager.addData('expenses', newExpense);
+    const nextExpenses = [...dataManager.getData('expenses'), newExpense];
+    await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+    await smartAddDocument('expenses', newExpense);
     
     console.log('💰 已创建开支记录:', newExpense);
     
