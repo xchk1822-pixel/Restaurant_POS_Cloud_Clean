@@ -4,7 +4,6 @@ import Login from './pages/Login/Login';
 import DataMigrationPage from './pages/DataMigrationPage';
 import UserMigrationPage from './pages/UserMigrationPage';
 import EmergencyFix from './pages/EmergencyFix';
-import DataRecovery from './pages/DataRecovery';
 import OwnerDashboard from './pages/Dashboard/OwnerDashboard';
 import POS from './pages/POS/POS';
 import Kitchen from './pages/Kitchen/Kitchen';
@@ -93,7 +92,7 @@ function App() {
             <Route path="/migrate" element={<DataMigrationPage />} />
             <Route path="/migrate-users" element={<UserMigrationPage />} />
             <Route path="/emergency-fix" element={<EmergencyFix />} />
-            <Route path="/data-recovery" element={<DataRecovery />} />
+            <Route path="/data-recovery" element={<Navigate to="/settings/backup" replace />} />
             {/* 🔥 老板全局仪表板 - 使用真实 Firestore 数据 */}
             <Route path="/dashboard" element={<ProtectedRoute permissionId="dashboard"><OwnerDashboard /></ProtectedRoute>} />
             <Route path="/pos" element={<ProtectedRoute permissionId="pos"><POS /></ProtectedRoute>} />
