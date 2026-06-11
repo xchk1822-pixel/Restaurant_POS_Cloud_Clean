@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { dataManager } from '../../services/dataManager';
+import { filterActiveEmployees } from '../../utils/employeeRecords';
 
 interface Employee {
   id: string;
@@ -61,6 +63,10 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     }
 
     setEmployees(updatedEmployees);
+    await dataManager.saveData('employees', filterActiveEmployees(updatedEmployees), {
+      syncFirestore: false,
+      notify: false,
+    });
     try {
       if (editingEmployee) {
         await smartUpdateDocument('employees', employee.id, employee);
@@ -107,8 +113,13 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         employeeId: id,
         deletedAt: deletedEmployee.deletedAt,
       });
+      const activeEmployees = filterActiveEmployees(updated);
+      await dataManager.saveData('employees', activeEmployees, {
+        syncFirestore: false,
+        notify: false,
+      });
       console.log('employee marked deleted in Firestore:', id);
-      setEmployees(updated.filter((emp: any) => !emp?.isDeleted));
+      setEmployees(activeEmployees);
     } catch (error) {
       console.error('delete employee from Firestore failed:', error);
       alert('\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5');

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { dataManager } from '../../services/dataManager';
+import { filterActiveEmployees } from '../../utils/employeeRecords';
 import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
@@ -142,12 +143,7 @@ const EmployeesModule: React.FC = () => {
         smartGetDocuments('cash_flow_records', true),
       ]);
 
-      const deletedEmployeeIds = new Set(
-        employeeDeletionsData.map((record: any) => String(record.employeeId || record.id))
-      );
-      const activeEmployees = employeesData.filter((employee: any) =>
-        !employee?.isDeleted && !deletedEmployeeIds.has(String(employee.id))
-      );
+      const activeEmployees = filterActiveEmployees(employeesData, employeeDeletionsData);
       setEmployees(activeEmployees);
       setAttendanceRecords(attendanceData);
       setSalaryRecords(salaryData);
