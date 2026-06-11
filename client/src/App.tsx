@@ -70,13 +70,6 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; permissionId?: strin
 };
 
 function App() {
-  // 🔥 暂时禁用 DataMigration，直接使用 localStorage
-  // const migrationComplete = true;
-
-  // if (!migrationComplete) {
-  //   return <DataMigration onComplete={() => setMigrationComplete(true)} />;
-  // }
-
   return (
     <AuthProvider>
       <AppProvider>
