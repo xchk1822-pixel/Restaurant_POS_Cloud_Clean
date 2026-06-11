@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartDeleteDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
-import { mergeRecordsByVersion } from '../../utils/syncMerge';
 
 interface Supplier {
   id: string;
@@ -62,29 +62,37 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   const saveData = (key: string, data: any) => {
     localStorage.setItem(key, JSON.stringify(data));
   };
+  const saveStoreCollection = (collectionName: string, data: any[]) => {
+    const storeId = dataService.getCurrentStoreId();
+    const storageKey = storeId ? `store_${storeId}_${collectionName}` : collectionName;
+    localStorage.setItem(storageKey, JSON.stringify(data));
+  };
+
   const refreshSupplierData = async () => {
     setIsRefreshing(true);
     try {
       const [cloudSuppliers, cloudPurchaseOrders] = await Promise.all([
-        smartGetDocuments('suppliers'),
-        smartGetDocuments('purchase_orders')
+        smartGetDocuments('suppliers', true),
+        smartGetDocuments('purchase_orders', true)
       ]);
 
-      if (cloudSuppliers.length > 0) {
-        setSuppliers(prev => mergeRecordsByVersion(prev, cloudSuppliers, supplier => ({
-          ...supplier,
-          lastUpdated: supplier.lastUpdated ? new Date(supplier.lastUpdated) : new Date()
-        })));
-      }
+      const normalizedSuppliers = cloudSuppliers.map((supplier: any) => ({
+        ...supplier,
+        balance: Number(supplier.balance) || 0,
+        lastUpdated: supplier.lastUpdated ? new Date(supplier.lastUpdated) : new Date()
+      }));
 
-      if (cloudPurchaseOrders.length > 0) {
-        setPurchaseOrders(prev => mergeRecordsByVersion(prev, cloudPurchaseOrders));
-      }
+      setSuppliers(normalizedSuppliers);
+      setPurchaseOrders(cloudPurchaseOrders);
+
+      saveStoreCollection('suppliers', normalizedSuppliers);
+      saveStoreCollection('purchase_orders', cloudPurchaseOrders);
+      await dataManager.saveData('purchases', cloudPurchaseOrders, { syncFirestore: false, notify: false });
 
       setLastSyncedAt(new Date());
     } catch (error) {
-      console.error('刷新供应商数据失败:', error);
-      alert('刷新供应商数据失败，请检查网络后重试');
+      console.error('\u5237\u65b0\u4f9b\u5e94\u5546\u6570\u636e\u5931\u8d25:', error);
+      alert('\u5237\u65b0\u4f9b\u5e94\u5546\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
     } finally {
       setIsRefreshing(false);
     }
