@@ -138,6 +138,18 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('setBackupMode');
   });
 
+  test('owner dashboard uses manual refresh wording and has no legacy data sync entry', () => {
+    const dashboardPath = path.join(process.cwd(), 'src/pages/Dashboard/OwnerDashboard.tsx');
+    const source = fs.readFileSync(dashboardPath, 'utf8');
+
+    expect(source).toContain('刷新云端数据');
+    expect(source).toContain('低频手动刷新');
+    expect(source).not.toContain('数据同步');
+    expect(source).not.toContain('手动同步');
+    expect(source).not.toContain('同步中');
+    expect(source).not.toContain('syncToFirestore');
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

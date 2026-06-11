@@ -488,7 +488,7 @@ const OwnerDashboard: React.FC = () => {
         <header className="owner-header">
           <div>
             <h1 className="owner-title">老板全局后台</h1>
-            <p className="owner-subtitle">多分店汇总查看，低频手动同步，适合手机快速巡店。</p>
+            <p className="owner-subtitle">多分店汇总查看，低频手动刷新，适合手机快速巡店。</p>
           </div>
           <div className="owner-actions">
             {lastSyncedAt && (
@@ -497,7 +497,7 @@ const OwnerDashboard: React.FC = () => {
               </span>
             )}
             <button className="owner-refresh" onClick={refreshOwnerData} disabled={isRefreshing}>
-              {isRefreshing ? '同步中...' : '刷新云端数据'}
+              {isRefreshing ? '刷新中...' : '刷新云端数据'}
             </button>
           </div>
         </header>
