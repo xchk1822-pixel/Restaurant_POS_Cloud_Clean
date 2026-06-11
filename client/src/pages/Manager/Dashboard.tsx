@@ -3,7 +3,14 @@ import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { getExpenseDateKey, isPurchaseRelatedExpense, sumExpensesByKind } from '../../utils/financeMetrics';
+import {
+  getExpenseDateKey,
+  getOrderCollectedAmount,
+  getOrderFinancialDateKey,
+  getOrderPaymentBreakdown,
+  isPurchaseRelatedExpense,
+  sumExpensesByKind,
+} from '../../utils/financeMetrics';
 
 interface TimeRangeStats {
   totalSales: number;
@@ -203,26 +210,22 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
 
       // 🔄 使用统一数据管理服务的订单数据
       const filteredOrders = dashboardOrders.filter((order: any) => {
-        const orderDate = order.date || order.createdAt;
-        if (!orderDate) return false;
-
-        const orderDateStr = getRecordDateString(orderDate);
-
+        const orderDateStr = getOrderFinancialDateKey(order);
         return orderDateStr >= startStr && orderDateStr < endStr;
       });
 
       console.log(`  - 筛选后订单数: ${filteredOrders.length}`);
 
       // 基础统计
-      const totalSales = filteredOrders.reduce((sum: number, order: any) => sum + (order.totalAmount || 0), 0);
+      const totalSales = filteredOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
       const orderCount = filteredOrders.length;
       const cardPayment = filteredOrders.reduce((sum: number, order: any) => {
         if (order.paymentMethod === 'card') {
           // 纯刷卡：使用订单总额
-          return sum + (order.totalAmount || 0);
+          return sum + getOrderCollectedAmount(order);
         } else if (order.paymentMethod === 'mixed') {
           // 混合支付：使用刷卡部分
-          return sum + (order.cardAmount || 0);
+          return sum + getOrderPaymentBreakdown(order).card;
         }
         return sum;
       }, 0);
@@ -230,10 +233,10 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const cashPayment = filteredOrders.reduce((sum: number, order: any) => {
         if (order.paymentMethod === 'cash') {
           // 纯现金：使用订单总额（不是实际收到的现金）
-          return sum + (order.totalAmount || 0);
+          return sum + getOrderCollectedAmount(order);
         } else if (order.paymentMethod === 'mixed') {
           // 混合支付：使用现金部分
-          return sum + (order.cashAmount || 0);
+          return sum + getOrderPaymentBreakdown(order).cash;
         }
         return sum;
       }, 0);
@@ -257,13 +260,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
 
       const dineInRevenue = filteredOrders
         .filter((o: any) => o.orderType === 'dine_in' || !o.orderType)
-        .reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
       const takeoutRevenue = filteredOrders
         .filter((o: any) => o.orderType === 'takeout')
-        .reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
       const deliveryRevenue = filteredOrders
         .filter((o: any) => o.orderType === 'delivery')
-        .reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
 
       // 🔄 使用统一数据管理服务读取开支和采购数据
       const expenses = dataManager.getData('expenses');
@@ -325,17 +328,17 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       }
 
       filteredOrders.forEach((order: any) => {
-        const orderDateRaw = order.date || order.createdAt;
-        const orderDate = getRecordDateString(orderDateRaw);
+        const orderDate = getOrderFinancialDateKey(order);
+        const collectedAmount = getOrderCollectedAmount(order);
         if (trendMap[orderDate]) {
-          trendMap[orderDate].sales += order.totalAmount || 0;
+          trendMap[orderDate].sales += collectedAmount;
           trendMap[orderDate].orders += 1;
           if (order.orderType === 'takeout') {
-            trendMap[orderDate].takeoutSales += order.totalAmount || 0;
+            trendMap[orderDate].takeoutSales += collectedAmount;
           } else if (order.orderType === 'delivery') {
-            trendMap[orderDate].takeoutSales += order.totalAmount || 0; // 外卖也计入takeoutSales
+            trendMap[orderDate].takeoutSales += collectedAmount; // 外卖也计入takeoutSales
           } else {
-            trendMap[orderDate].dineInSales += order.totalAmount || 0;
+            trendMap[orderDate].dineInSales += collectedAmount;
           }
         }
       });
@@ -447,7 +450,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       }
 
       customerMap[phone].orderCount += 1;
-      customerMap[phone].totalSpent += order.totalAmount || 0;
+      customerMap[phone].totalSpent += getOrderCollectedAmount(order);
       if (orderDate > customerMap[phone].lastVisit) {
         customerMap[phone].lastVisit = orderDate;
       }
@@ -494,7 +497,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       try {
         const hour = new Date(orderTime).getHours();
         hourStats[hour].orderCount += 1;
-        hourStats[hour].revenue += order.totalAmount || 0;
+        hourStats[hour].revenue += getOrderCollectedAmount(order);
       } catch (e) {}
     });
 

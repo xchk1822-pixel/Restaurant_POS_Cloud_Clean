@@ -200,6 +200,19 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("smartDeleteDocument('customers', customerId)");
   });
 
+  test('manager dashboard uses collected revenue and financial order dates', () => {
+    const dashboardPath = path.join(process.cwd(), 'src/pages/Manager/Dashboard.tsx');
+    const source = fs.readFileSync(dashboardPath, 'utf8');
+
+    expect(source).toContain('getOrderFinancialDateKey(order)');
+    expect(source).toContain('getOrderCollectedAmount(order)');
+    expect(source).toContain('getOrderPaymentBreakdown(order).card');
+    expect(source).toContain('getOrderPaymentBreakdown(order).cash');
+    expect(source).not.toContain('sum + (order.totalAmount || 0)');
+    expect(source).not.toContain('customerMap[phone].totalSpent += order.totalAmount || 0');
+    expect(source).not.toContain('hourStats[hour].revenue += order.totalAmount || 0');
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
