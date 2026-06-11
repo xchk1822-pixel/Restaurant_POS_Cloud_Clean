@@ -185,6 +185,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
+  test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
+    const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
+    const source = fs.readFileSync(customersPath, 'utf8');
+
+    expect(source).toContain("smartGetDocuments('customers', true)");
+    expect(source).toContain("smartGetDocuments('customer_deletions', true)");
+    expect(source).toContain('filterActiveCustomers(cloudCustomers, cloudCustomerDeletions)');
+    expect(source).toContain("saveLocalCollection('customer_deletions', cloudCustomerDeletions)");
+    expect(source).toContain("smartUpdateDocument('customers', customerId");
+    expect(source).toContain("smartUpdateDocument('customer_deletions', customerId");
+    expect(source).toContain("dataManager.saveData('customers', nextCustomers");
+    expect(source).toContain('syncFirestore: false');
+    expect(source).not.toContain("smartDeleteDocument('customers', customerId)");
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

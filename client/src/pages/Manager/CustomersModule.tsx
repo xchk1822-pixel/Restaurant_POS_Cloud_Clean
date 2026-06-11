@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getExchangeRateConfig, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
 import { loadScopedPointsTransactions, saveScopedPointsTransactions } from '../../utils/customerPoints';
-import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import { filterActiveCustomers } from '../../utils/customerRecords';
+import { smartGetDocuments, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
 
 interface Customer {
   id: string;
@@ -35,6 +36,20 @@ interface PointsTransaction {
 const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
   localStorage.setItem('global_exchange_rate', JSON.stringify(config));
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
+};
+
+const getScopedStorageKey = (collectionName: string): string => {
+  try {
+    const currentUser = localStorage.getItem('current_user');
+    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
+    return storeId ? `store_${storeId}_${collectionName}` : collectionName;
+  } catch {
+    return collectionName;
+  }
+};
+
+const saveLocalCollection = (collectionName: string, records: any[]) => {
+  localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
 };
 
 const CustomersModule: React.FC = () => {
@@ -76,17 +91,20 @@ const CustomersModule: React.FC = () => {
   const refreshCustomerData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudCustomers, cloudTransactions, cloudPointsConfigs] = await Promise.all([
+      const [cloudCustomers, cloudCustomerDeletions, cloudTransactions, cloudPointsConfigs] = await Promise.all([
         smartGetDocuments('customers', true),
+        smartGetDocuments('customer_deletions', true),
         smartGetDocuments('points_transactions', true),
         smartGetDocuments('exchange_rate', true),
       ]);
 
-      await dataManager.saveData('customers', cloudCustomers, { syncFirestore: false, notify: false });
+      const activeCustomers = filterActiveCustomers(cloudCustomers, cloudCustomerDeletions);
+      await dataManager.saveData('customers', activeCustomers, { syncFirestore: false, notify: false });
       dataManager.clearCache('customers');
-      setCustomers(cloudCustomers);
+      setCustomers(activeCustomers);
       setTransactions(cloudTransactions as PointsTransaction[]);
       saveScopedPointsTransactions(cloudTransactions as PointsTransaction[]);
+      saveLocalCollection('customer_deletions', cloudCustomerDeletions);
 
       const cloudPointsConfig = (cloudPointsConfigs as ExchangeRateConfig[]).find((item: any) => item.id === 'global') || cloudPointsConfigs[0] as ExchangeRateConfig | undefined;
       if (cloudPointsConfig) {
@@ -242,9 +260,23 @@ const CustomersModule: React.FC = () => {
   const handleDeleteCustomer = async (customerId: string) => {
     if (!window.confirm('确定要删除这个客户吗？此操作不可恢复！')) return;
 
+    const deletedCustomer = customers.find(customer => customer.id === customerId);
+    const deletedAt = new Date().toISOString();
     const nextCustomers = customers.filter(customer => customer.id !== customerId);
     setCustomers(nextCustomers);
-    await smartDeleteDocument('customers', customerId);
+    if (deletedCustomer) {
+      await smartUpdateDocument('customers', customerId, {
+        ...deletedCustomer,
+        isDeleted: true,
+        status: 'inactive',
+        deletedAt,
+      });
+    }
+    await smartUpdateDocument('customer_deletions', customerId, {
+      id: customerId,
+      customerId,
+      deletedAt,
+    });
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     alert('✅ 客户已删除');
   };
