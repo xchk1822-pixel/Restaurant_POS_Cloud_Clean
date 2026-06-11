@@ -3,6 +3,7 @@ import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
+import { getExpenseDateKey, isPurchaseRelatedExpense, sumExpensesByKind } from '../../utils/financeMetrics';
 
 interface TimeRangeStats {
   totalSales: number;
@@ -268,24 +269,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const expenses = dataManager.getData('expenses');
       console.log('  - 开支记录数:', expenses.length);
 
-      const expenseAmount = expenses.reduce((sum: number, exp: any) => {
-        if (exp.date >= startStr && exp.date < endStr) {
-          return sum + (exp.amount || 0);
-        }
-        return sum;
-      }, 0);
+      const expenseAmount = sumExpensesByKind(expenses, startStr, endStr, 'operating');
 
       const purchases = dataManager.getData('purchases');
       console.log('  - 采购记录数:', purchases.length);
 
-      const purchaseAmount = purchases.reduce((sum: number, purchase: any) => {
-        const purchaseDate = purchase.date || purchase.createdAt;
-        const purchaseDateStr = getRecordDateString(purchaseDate);
-        if (purchaseDateStr && purchaseDateStr >= startStr && purchaseDateStr < endStr) {
-          return sum + (purchase.totalAmount || 0);
-        }
-        return sum;
-      }, 0);
+      const purchaseAmount = sumExpensesByKind(expenses, startStr, endStr, 'purchase');
 
       // 计算利润
       // 注意：这里的利润是简化计算，使用当天的采购总额作为成本
@@ -351,16 +340,10 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         }
       });
 
-      purchases.forEach((purchase: any) => {
-        const purchaseDate = getRecordDateString(purchase.date || purchase.createdAt);
-        if (trendMap[purchaseDate]) {
-          trendMap[purchaseDate].profit -= purchase.totalAmount || 0;
-        }
-      });
-
       expenses.forEach((exp: any) => {
-        if (trendMap[exp.date]) {
-          trendMap[exp.date].profit -= exp.amount || 0;
+        const expenseDate = getExpenseDateKey(exp);
+        if (trendMap[expenseDate]) {
+          trendMap[expenseDate].profit -= exp.amount || 0;
         }
       });
 
@@ -395,7 +378,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       // 🔥 计算支出分类统计
       const expenseCategories: Record<string, number> = {};
       expenses.forEach((exp: any) => {
-        if (exp.date >= startStr && exp.date < endStr) {
+        const expenseDate = getExpenseDateKey(exp);
+        if (!isPurchaseRelatedExpense(exp) && expenseDate >= startStr && expenseDate < endStr) {
           const category = exp.category || '其他';
           expenseCategories[category] = (expenseCategories[category] || 0) + (exp.amount || 0);
         }
