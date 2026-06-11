@@ -102,8 +102,6 @@ const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory
   return Array.from(merged.values());
 };
 
-const mergeInventoryCategories = (...groups: any[][]): InventoryCategory[] => normalizeInventoryCategories(groups.flat());
-
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const {
     inventoryItems,
@@ -163,8 +161,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     const storeId = dataService.getCurrentStoreId();
     return storeId ? `store_${storeId}_inventory_categories` : 'inventory_categories';
   }, []);
-  const inventoryCategoryRemoteUpdateRef = React.useRef(false);
-
   const [inventoryCategories, setInventoryCategories] = useState<InventoryCategory[]>(() => {
     try {
       const serviceData = normalizeInventoryCategories(dataService.getData('inventory_categories'));
@@ -204,7 +200,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
         const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
         if (normalizedCloudCategories.length > 0) {
-          inventoryCategoryRemoteUpdateRef.current = true;
           setInventoryCategories(normalizedCloudCategories);
         }
       } catch (error) {
@@ -217,7 +212,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       cancelled = true;
     };
   }, []);
-    React.useEffect(() => {
+
+  React.useEffect(() => {
     try {
       const normalizedCategories = normalizeInventoryCategories(inventoryCategories);
       if (JSON.stringify(normalizedCategories) !== JSON.stringify(inventoryCategories)) {
@@ -228,19 +224,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       const storageKey = getInventoryCategoryStorageKey();
       localStorage.setItem(storageKey, JSON.stringify(normalizedCategories));
       localStorage.setItem('inventory_categories', JSON.stringify(normalizedCategories));
-
-      const shouldSyncToCloud = !inventoryCategoryRemoteUpdateRef.current;
-      inventoryCategoryRemoteUpdateRef.current = false;
-      if (!shouldSyncToCloud) {
-        return;
-      }
-
-      normalizedCategories.forEach(category => {
-        const docId = category.id || category.key;
-        smartSetDocument('inventory_categories', docId, category).catch(error => {
-          console.error('同步库存类别失败:', error);
-        });
-      });
     } catch (error) {
       console.error('保存库存类别失败:', error);
     }
@@ -274,7 +257,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       }
 
       const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
-      inventoryCategoryRemoteUpdateRef.current = true;
       setInventoryCategories(normalizedCloudCategories);
       const categoryStorageKey = getInventoryCategoryStorageKey();
       localStorage.setItem(categoryStorageKey, JSON.stringify(normalizedCloudCategories));
@@ -288,6 +270,41 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       setIsRefreshingInventory(false);
     }
   }, [getInventoryCategoryStorageKey, setInventoryItems]);
+
+  const saveInventoryCategorySnapshot = React.useCallback((nextCategories: InventoryCategory[]) => {
+    const normalizedCategories = normalizeInventoryCategories(nextCategories);
+    const categoryStorageKey = getInventoryCategoryStorageKey();
+    localStorage.setItem(categoryStorageKey, JSON.stringify(normalizedCategories));
+    localStorage.setItem('inventory_categories', JSON.stringify(normalizedCategories));
+    setInventoryCategories(normalizedCategories);
+    return normalizedCategories;
+  }, [getInventoryCategoryStorageKey]);
+
+  const saveInventoryCategoryToCloud = React.useCallback(async (category: InventoryCategory) => {
+    const docId = category.id || category.key;
+    await smartSetDocument('inventory_categories', docId, {
+      ...category,
+      id: docId,
+      lastModified: category.lastModified || Date.now()
+    });
+  }, []);
+
+  const saveInventoryCategoryChange = React.useCallback(async (
+    nextCategories: InventoryCategory[],
+    changedCategory: InventoryCategory
+  ) => {
+    const normalizedChangedCategory = normalizeInventoryCategories([changedCategory])[0];
+    await saveInventoryCategoryToCloud(normalizedChangedCategory);
+    saveInventoryCategorySnapshot(nextCategories);
+  }, [saveInventoryCategorySnapshot, saveInventoryCategoryToCloud]);
+
+  const deleteInventoryCategoryFromCloud = React.useCallback(async (
+    nextCategories: InventoryCategory[],
+    category: InventoryCategory
+  ) => {
+    await smartDeleteDocument('inventory_categories', category.id || category.key);
+    saveInventoryCategorySnapshot(nextCategories);
+  }, [saveInventoryCategorySnapshot]);
 
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
@@ -2428,7 +2445,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     }}
                   />
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (!editingInventoryCategory.name) {
                         alert('请填写类别名称');
                         return;
@@ -2437,7 +2454,14 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         alert('该类别已存在');
                         return;
                       }
-                      setInventoryCategories(prev => mergeInventoryCategories(prev, [{ ...editingInventoryCategory, id: editingInventoryCategory.key, lastModified: Date.now() }]));
+                      const newCategory = { ...editingInventoryCategory, id: editingInventoryCategory.key, lastModified: Date.now() };
+                      try {
+                        await saveInventoryCategoryChange([...inventoryCategories, newCategory], newCategory);
+                      } catch (error) {
+                        console.error('淇濆瓨搴撳瓨绫诲埆澶辫触:', error);
+                        alert('淇濆瓨绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                        return;
+                      }
                       setEditingInventoryCategory({ key: '', name: '', icon: '📦' });
                     }}
                     style={{
@@ -2482,13 +2506,19 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const newName = prompt('修改类别名称:', cat.name);
                           const newIcon = prompt('修改图标（Emoji）:', cat.icon);
                           if (newName && newIcon) {
                             const newCats = [...inventoryCategories];
-                            newCats[idx] = { ...cat, id: cat.id || cat.key, name: newName, icon: newIcon, lastModified: Date.now() };
-                            setInventoryCategories(newCats);
+                            const updatedCategory = { ...cat, id: cat.id || cat.key, name: newName, icon: newIcon, lastModified: Date.now() };
+                            newCats[idx] = updatedCategory;
+                            try {
+                              await saveInventoryCategoryChange(newCats, updatedCategory);
+                            } catch (error) {
+                              console.error('淇濆瓨搴撳瓨绫诲埆澶辫触:', error);
+                              alert('淇濆瓨绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                            }
                           }
                         }}
                         style={{
@@ -2505,7 +2535,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         ✏️ 编辑
                       </button>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           if (inventoryCategories.length <= 1) {
                             alert('至少需要保留一个类别');
                             return;
@@ -2513,10 +2543,14 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           if (!window.confirm(`确定要删除类别“${cat.name}”吗？`)) {
                             return;
                           }
-                          setInventoryCategories(inventoryCategories.filter((_, i) => i !== idx));
-                          smartDeleteDocument('inventory_categories', cat.id || cat.key).catch(error => {
-                            console.error('删除库存类别失败:', error);
-                          });
+                          const nextCategories = inventoryCategories.filter((_, i) => i !== idx);
+                          try {
+                            await deleteInventoryCategoryFromCloud(nextCategories, cat);
+                          } catch (error) {
+                            console.error('鍒犻櫎搴撳瓨绫诲埆澶辫触:', error);
+                            alert('鍒犻櫎绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                            return;
+                          }
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',

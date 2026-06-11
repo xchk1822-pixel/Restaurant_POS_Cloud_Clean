@@ -176,6 +176,12 @@ const excludeDeletedRecords = (records: any[]): any[] => {
   return records.filter(record => !record?.isDeleted);
 };
 
+const CLOUD_AUTHORITATIVE_SUBSCRIPTIONS = new Set(['pos_tables']);
+
+const isCloudAuthoritativeSubscription = (collectionName: string): boolean => {
+  return CLOUD_AUTHORITATIVE_SUBSCRIPTIONS.has(getCollectionKey(collectionName));
+};
+
 const sanitizeFirestoreValue = (value: any): any => {
   if (value === undefined || value === null) return undefined;
 
@@ -582,6 +588,13 @@ export const smartSubscribeToCollection = (
         console.log(`📡 Firestore实时更新 ${collectionName}: ${data.length}条`);
 
         // 🔥 同步到 localStorage（分店专属key），但不能让旧云端快照覆盖本地新编辑
+        if (isCloudAuthoritativeSubscription(collectionName)) {
+          const activeData = excludeDeletedRecords(data);
+          localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(activeData));
+          callback(activeData);
+          return;
+        }
+
         try {
           const localData = getFromLocalStorage(collectionName);
           const merged = new Map<string, any>();

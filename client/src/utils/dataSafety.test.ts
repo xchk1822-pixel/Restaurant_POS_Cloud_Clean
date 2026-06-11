@@ -105,6 +105,20 @@ describe('production data safety guards', () => {
     expect(source).toContain("localStorage.getItem(dataService.getStoreKey('pos_tables'))");
   });
 
+  test('POS table realtime subscription is cloud-authoritative', () => {
+    const syncPath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(syncPath, 'utf8');
+
+    expect(source).toContain("CLOUD_AUTHORITATIVE_SUBSCRIPTIONS = new Set(['pos_tables'])");
+    expect(source).toContain('isCloudAuthoritativeSubscription(collectionName)');
+    expect(source).toContain('const activeData = excludeDeletedRecords(data)');
+    expect(source).toContain('callback(activeData)');
+    const subscriptionMergeBlock = source.slice(source.indexOf('const serialized = JSON.stringify(data);'));
+    expect(subscriptionMergeBlock.indexOf('if (isCloudAuthoritativeSubscription(collectionName))')).toBeLessThan(
+      subscriptionMergeBlock.indexOf('const localData = getFromLocalStorage(collectionName);')
+    );
+  });
+
   test('kitchen status changes write back to shared POS orders', () => {
     const kitchenPath = path.join(process.cwd(), 'src/pages/POS/KitchenDisplay.tsx');
     const source = fs.readFileSync(kitchenPath, 'utf8');
@@ -243,6 +257,20 @@ describe('production data safety guards', () => {
     expect(source).toContain("smartGetDocuments('inventory_categories', true)");
     expect(source).toContain('setInventoryCategories(normalizedCloudCategories)');
     expect(source).not.toContain('setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories))');
+  });
+
+  test('inventory category edits explicitly write single category documents to cloud', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain('saveInventoryCategoryChange');
+    expect(source).toContain("smartSetDocument('inventory_categories', docId");
+    expect(source).toContain('await saveInventoryCategoryChange([...inventoryCategories, newCategory], newCategory)');
+    expect(source).toContain('await saveInventoryCategoryChange(newCats, updatedCategory)');
+    expect(source).toContain('await deleteInventoryCategoryFromCloud(nextCategories, cat)');
+    expect(source).toContain("await smartDeleteDocument('inventory_categories', category.id || category.key)");
+    expect(source).not.toContain('shouldSyncToCloud');
+    expect(source).not.toContain('normalizedCategories.forEach(category =>');
   });
 
   test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {
