@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { smartUpdateDocument } from '../../services/smartSyncService';
 
 interface OrderItem {
   id: string;
@@ -21,6 +22,66 @@ interface KitchenOrder {
   priority?: 'normal' | 'urgent'; // 优先级
 }
 
+const getKitchenItemStatus = (item: any): OrderItem['status'] => {
+  if (item.kitchenStatus === 'ready' || item.kitchenStatus === 'preparing' || item.kitchenStatus === 'pending') {
+    return item.kitchenStatus;
+  }
+  return item.sentToKitchen ? 'preparing' : 'pending';
+};
+
+const getKitchenOrderStatus = (items: OrderItem[], orderStatus?: string): KitchenOrder['status'] => {
+  if (items.length > 0 && items.every(item => item.status === 'ready')) return 'ready';
+  if (items.some(item => item.status === 'preparing') || orderStatus === 'confirmed' || orderStatus === 'preparing') return 'preparing';
+  return 'pending';
+};
+
+const serializeOrderForFirestore = (order: any) => ({
+  ...order,
+  createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
+  confirmedAt: order.confirmedAt instanceof Date ? order.confirmedAt.toISOString() : order.confirmedAt,
+  preparingAt: order.preparingAt instanceof Date ? order.preparingAt.toISOString() : order.preparingAt,
+  servedAt: order.servedAt instanceof Date ? order.servedAt.toISOString() : order.servedAt,
+  completedAt: order.completedAt instanceof Date ? order.completedAt.toISOString() : order.completedAt,
+  clearedAt: order.clearedAt instanceof Date ? order.clearedAt.toISOString() : order.clearedAt,
+  lastPaidAt: order.lastPaidAt instanceof Date ? order.lastPaidAt.toISOString() : order.lastPaidAt,
+});
+
+const toKitchenOrders = (allOrders: any[]): KitchenOrder[] => {
+  return allOrders
+    .filter(order => order.status !== 'completed' && order.status !== 'cancelled' && order.status !== 'served')
+    .map(order => {
+      const kitchenItems = (order.items || []).filter((item: any) => {
+        const itemType = item.type || 'dish';
+        return itemType === 'recipe' || itemType === 'dish';
+      });
+
+      if (kitchenItems.length === 0) {
+        return null;
+      }
+
+      const items = kitchenItems.map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        status: getKitchenItemStatus(item),
+        notes: item.notes
+      }));
+
+      return {
+        id: order.id,
+        tableNumber: order.tableNumber || '',
+        type: order.orderType || 'dine_in',
+        items,
+        total: order.totalAmount || 0,
+        status: getKitchenOrderStatus(items, order.status),
+        createdAt: new Date(order.createdAt),
+        priority: 'normal'
+      };
+    })
+    .filter(order => order !== null) as KitchenOrder[];
+};
+
 const KitchenDisplay: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'pending' | 'preparing' | 'ready'>('all');
   const [sortBy, setSortBy] = useState<'time' | 'priority'>('time');
@@ -29,86 +90,14 @@ const KitchenDisplay: React.FC = () => {
   const [orders, setOrders] = useState<KitchenOrder[]>(() => {
     const allOrders = dataManager.getData('orders');
     console.log('🍳 厨房模块初始化加载订单:', allOrders.length, '个');
-    
-    // 转换为厨房订单格式（只显示未完成的订单）
-    return allOrders
-      .filter(order => order.status !== 'completed' && order.status !== 'cancelled')
-      .map(order => {
-        // ✅ 过滤掉不需要厨房制作的物品（饮料、酒水等）
-        const kitchenItems = (order.items || []).filter((item: any) => {
-          const itemType = item.type || 'dish';
-          // 只保留需要厨房制作的菜品
-          return itemType === 'recipe' || itemType === 'dish';
-        });
-        
-        // 如果订单中没有需要厨房制作的物品，返回 null
-        if (kitchenItems.length === 0) {
-          return null;
-        }
-        
-        return {
-          id: order.id,
-          tableNumber: order.tableNumber || '',
-          type: order.orderType || 'dine_in',
-          items: kitchenItems.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price,
-            status: item.sentToKitchen ? ('preparing' as const) : ('pending' as const),
-            notes: item.notes
-          })),
-          total: order.totalAmount || 0,
-          status: (order.status === 'confirmed' || order.status === 'preparing') ? ('preparing' as const) : ('pending' as const),
-          createdAt: new Date(order.createdAt),
-          priority: 'normal'
-        };
-      })
-      .filter(order => order !== null) as KitchenOrder[]; // 过滤掉 null 值
+    return toKitchenOrders(allOrders);
   });
   
   // 🔄 实时监听 DataManager 订单变化
   useEffect(() => {
     const unsubscribe = dataManager.subscribe('orders', (allOrders) => {
       console.log('🍳 厨房模块收到订单更新:', allOrders.length, '个');
-      
-      // 转换为厨房订单格式
-      const kitchenOrders: KitchenOrder[] = allOrders
-        .filter(order => order.status !== 'completed' && order.status !== 'cancelled')
-        .map(order => {
-          // ✅ 过滤掉不需要厨房制作的物品（饮料、酒水等）
-          const kitchenItems = (order.items || []).filter((item: any) => {
-            const itemType = item.type || 'dish';
-            // 只保留需要厨房制作的菜品
-            return itemType === 'recipe' || itemType === 'dish';
-          });
-          
-          // 如果订单中没有需要厨房制作的物品，返回 null
-          if (kitchenItems.length === 0) {
-            return null;
-          }
-          
-          return {
-            id: order.id,
-            tableNumber: order.tableNumber || '',
-            type: order.orderType || 'dine_in',
-            items: kitchenItems.map((item: any) => ({
-              id: item.id,
-              name: item.name,
-              quantity: item.quantity,
-              price: item.price,
-              status: item.sentToKitchen ? ('preparing' as const) : ('pending' as const),
-              notes: item.notes
-            })),
-            total: order.totalAmount || 0,
-            status: (order.status === 'confirmed' || order.status === 'preparing') ? ('preparing' as const) : ('pending' as const),
-            createdAt: new Date(order.createdAt),
-            priority: 'normal'
-          };
-        })
-        .filter(order => order !== null) as KitchenOrder[]; // 过滤掉 null 值
-      
-      setOrders(kitchenOrders);
+      setOrders(toKitchenOrders(allOrders));
     });
     
     return () => unsubscribe();
@@ -125,29 +114,71 @@ const KitchenDisplay: React.FC = () => {
 
   // 更新菜品状态
   const updateItemStatus = (orderId: string, itemId: string, newStatus: OrderItem['status']) => {
-    setOrders(orders.map(order => {
-      if (order.id === orderId) {
-        const updatedItems = order.items.map(item =>
-          item.id === itemId ? { ...item, status: newStatus } : item
-        );
+    const currentKitchenOrder = orders.find(order => order.id === orderId);
+    if (!currentKitchenOrder) return;
 
-        // 根据所有items的状态更新订单状态
-        let orderStatus: KitchenOrder['status'] = 'pending';
-        if (updatedItems.every(item => item.status === 'ready')) {
-          orderStatus = 'ready';
-        } else if (updatedItems.some(item => item.status === 'preparing')) {
-          orderStatus = 'preparing';
-        }
+    const updatedItems = currentKitchenOrder.items.map(item =>
+      item.id === itemId ? { ...item, status: newStatus } : item
+    );
+    const updatedKitchenOrder: KitchenOrder = {
+      ...currentKitchenOrder,
+      items: updatedItems,
+      status: getKitchenOrderStatus(updatedItems)
+    };
+    const nextKitchenOrders = orders.map(order => order.id === orderId ? updatedKitchenOrder : order);
+    setOrders(nextKitchenOrders);
 
-        return { ...order, items: updatedItems, status: orderStatus };
-      }
-      return order;
-    }));
+    const allOrders = dataManager.getData<any>('orders');
+    const originalOrder = allOrders.find(order => order.id === orderId);
+    if (!originalOrder) return;
+
+    const kitchenStatusByItemId = new Map(
+      updatedKitchenOrder.items.map(item => [item.id, item.status])
+    );
+    const updatedOrder = {
+      ...originalOrder,
+      status: newStatus === 'preparing' ? 'preparing' : originalOrder.status,
+      items: (originalOrder.items || []).map((item: any) => (
+        kitchenStatusByItemId.has(item.id)
+          ? { ...item, kitchenStatus: kitchenStatusByItemId.get(item.id) }
+          : item
+      )),
+      lastModified: Date.now(),
+      updatedAt: new Date()
+    };
+
+    const nextAllOrders = allOrders.map(order => order.id === orderId ? updatedOrder : order);
+    dataManager.saveData('orders', nextAllOrders, { syncFirestore: false });
+    smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
+      console.error('厨房状态同步到 POS 失败:', updatedOrder.id, error);
+    });
   };
 
   // 标记订单完成
   const completeOrder = (orderId: string) => {
     setOrders(orders.filter(o => o.id !== orderId));
+    const allOrders = dataManager.getData<any>('orders');
+    const originalOrder = allOrders.find(order => order.id === orderId);
+    if (!originalOrder) return;
+
+    const updatedOrder = {
+      ...originalOrder,
+      status: 'served',
+      servedAt: new Date(),
+      items: (originalOrder.items || []).map((item: any) => {
+        const itemType = item.type || 'dish';
+        return itemType === 'recipe' || itemType === 'dish'
+          ? { ...item, kitchenStatus: 'ready' }
+          : item;
+      }),
+      lastModified: Date.now(),
+      updatedAt: new Date()
+    };
+    const nextAllOrders = allOrders.map(order => order.id === orderId ? updatedOrder : order);
+    dataManager.saveData('orders', nextAllOrders, { syncFirestore: false });
+    smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
+      console.error('厨房出餐完成同步到 POS 失败:', updatedOrder.id, error);
+    });
   };
 
   // 过滤订单

@@ -93,4 +93,13 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("localStorage.getItem('pos_tables')");
     expect(source).toContain("localStorage.getItem(dataService.getStoreKey('pos_tables'))");
   });
+
+  test('kitchen status changes write back to shared POS orders', () => {
+    const kitchenPath = path.join(process.cwd(), 'src/pages/POS/KitchenDisplay.tsx');
+    const source = fs.readFileSync(kitchenPath, 'utf8');
+
+    expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
+    expect(source).toContain("status !== 'served'");
+    expect(source).toContain("status: 'served'");
+  });
 });
