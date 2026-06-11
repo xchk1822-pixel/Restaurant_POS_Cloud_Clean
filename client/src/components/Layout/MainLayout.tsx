@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { dataService } from '../../services/DataService';
 import { canAccessPermission } from '../../utils/permissions';
 
 interface MainLayoutProps {
@@ -13,14 +12,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  // 🔥 用户登录后，自动迁移数据到分店专属路径
-  useEffect(() => {
-    if (user) {
-      console.log('🔄 检测到用户登录，开始数据迁移...');
-      dataService.migrateGlobalDataToStore();
-    }
-  }, [user]);
 
   const menuItems = [
     { path: '/dashboard', icon: '📊', label: '老板仪表板', roles: ['super_admin'] },
