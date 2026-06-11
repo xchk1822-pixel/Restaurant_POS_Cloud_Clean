@@ -51,4 +51,11 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('export const migrateOldData');
     expect(source).not.toContain('export const smartBatchAddDocuments');
   });
+
+  test('app context does not auto-save shared module data through legacy DataService', () => {
+    const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
+    const source = fs.readFileSync(appContextPath, 'utf8');
+
+    expect(source).not.toContain('dataService.saveData(');
+  });
 });

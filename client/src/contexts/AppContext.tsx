@@ -437,13 +437,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return [];
   });
 
-  // 自动保存冰箱数据到 DataService（会自动同步到 Firestore）
-  useEffect(() => {
-    if (fridges.length > 0) {
-      dataService.saveData('fridges', fridges);
-    }
-  }, [fridges]);
-
   // 初始化冰箱库存数据（从 DataService 加载）
   const [fridgeInventory, setFridgeInventory] = useState<FridgeInventory[]>(() => {
     try {
@@ -459,12 +452,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 默认值
     return [];
   });
-
-  useEffect(() => {
-    if (fridgeInventory.length > 0) {
-      dataService.saveData('fridge_inventory', fridgeInventory);
-    }
-  }, [fridgeInventory]);
 
   // 初始化订单数据（从 localStorage 加载）
   const [orders, setOrders] = useState<Order[]>(() => {
@@ -883,10 +870,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  // 自动保存菜单数据到 DataService
+  // Keep category state and the POS local mirror in sync without legacy cloud writes.
   useEffect(() => {
-    dataService.saveData('menu_items', menuItems);
-    dataManager.saveData('menuItems', menuItems, { syncFirestore: false });
+    if (menuItems.length > 0) {
+      dataManager.saveData('menuItems', menuItems, { syncFirestore: false });
+    }
 
     // 同步更新分类列表
     const uniqueCategories = Array.from(new Set(menuItems.map(item => item.category)));
@@ -936,17 +924,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [inventoryItems]);
 
-  // ✅ 自动保存供应商数据到 DataService（会自动同步到 Firestore）
-  useEffect(() => {
-    if (suppliers.length > 0) {
-      dataService.saveData('suppliers', suppliers);
-    }
-  }, [suppliers]);
-
-  // ✅ 自动保存采购订单到 DataService（会自动同步到 Firestore）
+  // Keep purchase records available for local finance screens without legacy cloud writes.
   useEffect(() => {
     if (purchaseOrders.length > 0) {
-      dataService.saveData('purchase_orders', purchaseOrders);
       dataManager.saveData('purchases', purchaseOrders, { syncFirestore: false });
     }
   }, [purchaseOrders]);
