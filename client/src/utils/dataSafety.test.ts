@@ -42,4 +42,13 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('await updateDoc(docRef, firestoreUpdateData)');
     expect(source).toContain('await setDoc(docRef, firestoreUpdateData, { merge: true })');
   });
+
+  test('smart sync service does not expose legacy bulk migration writers', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).not.toContain('export const manualSyncToFirestore');
+    expect(source).not.toContain('export const migrateOldData');
+    expect(source).not.toContain('export const smartBatchAddDocuments');
+  });
 });
