@@ -307,6 +307,36 @@ describe('production data safety guards', () => {
     expect(deleteBlock).not.toContain("smartDeleteDocument('inventory_items', itemId).catch");
   });
 
+  test('inventory item add and edit wait for cloud writes before local state updates', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+    const editStart = source.indexOf('const updatedInventoryItem = {');
+    const addStart = source.indexOf('const newItem: InventoryItem = {');
+    const editBlock = source.slice(editStart, addStart);
+    const addBlock = source.slice(addStart, source.indexOf('setShowAddModal(false);', addStart));
+
+    expect(editBlock).toContain("await smartUpdateDocument('inventory_items', newId");
+    expect(editBlock.indexOf("await smartUpdateDocument('inventory_items', newId")).toBeLessThan(
+      editBlock.indexOf('setInventoryItems(items => items.map')
+    );
+    expect(editBlock).toContain("await smartUpdateDocument('menu_items', menuItem.id");
+    expect(editBlock.indexOf("await smartUpdateDocument('menu_items', menuItem.id")).toBeLessThan(
+      editBlock.indexOf('setMenuItems(items => items.map')
+    );
+    expect(editBlock).not.toContain("smartUpdateDocument('menu_items', menuItem.id, {");
+    expect(editBlock).not.toContain('.catch(error =>');
+
+    expect(addBlock).toContain("await smartAddDocument('inventory_items', newItem)");
+    expect(addBlock.indexOf("await smartAddDocument('inventory_items', newItem)")).toBeLessThan(
+      addBlock.indexOf('setInventoryItems([...inventoryItems, newItem])')
+    );
+    expect(addBlock).toContain("await smartAddDocument('menu_items', newMenuItem)");
+    expect(addBlock.indexOf("await smartAddDocument('menu_items', newMenuItem)")).toBeLessThan(
+      addBlock.indexOf('setMenuItems([...menuItems, newMenuItem])')
+    );
+    expect(addBlock).not.toContain("smartAddDocument('menu_items', newMenuItem).catch");
+  });
+
   test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {
     const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');

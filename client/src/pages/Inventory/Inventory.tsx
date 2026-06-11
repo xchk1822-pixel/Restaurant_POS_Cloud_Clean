@@ -1587,61 +1587,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       lastModified: now
                     };
                     
-                    setInventoryItems(items => items.map(item => 
-                      item.id === editingItem.id ? updatedInventoryItem : item
-                    ));
-                    
-                    // ✅ 如果 ID 改变了，也要更新冰箱库存中的引用
-                    if (barcodeChanged && oldItem) {
-                      setFridgeInventory(invs => invs.map(inv => {
-                        if (inv.itemId !== editingItem.id) return inv;
-                        const oldFridgeInventoryId = inv.id || `${inv.fridgeId}-${editingItem.id}`;
-                        const newFridgeInventoryId = `${inv.fridgeId}-${newId}`;
-                        smartUpdateDocument('fridge_inventory', newFridgeInventoryId, {
-                          ...inv,
-                          id: newFridgeInventoryId,
-                          itemId: newId,
-                          lastModified: now
-                        }).catch(error => {
-                          console.error('同步冰箱库存新ID失败:', error);
-                        });
-                        smartDeleteDocument('fridge_inventory', oldFridgeInventoryId).catch(error => {
-                          console.error('删除冰箱库存旧ID失败:', error);
-                        });
-                        return { ...inv, id: newFridgeInventoryId, itemId: newId, lastModified: now };
-                      }));
-                    }
-                    
-                    // 如果是酒水或饮料，同步更新菜单
-                    if (oldItem && (oldItem.category === 'beverage' || oldItem.category === 'alcohol')) {
-                      const menuItem = menuItems.find(m => m.stockItemId === editingItem.id);
-                      if (menuItem) {
-                        setMenuItems(items => items.map(m => 
-                          m.id === menuItem.id ? {
-                            ...m,
-                            name: editingItem.name!,
-                            price: editingItem.salePrice || 0,
-                            category: editingItem.category === 'beverage' ? '饮料' : '酒水',
-                            type: 'direct' as 'direct',
-                            stockItemId: newId, // ✅ 更新菜单中的引用
-                            lastModified: now
-                          } : m
-                        ));
-                        smartUpdateDocument('menu_items', menuItem.id, {
-                          ...menuItem,
-                          name: editingItem.name!,
-                          price: editingItem.salePrice || 0,
-                          category: editingItem.category === 'beverage' ? '饮料' : '酒水',
-                          type: 'direct',
-                          stockItemId: newId,
-                          lastModified: now
-                        }).catch(error => {
-                          console.error('同步菜单项更新失败:', error);
-                        });
-                      }
-                    }
-                    
-                    // 🔥 同步到 Firestore
+                    let updatedMenuItem: any = null;
                     try {
                       await smartUpdateDocument('inventory_items', newId, {
                         ...updatedInventoryItem,
@@ -1649,12 +1595,39 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       if (barcodeChanged) {
                         await smartDeleteDocument('inventory_items', editingItem.id);
                       }
-                      console.log('✅ 物品已同步到 Firestore');
+
+                      if (oldItem && (oldItem.category === 'beverage' || oldItem.category === 'alcohol')) {
+                        const menuItem = menuItems.find(m => m.stockItemId === editingItem.id);
+                        if (menuItem) {
+                          updatedMenuItem = {
+                            ...menuItem,
+                            name: editingItem.name!,
+                            price: editingItem.salePrice || 0,
+                            category: editingItem.category === 'beverage' ? '\u996e\u6599' : '\u9152\u6c34',
+                            type: 'direct',
+                            stockItemId: newId,
+                            lastModified: now
+                          };
+                          await smartUpdateDocument('menu_items', menuItem.id, updatedMenuItem);
+                        }
+                      }
                     } catch (error) {
-                      console.error('❌ 同步物品失败:', error);
+                      console.error('\u540c\u6b65\u7269\u54c1\u5931\u8d25:', error);
+                      alert('\u4fdd\u5b58\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                      return;
                     }
-                    
-                    alert('修改成功！');
+
+                    setInventoryItems(items => items.map(item =>
+                      item.id === editingItem.id ? updatedInventoryItem : item
+                    ));
+
+                    if (updatedMenuItem) {
+                      setMenuItems(items => items.map(m =>
+                        m.id === updatedMenuItem.id ? updatedMenuItem : m
+                      ));
+                    }
+
+                    alert('\u4fee\u6539\u6210\u529f\uff01');
                   } else {
                     // 添加新物品
                     const now = Date.now();
@@ -1674,36 +1647,36 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       lastUpdated: new Date(),
                       lastModified: now
                     };
-                    setInventoryItems([...inventoryItems, newItem]);
-                    
-                    // 🔥 同步到 Firestore
+                    let newMenuItem: any = null;
                     try {
                       await smartAddDocument('inventory_items', newItem);
-                      console.log('✅ 新物品已同步到 Firestore');
+
+                      if (editingItem.category === 'beverage' || editingItem.category === 'alcohol') {
+                        newMenuItem = {
+                          id: `menu-${Date.now()}`,
+                          name: editingItem.name!,
+                          nameEs: '',
+                          price: editingItem.salePrice || 0,
+                          category: editingItem.category === 'beverage' ? '\u996e\u6599' : '\u9152\u6c34',
+                          type: 'direct' as 'direct',
+                          stockItemId: newItem.id,
+                          available: true,
+                          lastModified: now
+                        };
+                        await smartAddDocument('menu_items', newMenuItem);
+                      }
                     } catch (error) {
-                      console.error('❌ 同步新物品失败:', error);
+                      console.error('\u540c\u6b65\u65b0\u7269\u54c1\u5931\u8d25:', error);
+                      alert('\u6dfb\u52a0\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                      return;
                     }
-                    
-                    // 如果是酒水或饮料，自动添加到菜单
-                    if (editingItem.category === 'beverage' || editingItem.category === 'alcohol') {
-                      const newMenuItem = {
-                        id: `menu-${Date.now()}`,
-                        name: editingItem.name!,
-                        nameEs: '',
-                        price: editingItem.salePrice || 0,
-                        category: editingItem.category === 'beverage' ? '饮料' : '酒水',
-                        type: 'direct' as 'direct', // 直接扣库存
-                        stockItemId: newItem.id, // 关联库存物品
-                        available: true,
-                        lastModified: now
-                      };
+
+                    setInventoryItems([...inventoryItems, newItem]);
+                    if (newMenuItem) {
                       setMenuItems([...menuItems, newMenuItem]);
-                      smartAddDocument('menu_items', newMenuItem).catch(error => {
-                        console.error('同步自动创建菜单项失败:', error);
-                      });
-                      alert('添加成功！已自动同步到菜单');
+                      alert('\u6dfb\u52a0\u6210\u529f\uff01\u5df2\u81ea\u52a8\u540c\u6b65\u5230\u83dc\u5355');
                     } else {
-                      alert('添加成功！');
+                      alert('\u6dfb\u52a0\u6210\u529f\uff01');
                     }
                   }
                   
