@@ -59,21 +59,27 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 保存数据
-  const saveData = (key: string, data: any) => {
-    localStorage.setItem(key, JSON.stringify(data));
-  };
   const saveStoreCollection = (collectionName: string, data: any[]) => {
     const storeId = dataService.getCurrentStoreId();
     const storageKey = storeId ? `store_${storeId}_${collectionName}` : collectionName;
     localStorage.setItem(storageKey, JSON.stringify(data));
   };
 
+  const getSupplierPaymentStorageKey = (supplierId: string) => {
+    return dataService.getStoreKey(`payments_${supplierId}`);
+  };
+
+  const saveSupplierPayments = (supplierId: string, payments: PaymentRecord[]) => {
+    localStorage.setItem(getSupplierPaymentStorageKey(supplierId), JSON.stringify(payments));
+  };
+
   const refreshSupplierData = async () => {
     setIsRefreshing(true);
     try {
-      const [cloudSuppliers, cloudPurchaseOrders] = await Promise.all([
+      const [cloudSuppliers, cloudPurchaseOrders, cloudSupplierPayments] = await Promise.all([
         smartGetDocuments('suppliers', true),
-        smartGetDocuments('purchase_orders', true)
+        smartGetDocuments('purchase_orders', true),
+        smartGetDocuments('supplier_payments', true)
       ]);
 
       const normalizedSuppliers = cloudSuppliers.map((supplier: any) => ({
@@ -87,6 +93,16 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
 
       saveStoreCollection('suppliers', normalizedSuppliers);
       saveStoreCollection('purchase_orders', cloudPurchaseOrders);
+      const paymentsBySupplier = new Map<string, PaymentRecord[]>();
+      cloudSupplierPayments.forEach((payment: any) => {
+        if (!payment?.supplierId) return;
+        const supplierPayments = paymentsBySupplier.get(payment.supplierId) || [];
+        supplierPayments.push(payment);
+        paymentsBySupplier.set(payment.supplierId, supplierPayments);
+      });
+      paymentsBySupplier.forEach((supplierPayments, supplierId) => {
+        saveSupplierPayments(supplierId, supplierPayments);
+      });
       await dataManager.saveData('purchases', cloudPurchaseOrders, { syncFirestore: false, notify: false });
 
       setLastSyncedAt(new Date());
@@ -105,7 +121,7 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
 
   // 获取供应商的还款记录
   const getSupplierPayments = (supplierId: string): PaymentRecord[] => {
-    const saved = localStorage.getItem(`payments_${supplierId}`);
+    const saved = localStorage.getItem(getSupplierPaymentStorageKey(supplierId));
     return saved ? JSON.parse(saved) : [];
   };
 
@@ -113,7 +129,7 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   const savePaymentRecord = async (supplierId: string, record: PaymentRecord) => {
     const payments = getSupplierPayments(supplierId);
     payments.push(record);
-    saveData(`payments_${supplierId}`, payments);
+    saveSupplierPayments(supplierId, payments);
     
     // 🔥 同步到 Firestore
     try {

@@ -162,6 +162,17 @@ describe('production data safety guards', () => {
     expect(source).toContain("smartSetDocument('users', user.id, toCloudUser(user))");
   });
 
+  test('supplier payment records are store-scoped and refreshed from cloud', () => {
+    const suppliersPath = path.join(process.cwd(), 'src/pages/Inventory/SupplierManagement.tsx');
+    const source = fs.readFileSync(suppliersPath, 'utf8');
+
+    expect(source).toContain("smartGetDocuments('supplier_payments', true)");
+    expect(source).toContain("dataService.getStoreKey(`payments_${supplierId}`)");
+    expect(source).toContain('saveSupplierPayments(supplierId, supplierPayments)');
+    expect(source).not.toContain("localStorage.getItem(`payments_${supplierId}`)");
+    expect(source).not.toContain("saveData(`payments_${supplierId}`");
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
