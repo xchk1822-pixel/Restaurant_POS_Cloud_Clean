@@ -199,13 +199,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
     const loadInventoryCategories = async () => {
       try {
-        const cloudCategories = await smartGetDocuments('inventory_categories');
+        const cloudCategories = await smartGetDocuments('inventory_categories', true);
         if (cancelled) return;
 
         const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
         if (normalizedCloudCategories.length > 0) {
           inventoryCategoryRemoteUpdateRef.current = true;
-          setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories));
+          setInventoryCategories(normalizedCloudCategories);
         }
       } catch (error) {
         console.error('加载云端库存类别失败:', error);

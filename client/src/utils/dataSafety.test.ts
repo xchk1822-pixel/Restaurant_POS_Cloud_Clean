@@ -137,4 +137,13 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('private async syncToFirestore(');
     expect(source).not.toContain('processSyncQueue(');
   });
+
+  test('inventory category cloud loads do not merge stale local categories', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain("smartGetDocuments('inventory_categories', true)");
+    expect(source).toContain('setInventoryCategories(normalizedCloudCategories)');
+    expect(source).not.toContain('setInventoryCategories(prev => mergeInventoryCategories(prev, normalizedCloudCategories))');
+  });
 });
