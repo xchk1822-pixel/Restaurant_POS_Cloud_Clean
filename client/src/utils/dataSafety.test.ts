@@ -77,6 +77,17 @@ describe('production data safety guards', () => {
     expect(source).toContain("smartSetDocument('expenses', newExpense.id, newExpense)");
   });
 
+  test('expense category local cache is scoped to the current store', () => {
+    const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
+    const source = fs.readFileSync(expensePath, 'utf8');
+
+    expect(source).toContain("dataService.getStoreKey('expense_categories')");
+    expect(source).toContain('localStorage.getItem(expenseCategoryStorageKey)');
+    expect(source).toContain('localStorage.setItem(expenseCategoryStorageKey');
+    expect(source).not.toContain("localStorage.getItem('expense_categories')");
+    expect(source).not.toContain("localStorage.setItem('expense_categories'");
+  });
+
   test('waiter orders publish directly to shared POS orders', () => {
     const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
     const source = fs.readFileSync(waiterPath, 'utf8');
@@ -178,5 +189,19 @@ describe('production data safety guards', () => {
     expect(employeeListSource).toContain("smartUpdateDocument('employee_deletions', id");
     expect(employeeListSource).toContain("dataManager.saveData('employees', activeEmployees");
     expect(employeeListSource).toContain('syncFirestore: false');
+  });
+
+  test('shift handover drafts and history use store-scoped local storage', () => {
+    const handoverPath = path.join(process.cwd(), 'src/pages/Manager/ShiftHandover.tsx');
+    const source = fs.readFileSync(handoverPath, 'utf8');
+
+    expect(source).toContain("dataService.getStoreKey('current_inputs')");
+    expect(source).toContain('localStorage.getItem(currentInputsStorageKey)');
+    expect(source).toContain('localStorage.setItem(currentInputsStorageKey');
+    expect(source).toContain("dataManager.getData('handovers')");
+    expect(source).not.toContain("localStorage.getItem('current_inputs')");
+    expect(source).not.toContain("localStorage.setItem('current_inputs'");
+    expect(source).not.toContain("localStorage.getItem('rest_v6_final')");
+    expect(source).not.toContain("localStorage.removeItem('rest_v6_final')");
   });
 });

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
@@ -23,13 +24,15 @@ interface ExpenseRecordsProps {
 }
 
 const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false }) => {
+  const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
+
   // ✅ 使用统一数据管理服务
   const [expenses, setExpenses] = useState<any[]>(() => {
     return dataManager.getData('expenses');
   });
 
   const [categories, setCategories] = useState<any[]>(() => {
-    const saved = localStorage.getItem('expense_categories');
+    const saved = localStorage.getItem(expenseCategoryStorageKey);
     if (saved) {
       return JSON.parse(saved);
     }
@@ -81,7 +84,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
       if (cloudCategories.length > 0) {
         setCategories(cloudCategories);
-        localStorage.setItem('expense_categories', JSON.stringify(cloudCategories));
+        localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudCategories));
       }
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -90,7 +93,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [expenseCategoryStorageKey]);
 
   useEffect(() => {
     refreshExpenseData();
@@ -179,7 +182,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     const nextCategories = [...categories, newCat];
     setCategories(nextCategories);
     await smartSetDocument('expense_categories', newCat.id, newCat);
-    localStorage.setItem('expense_categories', JSON.stringify(nextCategories));
+    localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
     setNewCategoryName('');
   };
 
@@ -193,7 +196,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       const nextCategories = categories.filter(cat => cat.id !== id);
       setCategories(nextCategories);
       await smartDeleteDocument('expense_categories', id);
-      localStorage.setItem('expense_categories', JSON.stringify(nextCategories));
+      localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
     }
   };
 

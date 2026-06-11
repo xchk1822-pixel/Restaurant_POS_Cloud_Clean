@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
 import { smartAddDocument, smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
 import { normalizeHandoverRecords } from '../../utils/handoverRecords';
@@ -26,11 +27,13 @@ interface ShiftHandoverProps {
 }
 
 const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false }) => {
+  const currentInputsStorageKey = dataService.getStoreKey('current_inputs');
+
   // 使用全局汇率
   const exchangeRate = getUSDToNioRate();
   
   const [usdCount, setUsdCount] = useState<CashCount>(() => {
-    const saved = localStorage.getItem('current_inputs');
+    const saved = localStorage.getItem(currentInputsStorageKey);
     if (saved) {
       const inputs = JSON.parse(saved);
       const usd: CashCount = {};
@@ -43,7 +46,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   });
   
   const [nioCount, setNioCount] = useState<CashCount>(() => {
-    const saved = localStorage.getItem('current_inputs');
+    const saved = localStorage.getItem(currentInputsStorageKey);
     if (saved) {
       const inputs = JSON.parse(saved);
       const nio: CashCount = {};
@@ -56,8 +59,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   });
   
   const [history, setHistory] = useState<HistoryRecord[]>(() => {
-    const saved = localStorage.getItem('rest_v6_final');
-    return saved ? JSON.parse(saved) : [];
+    return dataManager.getData('handovers');
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -95,8 +97,8 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     Object.entries(nioCount).forEach(([k, v]) => {
       if (v > 0) inputs[`n_${k}`] = v.toString();
     });
-    localStorage.setItem('current_inputs', JSON.stringify(inputs));
-  }, [usdCount, nioCount]);
+    localStorage.setItem(currentInputsStorageKey, JSON.stringify(inputs));
+  }, [currentInputsStorageKey, usdCount, nioCount]);
 
   // 时钟更新
   useEffect(() => {
@@ -228,7 +230,6 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       ));
       setHistory([]);
       await dataManager.saveData('handovers', [], { syncFirestore: false, notify: false });
-      localStorage.removeItem('rest_v6_final');
       setLastSyncedAt(new Date());
     }
   };
