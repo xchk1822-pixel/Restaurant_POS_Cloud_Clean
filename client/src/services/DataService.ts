@@ -6,35 +6,9 @@
  */
 
 import { getLocalDateTime, getLocalDateString } from '../utils/localTime';
-import { smartAddDocument, smartGetDocuments } from './smartSyncService';
-import { db } from '../firebase';
-import { writeBatch, doc } from 'firebase/firestore';
+import { smartAddDocument } from './smartSyncService';
 
 class DataService {
-  // 🔥 备份模式相关
-  private backupMode: boolean = false;
-  private backupInterval: number = 5 * 60 * 1000; // 默认5分钟
-
-  /**
-   * 设置备份模式
-   * @param enabled 是否启用备份模式
-   * @param interval 备份间隔（毫秒），默认5分钟
-   */
-  setBackupMode(enabled: boolean, interval?: number) {
-    this.backupMode = enabled;
-    if (interval) {
-      this.backupInterval = interval;
-    }
-    console.log(`📡 备份模式: ${enabled ? '启用' : '禁用'}, 间隔: ${this.backupInterval}ms`);
-  }
-
-  /**
-   * 获取当前备份间隔
-   */
-  getBackupInterval(): number {
-    return this.backupInterval;
-  }
-
   /**
    * 获取当前用户的storeId
    */
@@ -211,11 +185,8 @@ class DataService {
         }
       }
 
-      // 🔥 异步同步到 Firestore（根据备份模式决定策略）
-      // 🔥 默认禁用 Firestore 自动同步，只在手动备份时启用
-      if (this.backupMode) {
-        this.syncToFirestore(collectionName, dataWithTimestamp);
-      }
+      // 云端写入由各业务模块通过 smartSetDocument/smartUpdateDocument 显式执行。
+      // 这里仅维护当前分店的本地缓存，避免旧缓存批量覆盖 Firestore。
     } catch (error) {
       console.error(`❌ 保存 ${collectionName} 失败:`, error);
     }
@@ -268,180 +239,6 @@ class DataService {
     const items = this.getData(collectionName);
     const filtered = items.filter((i: any) => i.id !== itemId);
     this.saveData(collectionName, filtered);
-  }
-
-  /**
-   * 异步同步到 Firestore
-   */
-  // 🔥 防抖定时器
-  private syncTimers: Map<string, NodeJS.Timeout> = new Map();
-
-  // 🔥 全局同步队列（确保顺序执行）
-  private syncQueue: Array<{collectionName: string, data: any}> = [];
-  private isProcessingQueue: boolean = false;
-
-  private async syncToFirestore(collectionName: string, data: any) {
-    const storeId = this.getCurrentStoreId();
-    if (!storeId) {
-      return;
-    }
-
-    // 🔥 根据备份模式决定同步策略
-    if (this.backupMode) {
-      // 备份模式：使用防抖定时器
-      const timerKey = `${storeId}_${collectionName}`;
-
-      // 清除之前的定时器
-      if (this.syncTimers.has(timerKey)) {
-        clearTimeout(this.syncTimers.get(timerKey));
-      }
-
-      // 设置新的定时器
-      const timer = setTimeout(() => {
-        this.syncQueue.push({ collectionName, data });
-        console.log(`📥 ${collectionName} 已加入同步队列，当前队列长度: ${this.syncQueue.length}`);
-        this.processSyncQueue();
-      }, this.backupInterval);
-
-      this.syncTimers.set(timerKey, timer);
-    } else {
-      // 正常模式：立即加入同步队列
-      this.syncQueue.push({ collectionName, data });
-      console.log(`📥 ${collectionName} 已加入同步队列，当前队列长度: ${this.syncQueue.length}`);
-      this.processSyncQueue();
-    }
-  }
-
-  /**
-   * 🔥 清理对象中的 undefined 字段（Firestore 不允许 undefined）
-   */
-  private cleanUndefinedFields(obj: any): any {
-    if (obj === null || obj === undefined) return null;
-    if (typeof obj !== 'object') return obj;
-
-    if (Array.isArray(obj)) {
-      return obj.map(item => this.cleanUndefinedFields(item));
-    }
-
-    const cleaned: any = {};
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        const value = obj[key];
-        if (value === undefined) {
-          // 将 undefined 转换为 null
-          cleaned[key] = null;
-        } else if (typeof value === 'object' && value !== null) {
-          // 递归清理嵌套对象
-          cleaned[key] = this.cleanUndefinedFields(value);
-        } else {
-          cleaned[key] = value;
-        }
-      }
-    }
-    return cleaned;
-  }
-
-  /**
-   * 🔥 处理同步队列（确保顺序执行，避免并发）
-   */
-  private async processSyncQueue() {
-    if (this.isProcessingQueue || this.syncQueue.length === 0) {
-      return;
-    }
-
-    this.isProcessingQueue = true;
-
-    while (this.syncQueue.length > 0) {
-      const { collectionName, data } = this.syncQueue.shift()!;
-
-      try {
-        const storeId = this.getCurrentStoreId();
-        const firestorePath = `stores/${storeId}/${collectionName}`;
-
-        // 使用 batch 批量写入
-        const writeBatchObj = writeBatch(db);
-
-        for (const item of data) {
-          // 🔥 为 fridge_inventory 生成复合 ID
-          let docId = item.id;
-          if (!docId && collectionName === 'fridge_inventory') {
-            docId = `${item.fridgeId}-${item.itemId}`;
-          }
-
-          if (!docId) {
-            console.warn(`⚠️ ${collectionName} 中的记录缺少 ID，跳过同步`, item);
-            continue;
-          }
-
-          const docRef = doc(db, firestorePath, docId);
-          // 🔥 清理 undefined 字段后再写入
-          const cleanedItem = this.cleanUndefinedFields(item);
-          writeBatchObj.set(docRef, cleanedItem, { merge: true });
-        }
-
-        await writeBatchObj.commit();
-        console.log(`✅ 已同步 ${collectionName} (${data.length}条)`);
-
-        // 🔥 每个batch之间等待2秒，避免队列堆积
-        if (this.syncQueue.length > 0) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      } catch (error) {
-        console.error(`❌ 同步 ${collectionName} 失败:`, error);
-        // 如果失败，等待5秒后继续
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      }
-    }
-
-    this.isProcessingQueue = false;
-  }
-
-  /**
-   * 从 Firestore 恢复数据（用于新设备或数据丢失）
-   */
-  async restoreFromFirestore() {
-    const storeId = this.getCurrentStoreId();
-    if (!storeId) {
-      alert('请先登录分店账号');
-      return false;
-    }
-
-    const collections = [
-      'inventory_items',
-      'menu_items',
-      'pos_orders',
-      'expenses',
-      'purchase_orders',
-      'suppliers',
-      'employees'
-    ];
-
-    let restoredCount = 0;
-
-    for (const col of collections) {
-      try {
-        const firestorePath = `stores/${storeId}/${col}`;
-        const cloudData = await smartGetDocuments(firestorePath);
-
-        if (cloudData && cloudData.length > 0) {
-          const key = `store_${storeId}_${col}`;
-          localStorage.setItem(key, JSON.stringify(cloudData));
-          console.log(`✅ 已恢复 ${col}: ${cloudData.length} 条`);
-          restoredCount += cloudData.length;
-        }
-      } catch (error) {
-        console.error(`❌ 恢复 ${col} 失败:`, error);
-      }
-    }
-
-    if (restoredCount > 0) {
-      alert(`✅ 数据恢复完成！共恢复 ${restoredCount} 条记录`);
-      window.location.reload();
-      return true;
-    } else {
-      alert('⚠️ Firestore中没有找到数据');
-      return false;
-    }
   }
 
   /**
@@ -624,60 +421,6 @@ class DataService {
     window.dispatchEvent(new Event('dataSynced'));
   }
 
-  /**
-   * 🔥 手动同步所有数据到 Firestore（用户主动触发）
-   */
-  async syncToFirestoreNow(): Promise<void> {
-    const storeId = this.getCurrentStoreId();
-    if (!storeId) {
-      alert('请先登录分店账号');
-      return;
-    }
-
-    const collections = [
-      'inventory_items',
-      'menu_items',
-      'pos_orders',
-      'expenses',
-      'purchase_orders',
-      'employees',
-      'employee_deletions'
-    ];
-
-    let syncedCount = 0;
-    let failedCount = 0;
-
-    console.log('🔄 开始手动同步到 Firestore...');
-
-    for (const collection of collections) {
-      try {
-        const localData = this.getData(collection);
-        if (localData.length === 0) {
-          console.log(`⚠️ ${collection} 本地为空，跳过`);
-          continue;
-        }
-
-        // 使用 batch 批量写入
-        const firestorePath = `stores/${storeId}/${collection}`;
-        const writeBatchObj = writeBatch(db);
-
-        for (const item of localData) {
-          const docRef = doc(db, firestorePath, item.id);
-          writeBatchObj.set(docRef, item, { merge: true });
-        }
-
-        await writeBatchObj.commit();
-        console.log(`✅ 已同步 ${collection}: ${localData.length} 条`);
-        syncedCount++;
-      } catch (error) {
-        console.error(`❌ 同步 ${collection} 失败:`, error);
-        failedCount++;
-      }
-    }
-
-    console.log(`🎉 手动同步完成：成功 ${syncedCount} 个，失败 ${failedCount} 个`);
-    alert(`同步完成！\n成功: ${syncedCount} 个集合\n失败: ${failedCount} 个集合`);
-  }
 }
 
 // 导出单例

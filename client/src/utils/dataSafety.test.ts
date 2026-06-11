@@ -102,4 +102,39 @@ describe('production data safety guards', () => {
     expect(source).toContain("status !== 'served'");
     expect(source).toContain("status: 'served'");
   });
+
+  test('permissions management keeps only the four editable store roles', () => {
+    const permissionsPath = path.join(process.cwd(), 'src/pages/Settings/PermissionsModule.tsx');
+    const source = fs.readFileSync(permissionsPath, 'utf8');
+
+    expect(source).toContain("id: 'store_manager'");
+    expect(source).toContain("id: 'cashier'");
+    expect(source).toContain("id: 'waiter'");
+    expect(source).toContain("id: 'chef'");
+    expect(source).toContain('normalizeRoles(cloudRoles)');
+    expect(source).not.toContain('setRoles([...roles');
+    expect(source).not.toContain('smartAddDocument(\'system_roles\'');
+  });
+
+  test('backup page is read-only export and cannot restore or bulk sync data', () => {
+    const backupPath = path.join(process.cwd(), 'src/pages/Settings/DataBackup.tsx');
+    const source = fs.readFileSync(backupPath, 'utf8');
+
+    expect(source).toContain('createFirestoreBackup');
+    expect(source).toContain('downloadBackupFile');
+    expect(source).not.toContain('restoreFromFirestore');
+    expect(source).not.toContain('syncToFirestoreNow');
+    expect(source).not.toContain('setBackupMode');
+  });
+
+  test('DataService does not expose legacy bulk overwrite sync entry points', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).not.toContain('setBackupMode(');
+    expect(source).not.toContain('restoreFromFirestore(');
+    expect(source).not.toContain('syncToFirestoreNow(');
+    expect(source).not.toContain('private async syncToFirestore(');
+    expect(source).not.toContain('processSyncQueue(');
+  });
 });
