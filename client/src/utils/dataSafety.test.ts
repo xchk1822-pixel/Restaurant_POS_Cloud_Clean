@@ -305,6 +305,19 @@ describe('production data safety guards', () => {
     expect(fridgeSource).not.toContain("localStorage.setItem('fridge_stocktake_history'");
   });
 
+  test('fridge creation waits for deterministic cloud write before local state update', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const addFridgeBlock = source.slice(source.indexOf('const handleAddFridge = async'), source.indexOf('// 缂栬緫鍐扮'));
+
+    expect(source).toContain('smartSetDocument');
+    expect(addFridgeBlock).toContain("await smartSetDocument('fridges', newFridge.id, newFridge)");
+    expect(addFridgeBlock.indexOf("await smartSetDocument('fridges', newFridge.id, newFridge)")).toBeLessThan(
+      addFridgeBlock.indexOf('setFridges([...fridges, newFridge])')
+    );
+    expect(addFridgeBlock).not.toContain("smartAddDocument('fridges', newFridge)");
+  });
+
   test('employee refresh persists deletion tombstones and delete writes are single-document', () => {
     const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
     const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');

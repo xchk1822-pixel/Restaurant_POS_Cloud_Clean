@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import { normalizeFridgeInventoryForRefresh, normalizeFridgesForRefresh, normalizeInventoryItemsForRefresh, saveFridgeRefreshCache, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
@@ -212,7 +212,7 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // 添加冰箱
-  const handleAddFridge = () => {
+  const handleAddFridge = async () => {
     if (!newFridgeName.trim()) {
       alert('请输入冰箱名称');
       return;
@@ -226,10 +226,12 @@ const FridgeStocktake: React.FC = () => {
       lastModified: Date.now()
     };
     
-    setFridges([...fridges, newFridge]);
-    smartAddDocument('fridges', newFridge).catch(error => {
-      console.error('同步新增冰箱失败:', error);
+    await smartSetDocument('fridges', newFridge.id, newFridge).catch(error => {
+      console.error('保存新增冰箱失败:', error);
+      alert('保存新增冰箱失败，请检查网络后重试');
+      throw error;
     });
+    setFridges([...fridges, newFridge]);
     setNewFridgeName('');
     setNewFridgeLocation('');
     setShowAddFridgeModal(false);
