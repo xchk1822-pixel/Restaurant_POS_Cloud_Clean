@@ -16,6 +16,11 @@ interface Store {
   businessHours: string;
 }
 
+const getStoreDedupeKey = (store: any): string => {
+  const code = String(store?.code || '').trim().toLowerCase();
+  return code ? `code:${code}` : `id:${String(store?.id || '').trim()}`;
+};
+
 const getLocalRecords = (key: string): any[] => {
   try {
     const raw = localStorage.getItem(key);
@@ -27,6 +32,19 @@ const getLocalRecords = (key: string): any[] => {
 
 const saveLocalRecords = (key: string, records: any[]) => {
   localStorage.setItem(key, JSON.stringify(records));
+};
+
+const dedupeStores = (records: any[]): Store[] => {
+  const map = new Map<string, any>();
+  records.forEach(record => {
+    if (!record?.id) return;
+    const key = getStoreDedupeKey(record);
+    const existing = map.get(key);
+    const currentTime = Date.parse(record?.updatedAt || record?.lastModified || record?.createdAt || record?.openDate || '') || 0;
+    const existingTime = Date.parse(existing?.updatedAt || existing?.lastModified || existing?.createdAt || existing?.openDate || '') || 0;
+    if (!existing || currentTime >= existingTime) map.set(key, record);
+  });
+  return Array.from(map.values()) as Store[];
 };
 
 const dedupeUsers = (records: any[]): any[] => {
@@ -56,7 +74,7 @@ interface User {
 }
 
 const StoresModule: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>(() => getLocalRecords('stores'));
+  const [stores, setStores] = useState<Store[]>(() => dedupeStores(getLocalRecords('stores')));
   const [users, setUsers] = useState<User[]>(() => dedupeUsers(getLocalRecords('users')));
   const [selectedStore, setSelectedStore] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'info' | 'users'>('info');
@@ -100,9 +118,10 @@ const StoresModule: React.FC = () => {
   };
 
   const persistStores = async (nextStores: Store[]) => {
-    setStores(nextStores);
-    saveLocalRecords('stores', nextStores);
-    await Promise.all(nextStores.map(store => smartSetDocument('stores', store.id, store)));
+    const normalizedStores = dedupeStores(nextStores);
+    setStores(normalizedStores);
+    saveLocalRecords('stores', normalizedStores);
+    await Promise.all(normalizedStores.map(store => smartSetDocument('stores', store.id, store)));
   };
 
   const toCloudUser = (user: User): User => {
@@ -147,9 +166,10 @@ const StoresModule: React.FC = () => {
         smartGetDocuments('users', true),
       ]);
       const normalizedUsers = (dedupeUsers(cloudUsers) as User[]).map(toCloudUser);
-      setStores(cloudStores as Store[]);
+      const normalizedStores = dedupeStores(cloudStores);
+      setStores(normalizedStores);
       setUsers(normalizedUsers);
-      saveLocalRecords('stores', cloudStores);
+      saveLocalRecords('stores', normalizedStores);
       saveLocalRecords('users', normalizedUsers);
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -346,9 +366,10 @@ const StoresModule: React.FC = () => {
 
   const handleSaveStore = async () => {
     if (!editingStore) return;
-    const updated = stores.map(s => s.id === editingStore.id ? editingStore : s);
+    const updated = dedupeStores(stores.map(s => s.id === editingStore.id ? editingStore : s));
     setStores(updated);
-    await persistStores(updated);
+    saveLocalRecords('stores', updated);
+    await smartSetDocument('stores', editingStore.id, editingStore);
     setShowEditStore(false);
     setEditingStore(null);
     alert('✅ 分店信息已更新');
