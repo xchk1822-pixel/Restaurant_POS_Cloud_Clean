@@ -285,7 +285,9 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
 
-    dataManager.addData('expenses', paymentExpense);
+    const nextExpenses = [...dataManager.getData('expenses'), paymentExpense];
+    await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+    await smartAddDocument('expenses', paymentExpense);
     console.log('💰 已创建供应商还款开支记录:', paymentExpense);
 
     alert(`✅ 还款成功！\n\n票号：${selectedOrder.orderNumber}\n还款金额：C$ ${amount.toFixed(2)}\n剩余欠款：C$ ${(orderRemaining - amount).toFixed(2)}`);
