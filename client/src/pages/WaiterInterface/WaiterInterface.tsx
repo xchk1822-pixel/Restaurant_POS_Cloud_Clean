@@ -113,7 +113,7 @@ const WaiterInterface: React.FC = () => {
   // 本地状态管理 - 桌台
   const [tables, setTables] = useState<Table[]>(() => {
     try {
-      const saved = localStorage.getItem('pos_tables');
+      const saved = localStorage.getItem(dataService.getStoreKey('pos_tables'));
       if (saved) {
         return JSON.parse(saved);
       }

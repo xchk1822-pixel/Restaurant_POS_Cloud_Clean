@@ -85,4 +85,12 @@ describe('production data safety guards', () => {
     expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
     expect(source).toContain('currentOrderId: newOrder.id');
   });
+
+  test('waiter table cache uses the current store scope', () => {
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const source = fs.readFileSync(waiterPath, 'utf8');
+
+    expect(source).not.toContain("localStorage.getItem('pos_tables')");
+    expect(source).toContain("localStorage.getItem(dataService.getStoreKey('pos_tables'))");
+  });
 });
