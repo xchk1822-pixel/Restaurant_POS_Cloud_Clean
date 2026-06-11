@@ -1191,7 +1191,7 @@ const POS: React.FC = () => {
     setViewMode('order');
   };
 
-  const handleCreateCustomer = () => {
+  const handleCreateCustomer = async () => {
     if (!newCustomerName.trim()) {
       alert('请输入顾客姓名');
       return;
@@ -1208,7 +1208,10 @@ const POS: React.FC = () => {
     };
 
     // 馃攧 浣跨敤 DataManager 娣诲姞瀹㈡埛锛岃嚜鍔ㄥ悓姝ュ埌鎵€鏈夋ā鍧?
-    dataManager.addData('customers', newCustomer);
+    const nextCustomers = [...customers, newCustomer];
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: true });
+    await smartSetDocument('customers', newCustomer.id, newCustomer);
 
     setSelectedCustomer(newCustomer);
     setNewCustomerName('');
@@ -1513,7 +1516,7 @@ const POS: React.FC = () => {
   };
 
   // 鉁?鍒涘缓澶栨淳璁㈠崟鐨勫紑鏀褰?
-  const createDeliveryExpense = (order: Order, deliveryFeeAmount: number) => {
+  const createDeliveryExpense = async (order: Order, deliveryFeeAmount: number) => {
     try {
       const today = getLocalDateTimeString().split(' ')[0];
 
@@ -1531,7 +1534,9 @@ const POS: React.FC = () => {
       };
 
       // 浣跨敤 dataManager 淇濆瓨寮€鏀褰?
-      dataManager.addData('expenses', expense);
+      const nextExpenses = [...dataManager.getData('expenses'), expense];
+      await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false, notify: true });
+      await smartSetDocument('expenses', expense.id, expense);
 
       console.log('鉁?宸插垱寤哄娲捐鍗曞紑鏀褰?', expense);
       console.log('馃挵 娲鹃€佽垂閲戦:', deliveryFeeAmount, 'C$');
@@ -1918,7 +1923,7 @@ const POS: React.FC = () => {
     return completedOrder;
   };
 
-  const handleCompletePayment = () => {
+  const handleCompletePayment = async () => {
     if (isProcessingPayment) {
       console.warn('payment is already processing');
       return;
@@ -2044,7 +2049,7 @@ const POS: React.FC = () => {
       }
 
       if (paidOrderForSideEffects?.orderType === 'delivery' && paidOrderForSideEffects.deliveryType === 'outsourced' && deliveryFee > 0) {
-        createDeliveryExpense(paidOrderForSideEffects, deliveryFee);
+        await createDeliveryExpense(paidOrderForSideEffects, deliveryFee);
       }
 
       let successMessage = `\u2705 \u652f\u4ed8\u6210\u529f\uff01

@@ -27,4 +27,19 @@ describe('production data safety guards', () => {
       expect(source).not.toContain(`<${legacyName}`);
     });
   });
+
+  test('pos does not use broad dataManager.addData writes for production records', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).not.toContain('dataManager.addData(');
+  });
+
+  test('smart update uses Firestore upsert instead of update-only writes', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).not.toContain('await updateDoc(docRef, firestoreUpdateData)');
+    expect(source).toContain('await setDoc(docRef, firestoreUpdateData, { merge: true })');
+  });
 });

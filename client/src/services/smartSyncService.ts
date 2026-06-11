@@ -396,24 +396,10 @@ export const smartUpdateDocument = async (collectionName: string, docId: string,
   };
 
   if (isOnline) {
-    try {
-      const docRef = doc(db, storeCollectionPath, docId);
-
-      // 🔥 检查文档是否存在
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        // 存在则更新
-        await updateDoc(docRef, firestoreUpdateData);
+      try {
+        const docRef = doc(db, storeCollectionPath, docId);
+        await setDoc(docRef, firestoreUpdateData, { merge: true });
         console.log(`✅ 已同步更新到云端: ${collectionName}/${docId}`);
-      } else {
-        // 不存在则创建（包含 createdAt）
-        await setDoc(docRef, {
-          ...firestoreUpdateData,
-          createdAt: Timestamp.now(),
-        });
-        console.log(`✅ 已创建并同步到云端: ${collectionName}/${docId}`);
-      }
 
       updateInLocalStorage(collectionName, docId, normalizedData);
     } catch (error) {
