@@ -444,6 +444,9 @@ const POS: React.FC = () => {
   const orderPublisherReadyRef = useRef(false);
   const localTablesSignatureRef = useRef('');
   const publishedTablesSignatureRef = useRef('');
+  const tablePublisherReadyRef = useRef(false);
+  const tableCloudHydratedRef = useRef(false);
+  const tableUserEditPendingRef = useRef(false);
   const deletedTableIdsRef = useRef<Set<string>>(new Set());
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
   const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
@@ -680,6 +683,10 @@ const POS: React.FC = () => {
 
 
   // 馃攧 椤惧绠＄悊 - 浣跨敤 DataManager 瀹炵幇鏁版嵁浜掗€?
+  const markTableUserEdit = () => {
+    tableUserEditPendingRef.current = true;
+  };
+
   const [customers, setCustomers] = useState<Customer[]>(() => {
     return dataManager.getData('customers');
   });
@@ -791,6 +798,7 @@ const POS: React.FC = () => {
 
       const cloudTablesSignature = getTablesSignature(normalized.tables);
       saveToStorage('pos_tables', normalized.tables);
+      tableCloudHydratedRef.current = true;
       if (cloudTablesSignature === localTablesSignatureRef.current) {
         return;
       }
@@ -913,11 +921,23 @@ const POS: React.FC = () => {
     const tablesSignature = getTablesSignature(tables);
     localTablesSignatureRef.current = tablesSignature;
 
+    if (!tablePublisherReadyRef.current) {
+      tablePublisherReadyRef.current = true;
+      publishedTablesSignatureRef.current = tablesSignature;
+      return;
+    }
+
+    if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current) {
+      return;
+    }
+
     if (tables.length === 0 || tablesSignature === publishedTablesSignatureRef.current) {
+      tableUserEditPendingRef.current = false;
       return;
     }
 
     publishedTablesSignatureRef.current = tablesSignature;
+    tableUserEditPendingRef.current = false;
     tables.forEach(table => {
       smartUpdateDocument('pos_tables', table.id, table).catch(error => {
         console.error('鍚屾妗屽彴鍒?Firestore 澶辫触:', table.id, error);
@@ -2444,6 +2464,7 @@ const POS: React.FC = () => {
 
   const handleAddTable = () => {
     if (newTableName.trim()) {
+      markTableUserEdit();
       const newTable: Table = {
         id: `table-${Date.now()}`,
         number: newTableName.trim(),
@@ -2463,6 +2484,7 @@ const POS: React.FC = () => {
 
   const handleDeleteTable = async (tableId: string) => {
     if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u4e2a\u684c\u5b50\u5417?')) {
+      markTableUserEdit();
       deletedTableIdsRef.current.add(tableId);
       setSelectedTables(prev => prev.filter(id => id !== tableId));
       if (selectedTableId === tableId) {
@@ -2582,6 +2604,7 @@ const POS: React.FC = () => {
     const table = tables.find(t => t.id === tableId);
     if (!table) return;
 
+    markTableUserEdit();
     setIsDragging(true);
     setDraggedTable(tableId);
 
@@ -2638,6 +2661,7 @@ const POS: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
 
+    markTableUserEdit();
     const container = e.currentTarget as HTMLElement;
     const rect = container.getBoundingClientRect();
 
@@ -2679,6 +2703,7 @@ const POS: React.FC = () => {
     const firstTable = tables.find(t => t.id === selectedTables[0]);
     if (!firstTable) return;
 
+    markTableUserEdit();
     const mergedTable: Table = {
       ...firstTable,
       id: `merged-${Date.now()}`,
@@ -2711,6 +2736,7 @@ const POS: React.FC = () => {
       return;
     }
 
+    markTableUserEdit();
     const numbers = table.number.split('+');
     const now = Date.now();
     const newTables = numbers.map((num, idx) => ({

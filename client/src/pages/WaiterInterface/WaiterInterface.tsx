@@ -157,7 +157,7 @@ const WaiterInterface: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // 🔥 保存到 localStorage 并同步到 Firestore
+  // 保存本地缓存；桌台布局只由 POS 编辑界面写入 Firestore。
   useEffect(() => {
     const normalizedTables = dedupeTables(tables);
     const signature = getTablesSignature(normalizedTables);
@@ -172,17 +172,6 @@ const WaiterInterface: React.FC = () => {
       return;
     }
     publishedTablesSignatureRef.current = signature;
-    
-    // 同步到 Firestore
-    try {
-      normalizedTables.forEach(table => {
-        smartUpdateDocument('pos_tables', table.id, table).catch(error => {
-          console.error('同步服务生桌台到 Firestore 失败:', table.id, error);
-        });
-      });
-    } catch (error) {
-      console.error('同步桌台数据失败:', error);
-    }
   }, [tables]);
   
   // 更新桌台状态

@@ -155,7 +155,15 @@ describe('production data safety guards', () => {
 
   test('POS table realtime subscription is cloud-authoritative', () => {
     const syncPath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
     const source = fs.readFileSync(syncPath, 'utf8');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const waiterSource = fs.readFileSync(waiterPath, 'utf8');
+    const tablePublishBlock = posSource.slice(
+      posSource.indexOf("saveToStorage('pos_tables', tables);"),
+      posSource.indexOf('}, [tables]);', posSource.indexOf("saveToStorage('pos_tables', tables);"))
+    );
 
     expect(source).toContain("CLOUD_AUTHORITATIVE_SUBSCRIPTIONS = new Set(['pos_tables'])");
     expect(source).toContain('isCloudAuthoritativeSubscription(collectionName)');
@@ -165,6 +173,17 @@ describe('production data safety guards', () => {
     expect(subscriptionMergeBlock.indexOf('if (isCloudAuthoritativeSubscription(collectionName))')).toBeLessThan(
       subscriptionMergeBlock.indexOf('const localData = getFromLocalStorage(collectionName);')
     );
+    expect(posSource).toContain('tableCloudHydratedRef');
+    expect(posSource).toContain('tableUserEditPendingRef');
+    expect(tablePublishBlock).toContain('if (!tablePublisherReadyRef.current)');
+    expect(tablePublishBlock).toContain('if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current)');
+    expect(tablePublishBlock.indexOf('if (!tablePublisherReadyRef.current)')).toBeLessThan(
+      tablePublishBlock.indexOf("tables.forEach(table =>")
+    );
+    expect(tablePublishBlock.indexOf('if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current)')).toBeLessThan(
+      tablePublishBlock.indexOf("tables.forEach(table =>")
+    );
+    expect(waiterSource).not.toContain("smartUpdateDocument('pos_tables'");
   });
 
   test('kitchen status changes write back to shared POS orders', () => {
