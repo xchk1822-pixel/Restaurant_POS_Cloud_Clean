@@ -62,11 +62,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       updatedEmployees = [...employees, employee];
     }
 
-    setEmployees(updatedEmployees);
-    await dataManager.saveData('employees', filterActiveEmployees(updatedEmployees), {
-      syncFirestore: false,
-      notify: false,
-    });
     try {
       if (editingEmployee) {
         await smartUpdateDocument('employees', employee.id, employee);
@@ -75,8 +70,14 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       }
     } catch (error) {
       console.error('sync employee to Firestore failed:', error);
-      alert('\u5458\u5de5\u5df2\u4fdd\u5b58\u5230\u672c\u673a\uff0c\u4f46\u4e91\u7aef\u540c\u6b65\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5\u3002');
+      alert('\u4fdd\u5b58\u5458\u5de5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      return;
     }
+    setEmployees(updatedEmployees);
+    await dataManager.saveData('employees', filterActiveEmployees(updatedEmployees), {
+      syncFirestore: false,
+      notify: false,
+    });
     setShowAddEmployee(false);
     setEditingEmployee(null);
     setFormData({

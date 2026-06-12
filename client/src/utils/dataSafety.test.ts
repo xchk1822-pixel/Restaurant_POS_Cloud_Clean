@@ -541,10 +541,20 @@ describe('production data safety guards', () => {
     const employeeListPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');
     const employeesSource = fs.readFileSync(employeesPath, 'utf8');
     const employeeListSource = fs.readFileSync(employeeListPath, 'utf8');
+    const saveBlock = employeeListSource.slice(
+      employeeListSource.indexOf('const handleSaveEmployee = async () => {'),
+      employeeListSource.indexOf('const handleDeleteEmployee = async')
+    );
 
     expect(employeesSource).toContain("smartGetDocuments('employees', true)");
     expect(employeesSource).toContain("smartGetDocuments('employee_deletions', true)");
     expect(employeesSource).toContain("saveLocalCollection('employee_deletions', employeeDeletionsData)");
+    expect(saveBlock.indexOf("await smartUpdateDocument('employees', employee.id, employee)")).toBeLessThan(
+      saveBlock.indexOf('setEmployees(updatedEmployees)')
+    );
+    expect(saveBlock.indexOf("await smartAddDocument('employees', employee)")).toBeLessThan(
+      saveBlock.indexOf('setEmployees(updatedEmployees)')
+    );
     expect(employeeListSource).toContain("smartUpdateDocument('employees', id, deletedEmployee)");
     expect(employeeListSource).toContain("smartUpdateDocument('employee_deletions', id");
     expect(employeeListSource).toContain("dataManager.saveData('employees', activeEmployees");
