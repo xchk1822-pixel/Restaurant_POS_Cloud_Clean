@@ -205,9 +205,15 @@ const CustomersModule: React.FC = () => {
     };
 
     const nextCustomers = [...customers, newCustomer];
+    try {
+      await smartSetDocument('customers', newCustomer.id, newCustomer);
+    } catch (error) {
+      console.error('保存客户失败:', error);
+      alert('保存客户失败，请检查网络后重试');
+      return;
+    }
     setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    await smartSetDocument('customers', newCustomer.id, newCustomer);
     setShowAddModal(false);
     setFormData({ name: '', phone: '', notes: '', whatsapp: '', facebook: '', instagram: '', telegram: '' });
     alert('✅ 客户添加成功！');
@@ -247,9 +253,15 @@ const CustomersModule: React.FC = () => {
     const nextCustomers = customers.map(customer =>
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
+    try {
+      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+    } catch (error) {
+      console.error('保存客户失败:', error);
+      alert('保存客户失败，请检查网络后重试');
+      return;
+    }
     setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
     setShowEditModal(false);
     setSelectedCustomer(null);
     setFormData({ name: '', phone: '', notes: '', whatsapp: '', facebook: '', instagram: '', telegram: '' });
@@ -263,20 +275,26 @@ const CustomersModule: React.FC = () => {
     const deletedCustomer = customers.find(customer => customer.id === customerId);
     const deletedAt = new Date().toISOString();
     const nextCustomers = customers.filter(customer => customer.id !== customerId);
-    setCustomers(nextCustomers);
-    if (deletedCustomer) {
-      await smartUpdateDocument('customers', customerId, {
-        ...deletedCustomer,
-        isDeleted: true,
-        status: 'inactive',
+    try {
+      if (deletedCustomer) {
+        await smartUpdateDocument('customers', customerId, {
+          ...deletedCustomer,
+          isDeleted: true,
+          status: 'inactive',
+          deletedAt,
+        });
+      }
+      await smartUpdateDocument('customer_deletions', customerId, {
+        id: customerId,
+        customerId,
         deletedAt,
       });
+    } catch (error) {
+      console.error('删除客户失败:', error);
+      alert('删除客户失败，请检查网络后重试');
+      return;
     }
-    await smartUpdateDocument('customer_deletions', customerId, {
-      id: customerId,
-      customerId,
-      deletedAt,
-    });
+    setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     alert('✅ 客户已删除');
   };
@@ -302,9 +320,6 @@ const CustomersModule: React.FC = () => {
     const nextCustomers = customers.map(customer =>
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
-    setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -317,9 +332,18 @@ const CustomersModule: React.FC = () => {
     };
 
     const updatedTransactions = [...transactions, transaction];
+    try {
+      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+      await smartSetDocument('points_transactions', transaction.id, transaction);
+    } catch (error) {
+      console.error('保存积分失败:', error);
+      alert('保存积分失败，请检查网络后重试');
+      return;
+    }
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     setTransactions(updatedTransactions);
     saveScopedPointsTransactions(updatedTransactions);
-    await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowPointsModal(false);
     setSelectedCustomer(null);
@@ -351,10 +375,10 @@ const CustomersModule: React.FC = () => {
         lastUpdated: new Date().toISOString(),
       };
 
+      await smartSetDocument('exchange_rate', 'global', nextConfig);
       saveLocalPointsConfig(nextConfig);
       setPointsConfig(nextConfig);
       setTempPointsConfig(nextConfig);
-      await smartSetDocument('exchange_rate', 'global', nextConfig);
       alert('✅ 积分设置已保存');
     } catch (error) {
       console.error('保存积分设置失败:', error);
@@ -391,9 +415,6 @@ const CustomersModule: React.FC = () => {
     const nextCustomers = customers.map(customer =>
       customer.id === selectedCustomer.id ? updatedCustomer : customer
     );
-    setCustomers(nextCustomers);
-    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
 
     // 记录交易
     const transaction: PointsTransaction = {
@@ -406,9 +427,18 @@ const CustomersModule: React.FC = () => {
     };
 
     const updatedTransactions = [...transactions, transaction];
+    try {
+      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+      await smartSetDocument('points_transactions', transaction.id, transaction);
+    } catch (error) {
+      console.error('保存积分兑换失败:', error);
+      alert('保存积分兑换失败，请检查网络后重试');
+      return;
+    }
+    setCustomers(nextCustomers);
+    await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     setTransactions(updatedTransactions);
     saveScopedPointsTransactions(updatedTransactions);
-    await smartSetDocument('points_transactions', transaction.id, transaction);
 
     setShowRedeemModal(false);
     setSelectedCustomer(null);
@@ -424,11 +454,16 @@ const CustomersModule: React.FC = () => {
       customer.id === customerId ? { ...customer, points: 0 } : customer
     );
     const updatedCustomer = nextCustomers.find(customer => customer.id === customerId);
+    if (!updatedCustomer) return;
+    try {
+      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
+    } catch (error) {
+      console.error('重置积分失败:', error);
+      alert('重置积分失败，请检查网络后重试');
+      return;
+    }
     setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    if (updatedCustomer) {
-      await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
-    }
     alert('✅ 积分已重置为 0');
   };
 

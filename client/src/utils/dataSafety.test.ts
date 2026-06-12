@@ -273,10 +273,41 @@ describe('production data safety guards', () => {
 
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
+    const rulesPath = path.join(process.cwd(), '../firestore.rules');
     const source = fs.readFileSync(customersPath, 'utf8');
+    const rules = fs.readFileSync(rulesPath, 'utf8');
+    const addBlock = source.slice(
+      source.indexOf('const handleAddCustomer = async () => {'),
+      source.indexOf('// 编辑客户')
+    );
+    const editBlock = source.slice(
+      source.indexOf('const handleSaveEdit = async () => {'),
+      source.indexOf('// 删除客户')
+    );
+    const deleteBlock = source.slice(
+      source.indexOf('const handleDeleteCustomer = async'),
+      source.indexOf('// 积分管理')
+    );
+    const addPointsBlock = source.slice(
+      source.indexOf('const handleAddPoints = async () => {'),
+      source.indexOf('const handleSavePointsSettings = async')
+    );
+    const settingsBlock = source.slice(
+      source.indexOf('const handleSavePointsSettings = async'),
+      source.indexOf('// 积分兑换')
+    );
+    const redeemBlock = source.slice(
+      source.indexOf('const handleConfirmRedeem = async () => {'),
+      source.indexOf('// 重置积分')
+    );
+    const resetBlock = source.slice(
+      source.indexOf('const handleResetPoints = async'),
+      source.indexOf('// 样式')
+    );
 
     expect(source).toContain("smartGetDocuments('customers', true)");
     expect(source).toContain("smartGetDocuments('customer_deletions', true)");
+    expect(rules).toContain('match /stores/{storeId}/customer_deletions/{deletionId}');
     expect(source).toContain('filterActiveCustomers(cloudCustomers, cloudCustomerDeletions)');
     expect(source).toContain("saveLocalCollection('customer_deletions', cloudCustomerDeletions)");
     expect(source).toContain("smartUpdateDocument('customers', customerId");
@@ -284,6 +315,27 @@ describe('production data safety guards', () => {
     expect(source).toContain("dataManager.saveData('customers', nextCustomers");
     expect(source).toContain('syncFirestore: false');
     expect(source).not.toContain("smartDeleteDocument('customers', customerId)");
+    expect(addBlock.indexOf("await smartSetDocument('customers', newCustomer.id, newCustomer)")).toBeLessThan(
+      addBlock.indexOf('setCustomers(nextCustomers)')
+    );
+    expect(editBlock.indexOf("await smartSetDocument('customers', updatedCustomer.id, updatedCustomer)")).toBeLessThan(
+      editBlock.indexOf('setCustomers(nextCustomers)')
+    );
+    expect(deleteBlock.indexOf("await smartUpdateDocument('customer_deletions', customerId")).toBeLessThan(
+      deleteBlock.indexOf('setCustomers(nextCustomers)')
+    );
+    expect(addPointsBlock.indexOf("await smartSetDocument('points_transactions', transaction.id, transaction)")).toBeLessThan(
+      addPointsBlock.indexOf('setTransactions(updatedTransactions)')
+    );
+    expect(settingsBlock.indexOf("await smartSetDocument('exchange_rate', 'global', nextConfig)")).toBeLessThan(
+      settingsBlock.indexOf('saveLocalPointsConfig(nextConfig)')
+    );
+    expect(redeemBlock.indexOf("await smartSetDocument('points_transactions', transaction.id, transaction)")).toBeLessThan(
+      redeemBlock.indexOf('setTransactions(updatedTransactions)')
+    );
+    expect(resetBlock.indexOf("await smartSetDocument('customers', updatedCustomer.id, updatedCustomer)")).toBeLessThan(
+      resetBlock.indexOf('setCustomers(nextCustomers)')
+    );
   });
 
   test('manager dashboard uses collected revenue and financial order dates', () => {

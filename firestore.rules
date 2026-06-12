@@ -146,6 +146,11 @@ service cloud.firestore {
     match /stores/{storeId}/customers/{customerId} {
       allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
     }
+
+    // 客户删除登记
+    match /stores/{storeId}/customer_deletions/{deletionId} {
+      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+    }
     
     // 🔥 费用分类
     match /stores/{storeId}/expense_categories/{categoryId} {
