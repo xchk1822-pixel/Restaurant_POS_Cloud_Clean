@@ -1972,19 +1972,20 @@ const POS: React.FC = () => {
     setIsProcessingPayment(true);
 
     try {
-      const cashAmount = (cashNIO ? parseFloat(cashNIO) : 0) + (cashUSD ? parseFloat(cashUSD) * exchangeRate : 0);
-      const cardAmount = (cardNIO ? parseFloat(cardNIO) : 0) + (cardUSD ? parseFloat(cardUSD) * exchangeRate : 0);
-      let paymentMethod: 'cash' | 'card' | 'mixed' = 'mixed';
-      if (cashAmount > 0 && cardAmount <= 0) {
-        paymentMethod = 'cash';
-      } else if (cashAmount <= 0 && cardAmount > 0) {
-        paymentMethod = 'card';
-      }
-
+      const cashTenderedAmount = (cashNIO ? parseFloat(cashNIO) : 0) + (cashUSD ? parseFloat(cashUSD) * exchangeRate : 0);
+      const cardTenderedAmount = (cardNIO ? parseFloat(cardNIO) : 0) + (cardUSD ? parseFloat(cardUSD) * exchangeRate : 0);
       const actualSettled = Math.min(paidAmount, remainingAmount);
+      const changeAmount = Math.max(paidAmount - remainingAmount, 0);
+      const settledCashAmount = Math.max(cashTenderedAmount - changeAmount, 0);
+      const settledCardAmount = Math.min(cardTenderedAmount, Math.max(actualSettled - settledCashAmount, 0));
       const newSettledAmount = Math.min(finalTotal, settledAmount + actualSettled);
       const isFullyPaid = newSettledAmount >= finalTotal - 0.001;
       const nextPaymentStatus: 'paid' | 'partial' = isFullyPaid ? 'paid' : 'partial';
+      const getPaymentMethod = (cashAmount: number, cardAmount: number): 'cash' | 'card' | 'mixed' => {
+        if (cashAmount > 0 && cardAmount <= 0) return 'cash';
+        if (cashAmount <= 0 && cardAmount > 0) return 'card';
+        return 'mixed';
+      };
       const now = new Date();
       let paidOrderForSideEffects: Order | null = null;
       let finalOrderId = selectedOrderId;
@@ -1996,6 +1997,8 @@ const POS: React.FC = () => {
           return;
         }
 
+        const nextCashAmount = (existingOrder.cashAmount || 0) + settledCashAmount;
+        const nextCardAmount = (existingOrder.cardAmount || 0) + settledCardAmount;
         const updatedOrder: Order = {
           ...existingOrder,
           items: currentItems,
@@ -2008,9 +2011,9 @@ const POS: React.FC = () => {
           paidAmount: newSettledAmount,
           settledAmount: newSettledAmount,
           lastPaidAt: now,
-          paymentMethod,
-          cashAmount,
-          cardAmount,
+          paymentMethod: getPaymentMethod(nextCashAmount, nextCardAmount),
+          cashAmount: nextCashAmount,
+          cardAmount: nextCardAmount,
           lastModified: Date.now()
         };
 
@@ -2052,9 +2055,9 @@ const POS: React.FC = () => {
           paidAmount: newSettledAmount,
           paymentStatus: nextPaymentStatus,
           settledAmount: newSettledAmount,
-          paymentMethod,
-          cashAmount,
-          cardAmount,
+          paymentMethod: getPaymentMethod(settledCashAmount, settledCardAmount),
+          cashAmount: settledCashAmount,
+          cardAmount: settledCardAmount,
           lastPaidAt: now,
           lastModified: Date.now()
         };

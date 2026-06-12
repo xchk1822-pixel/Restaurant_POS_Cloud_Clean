@@ -47,6 +47,22 @@ describe('finance metrics helpers', () => {
     expect(getOrderPaymentBreakdown({ paymentStatus: 'unpaid', totalAmount: 120, paymentMethod: 'cash' })).toEqual({ cash: 0, card: 0 });
   });
 
+  test('removes cash change from payment breakdown when saved cash includes tendered amount', () => {
+    expect(getOrderPaymentBreakdown({
+      paymentStatus: 'paid',
+      totalAmount: 100,
+      cashAmount: 120,
+      cardAmount: 0,
+    })).toEqual({ cash: 100, card: 0 });
+
+    expect(getOrderPaymentBreakdown({
+      paymentStatus: 'paid',
+      totalAmount: 100,
+      cashAmount: 50,
+      cardAmount: 70,
+    })).toEqual({ cash: 30, card: 70 });
+  });
+
   test('uses payment date as financial order date', () => {
     const order = {
       status: 'served',

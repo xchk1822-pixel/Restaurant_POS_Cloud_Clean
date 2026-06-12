@@ -338,6 +338,17 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
   });
 
+  test('POS saves settled cash amounts instead of tendered cash including change', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).toContain('const cashTenderedAmount');
+    expect(source).toContain('const changeAmount = Math.max(paidAmount - remainingAmount, 0)');
+    expect(source).toContain('const settledCashAmount = Math.max(cashTenderedAmount - changeAmount, 0)');
+    expect(source).toContain('const nextCashAmount = (existingOrder.cashAmount || 0) + settledCashAmount');
+    expect(source).not.toContain('cashAmount,');
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');

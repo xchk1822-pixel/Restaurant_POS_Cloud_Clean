@@ -43,9 +43,14 @@ export const getOrderPaymentBreakdown = (order: any): { cash: number; card: numb
   const cashAmount = toMoneyNumber(order.cashAmount);
   const cardAmount = toMoneyNumber(order.cardAmount);
   if (cashAmount > 0 || cardAmount > 0) {
+    const tenderedTotal = cashAmount + cardAmount;
+    const changeAmount = Math.max(tenderedTotal - collectedAmount, 0);
+    const settledCash = Math.max(cashAmount - changeAmount, 0);
+    const settledCard = Math.min(cardAmount, Math.max(collectedAmount - settledCash, 0));
+
     return {
-      cash: cashAmount,
-      card: cardAmount,
+      cash: settledCash,
+      card: settledCard,
     };
   }
 
