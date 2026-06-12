@@ -351,6 +351,29 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('cashAmount,');
   });
 
+  test('POS menu category selector expands and collapses instead of horizontal scrolling', () => {
+    const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
+    const source = fs.readFileSync(menuSelectionPath, 'utf8');
+
+    expect(source).toContain('categoriesExpanded');
+    expect(source).toContain('setCategoriesExpanded');
+    expect(source).toContain("aria-expanded={categoriesExpanded}");
+    expect(source).toContain("flexWrap: 'wrap'");
+    expect(source).not.toContain("overflowX: 'auto'");
+  });
+
+  test('POS menu search input auto-focuses when ordering and returns focus after quick actions', () => {
+    const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
+    const source = fs.readFileSync(menuSelectionPath, 'utf8');
+
+    expect(source).toContain('searchInputRef');
+    expect(source).toContain('focusSearchInput');
+    expect(source).toContain('searchInputRef.current?.focus()');
+    expect(source).toContain('ref={searchInputRef}');
+    expect(source).toContain('autoFocus');
+    expect(source).toContain('focusSearchInput();');
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');

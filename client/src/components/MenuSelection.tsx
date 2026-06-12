@@ -1,19 +1,9 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import type { MenuItem as AppMenuItem } from '../contexts/AppContext';
 import MenuImage from './MenuImage';
 
 interface MenuItem extends AppMenuItem {}
-
-interface InventoryItem {
-  id: string;
-  barcode: string;
-  name: string;
-  category: 'ingredient' | 'alcohol' | 'beverage' | 'other';
-  unit: string;
-  currentStock: number;
-  price: number;
-}
 
 interface OrderDetailProps {
   items: Array<{ menuItemId: string; name: string; quantity: number; price: number; subtotal: number }>;
@@ -26,6 +16,18 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
   const { menuItems: contextMenuItems, categories } = useAppContext();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusSearchInput = useCallback(() => {
+    window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    focusSearchInput();
+  }, [focusSearchInput]);
 
   // 使用 Context 中的菜单数据和分类
   const menuItems = contextMenuItems;
@@ -45,7 +47,9 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
       {/* 搜索框 */}
       <div style={{ padding: '0.5rem', borderBottom: '1px solid #e5e7eb' }}>
         <input
+          ref={searchInputRef}
           type="text"
+          autoFocus
           placeholder="搜索菜品 / Buscar platos..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -61,11 +65,42 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
       </div>
 
       {/* 分类标签 */}
-      <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem', borderBottom: '1px solid #e5e7eb', overflowX: 'auto' }}>
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '0.5rem',
+        padding: '0.5rem',
+        borderBottom: '1px solid #e5e7eb',
+        maxHeight: categoriesExpanded ? '150px' : '46px',
+        overflowY: categoriesExpanded ? 'auto' : 'hidden',
+        flexShrink: 0
+      }}>
+        <button
+          type="button"
+          aria-expanded={categoriesExpanded}
+          onClick={() => setCategoriesExpanded(prev => !prev)}
+          style={{
+            padding: '0.375rem 0.75rem',
+            borderRadius: '0.375rem',
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+            cursor: 'pointer',
+            border: '1px solid #d1d5db',
+            backgroundColor: categoriesExpanded ? '#1f2937' : '#ffffff',
+            color: categoriesExpanded ? '#ffffff' : '#374151'
+          }}
+        >
+          {categoriesExpanded ? '\u6536\u8d77\u5206\u7c7b' : '\u5c55\u5f00\u5206\u7c7b'}
+        </button>
         {categoryList.map(category => (
           <button
             key={category}
-            onClick={() => setSelectedCategory(category)}
+            onClick={() => {
+              setSelectedCategory(category);
+              setCategoriesExpanded(false);
+              focusSearchInput();
+            }}
             style={{
               padding: '0.375rem 0.75rem',
               borderRadius: '0.375rem',
@@ -91,7 +126,11 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
             return (
               <button
                 key={item.id}
-                onClick={() => isAvailable && onAddItem(item)}
+                onClick={() => {
+                  if (!isAvailable) return;
+                  onAddItem(item);
+                  focusSearchInput();
+                }}
                 disabled={!isAvailable}
                 style={{
                   padding: 0,
