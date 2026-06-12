@@ -150,7 +150,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     const handovers = dataManager.getData('handovers');
     const dayHandover = handovers.find((h: any) => h.t && h.t.startsWith(date));
     const handoverAmount = dayHandover ? parseFloat(dayHandover.rawG) : undefined;
-    const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined;
+    const difference = handoverAmount !== undefined ? cashPayment - handoverAmount : undefined;
 
 
     return {

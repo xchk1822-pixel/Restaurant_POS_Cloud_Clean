@@ -329,12 +329,12 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
-  test('financial report handover difference compares actual handover against profit', () => {
+  test('financial report handover difference compares cash amount against actual handover', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
 
-    expect(source).toContain('const profit = totalSales - purchaseAmount - expenseAmount');
-    expect(source).toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
+    expect(source).toContain('const difference = handoverAmount !== undefined ? cashPayment - handoverAmount : undefined');
+    expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
   });
 
