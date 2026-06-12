@@ -175,12 +175,16 @@ describe('production data safety guards', () => {
     );
     expect(posSource).toContain('tableCloudHydratedRef');
     expect(posSource).toContain('tableUserEditPendingRef');
+    expect(posSource).toContain('dragAnimationFrameRef');
+    expect(posSource).toContain('window.requestAnimationFrame');
+    expect(posSource).toContain('const finalPosition = pendingDragPositionRef.current');
     expect(tablePublishBlock).toContain('if (!tablePublisherReadyRef.current)');
-    expect(tablePublishBlock).toContain('if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current)');
+    expect(tablePublishBlock).toContain('if (!tableUserEditPendingRef.current)');
+    expect(tablePublishBlock).not.toContain('if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current)');
     expect(tablePublishBlock.indexOf('if (!tablePublisherReadyRef.current)')).toBeLessThan(
       tablePublishBlock.indexOf("tables.forEach(table =>")
     );
-    expect(tablePublishBlock.indexOf('if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current)')).toBeLessThan(
+    expect(tablePublishBlock.indexOf('if (!tableUserEditPendingRef.current)')).toBeLessThan(
       tablePublishBlock.indexOf("tables.forEach(table =>")
     );
     expect(waiterSource).not.toContain("smartUpdateDocument('pos_tables'");

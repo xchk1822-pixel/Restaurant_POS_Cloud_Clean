@@ -447,6 +447,8 @@ const POS: React.FC = () => {
   const tablePublisherReadyRef = useRef(false);
   const tableCloudHydratedRef = useRef(false);
   const tableUserEditPendingRef = useRef(false);
+  const dragAnimationFrameRef = useRef<number | null>(null);
+  const pendingDragPositionRef = useRef<{ x: number; y: number } | null>(null);
   const deletedTableIdsRef = useRef<Set<string>>(new Set());
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
   const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
@@ -458,6 +460,9 @@ const POS: React.FC = () => {
     return () => {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
+      if (dragAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(dragAnimationFrameRef.current);
+      }
     };
   }, []);
 
@@ -927,7 +932,7 @@ const POS: React.FC = () => {
       return;
     }
 
-    if (!tableCloudHydratedRef.current && !tableUserEditPendingRef.current) {
+    if (!tableUserEditPendingRef.current) {
       return;
     }
 
@@ -2604,7 +2609,6 @@ const POS: React.FC = () => {
     const table = tables.find(t => t.id === tableId);
     if (!table) return;
 
-    markTableUserEdit();
     setIsDragging(true);
     setDraggedTable(tableId);
 
@@ -2628,20 +2632,45 @@ const POS: React.FC = () => {
     const newX = e.clientX - rect.left - dragOffset.x + container.scrollLeft;
     const newY = e.clientY - rect.top - dragOffset.y + container.scrollTop;
 
-    setTables(prevTables => prevTables.map(t => {
-      if (t.id === draggedTable) {
-        return {
-          ...t,
-          x: Math.max(0, newX),
-          y: Math.max(0, newY)
-        };
-      }
-      return t;
-    }));
+    pendingDragPositionRef.current = {
+      x: Math.max(0, newX),
+      y: Math.max(0, newY)
+    };
+
+    if (dragAnimationFrameRef.current !== null) {
+      return;
+    }
+
+    dragAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      dragAnimationFrameRef.current = null;
+      const nextPosition = pendingDragPositionRef.current;
+      if (!nextPosition) return;
+
+      setTables(prevTables => prevTables.map(t => {
+        if (t.id === draggedTable) {
+          return {
+            ...t,
+            x: nextPosition.x,
+            y: nextPosition.y
+          };
+        }
+        return t;
+      }));
+    });
   };
 
   const handleMouseUp = () => {
     if (isDragging && draggedTable) {
+      markTableUserEdit();
+      const finalPosition = pendingDragPositionRef.current;
+      if (finalPosition) {
+        setTables(prevTables => prevTables.map(t => (
+          t.id === draggedTable
+            ? { ...t, x: finalPosition.x, y: finalPosition.y, lastModified: Date.now() }
+            : t
+        )));
+      }
+      pendingDragPositionRef.current = null;
       console.log('鉁?妗屽彴绉诲姩瀹屾垚:', draggedTable);
     }
     setIsDragging(false);
