@@ -329,13 +329,15 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
-  test('financial report handover difference compares cash amount against actual handover', () => {
+  test('financial report handover difference compares actual handover against cash amount', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
 
-    expect(source).toContain('const difference = handoverAmount !== undefined ? cashPayment - handoverAmount : undefined');
+    expect(source).toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
+    expect(source).toContain('const profit = baseProfit + (difference || 0)');
+    expect(source).toContain("\\u51c0\\u5229\\u6da6\\uff08\\u542b\\u8bef\\u5dee\\uff09");
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
-    expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
+    expect(source).not.toContain('const difference = handoverAmount !== undefined ? cashPayment - handoverAmount : undefined');
   });
 
   test('POS saves settled cash amounts instead of tendered cash including change', () => {
