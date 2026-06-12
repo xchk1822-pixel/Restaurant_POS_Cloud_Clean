@@ -200,6 +200,43 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("saveData(`payments_${supplierId}`");
   });
 
+  test('supplier edits deletes and payments wait for cloud writes before local state updates', () => {
+    const suppliersPath = path.join(process.cwd(), 'src/pages/Inventory/SupplierManagement.tsx');
+    const source = fs.readFileSync(suppliersPath, 'utf8');
+    const saveBlock = source.slice(
+      source.indexOf('const handleSaveSupplier = async () => {'),
+      source.indexOf('// 删除供应商')
+    );
+    const deleteBlock = source.slice(
+      source.indexOf('const handleDeleteSupplier = async'),
+      source.indexOf('// 处理还款')
+    );
+    const paymentBlock = source.slice(
+      source.indexOf('const handlePayment = async () => {'),
+      source.indexOf('// 打印对账单')
+    );
+
+    expect(saveBlock.indexOf("await smartUpdateDocument('suppliers', editingSupplier.id, updatedSupplier)")).toBeLessThan(
+      saveBlock.indexOf('setSuppliers(suppliers.map')
+    );
+    expect(saveBlock.indexOf("await smartAddDocument('suppliers', newSupplier)")).toBeLessThan(
+      saveBlock.indexOf('setSuppliers([...suppliers, newSupplier])')
+    );
+    expect(deleteBlock.indexOf("await smartDeleteDocument('suppliers', supplierId)")).toBeLessThan(
+      deleteBlock.indexOf('setSuppliers(suppliers.filter')
+    );
+    expect(paymentBlock.indexOf("await smartUpdateDocument('purchase_orders', selectedOrder.id, updatedSelectedOrder)")).toBeLessThan(
+      paymentBlock.indexOf('setPurchaseOrders(updatedOrdersForSync)')
+    );
+    expect(paymentBlock.indexOf("await smartAddDocument('supplier_payments', paymentRecord)")).toBeLessThan(
+      paymentBlock.indexOf('savePaymentRecord(selectedOrder.supplierId, paymentRecord)')
+    );
+    expect(paymentBlock.indexOf("await smartAddDocument('expenses', paymentExpense)")).toBeLessThan(
+      paymentBlock.indexOf("dataManager.saveData('expenses', nextExpenses")
+    );
+    expect(paymentBlock).not.toContain('还款已在本机记录');
+  });
+
   test('purchase order creation waits for linked cloud writes before local state updates', () => {
     const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
     const source = fs.readFileSync(purchasePath, 'utf8');

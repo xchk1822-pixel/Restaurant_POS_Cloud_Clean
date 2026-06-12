@@ -126,18 +126,10 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   };
 
   // 保存还款记录
-  const savePaymentRecord = async (supplierId: string, record: PaymentRecord) => {
+  const savePaymentRecord = (supplierId: string, record: PaymentRecord) => {
     const payments = getSupplierPayments(supplierId);
     payments.push(record);
     saveSupplierPayments(supplierId, payments);
-    
-    // 🔥 同步到 Firestore
-    try {
-      await smartAddDocument('supplier_payments', record);
-      console.log('✅ 还款记录已同步到 Firestore');
-    } catch (error) {
-      console.error('❌ 同步还款记录失败:', error);
-    }
   };
 
   // 添加/编辑供应商
@@ -160,18 +152,18 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
         lastModified: Date.now()
       };
       
-      setSuppliers(suppliers.map(sup => 
-        sup.id === editingSupplier.id ? updatedSupplier : sup
-      ));
-      alert('✅ 供应商信息已更新！');
-      
-      // 🔥 同步到 Firestore
       try {
         await smartUpdateDocument('suppliers', editingSupplier.id, updatedSupplier);
         console.log('✅ 供应商信息已同步到 Firestore');
       } catch (error) {
         console.error('❌ 同步供应商信息失败:', error);
+        alert('保存供应商失败，请检查网络后重试');
+        return;
       }
+      setSuppliers(suppliers.map(sup =>
+        sup.id === editingSupplier.id ? updatedSupplier : sup
+      ));
+      alert('✅ 供应商信息已更新！');
     } else {
       // 添加新供应商
       const newSupplier: Supplier = {
@@ -185,16 +177,16 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
         lastUpdated: new Date(),
         lastModified: Date.now()
       };
-      setSuppliers([...suppliers, newSupplier]);
-      alert('✅ 供应商添加成功！');
-      
-      // 🔥 同步到 Firestore
       try {
         await smartAddDocument('suppliers', newSupplier);
         console.log('✅ 新供应商已同步到 Firestore');
       } catch (error) {
         console.error('❌ 同步新供应商失败:', error);
+        alert('保存供应商失败，请检查网络后重试');
+        return;
       }
+      setSuppliers([...suppliers, newSupplier]);
+      alert('✅ 供应商添加成功！');
     }
 
     setShowAddModal(false);
@@ -212,8 +204,14 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
     }
 
     if (window.confirm(`确定要删除供应商"${supplier.name}"吗？`)) {
+      try {
+        await smartDeleteDocument('suppliers', supplierId);
+      } catch (error) {
+        console.error('删除供应商失败:', error);
+        alert('删除供应商失败，请检查网络后重试');
+        return;
+      }
       setSuppliers(suppliers.filter(s => s.id !== supplierId));
-      await smartDeleteDocument('suppliers', supplierId);
       alert('✅ 供应商已删除！');
     }
   };
@@ -260,24 +258,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       lastUpdated: new Date(),
       lastModified: now
     } : null;
-    
-    setPurchaseOrders(updatedOrdersForSync);
-    if (supplierCloudUpdate) {
-      setSuppliers(suppliers => suppliers.map(sup => 
-        sup.id === selectedOrder.supplierId ? supplierCloudUpdate : sup
-      ));
-    }
-    // 创建还款记录（关联到具体订单）
-    try {
-      await smartUpdateDocument('purchase_orders', selectedOrder.id, updatedSelectedOrder);
-      if (supplierCloudUpdate) {
-        await smartUpdateDocument('suppliers', selectedOrder.supplierId, supplierCloudUpdate);
-      }
-    } catch (error) {
-      console.error('Failed to sync supplier payment update:', error);
-      alert('还款已在本机记录，但同步云端失败，请点击刷新后检查网络再重试');
-    }
-
     const paymentRecord: PaymentRecord = {
       id: `pay-${Date.now()}`,
       orderId: selectedOrder.id,
@@ -290,8 +270,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       notes: paymentForm.notes
       // ❌ 不存储 voucherImage 到 localStorage，避免超出配额
     };
-
-    await savePaymentRecord(selectedOrder.supplierId, paymentRecord);
 
     // 🔄 同步创建开支记录
     const expenseDate = getLocalDateString(); // 🔥 使用本地时间
@@ -309,9 +287,28 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
 
+    try {
+      await smartUpdateDocument('purchase_orders', selectedOrder.id, updatedSelectedOrder);
+      if (supplierCloudUpdate) {
+        await smartUpdateDocument('suppliers', selectedOrder.supplierId, supplierCloudUpdate);
+      }
+      await smartAddDocument('supplier_payments', paymentRecord);
+      await smartAddDocument('expenses', paymentExpense);
+    } catch (error) {
+      console.error('Failed to save supplier payment:', error);
+      alert('保存供应商还款失败，请检查网络后重试');
+      return;
+    }
+
+    setPurchaseOrders(updatedOrdersForSync);
+    if (supplierCloudUpdate) {
+      setSuppliers(suppliers => suppliers.map(sup =>
+        sup.id === selectedOrder.supplierId ? supplierCloudUpdate : sup
+      ));
+    }
+    savePaymentRecord(selectedOrder.supplierId, paymentRecord);
     const nextExpenses = [...dataManager.getData('expenses'), paymentExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    await smartAddDocument('expenses', paymentExpense);
     console.log('💰 已创建供应商还款开支记录:', paymentExpense);
 
     alert(`✅ 还款成功！\n\n票号：${selectedOrder.orderNumber}\n还款金额：C$ ${amount.toFixed(2)}\n剩余欠款：C$ ${(orderRemaining - amount).toFixed(2)}`);
