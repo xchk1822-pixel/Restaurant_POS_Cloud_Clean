@@ -143,14 +143,14 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       return sum;
     }, 0);
 
+    // Calculate simplified profit. More precise cost accounting would need per-item cost tracking.
+    const profit = totalSales - purchaseAmount - expenseAmount;
+
     // Read shift handover records.
     const handovers = dataManager.getData('handovers');
     const dayHandover = handovers.find((h: any) => h.t && h.t.startsWith(date));
     const handoverAmount = dayHandover ? parseFloat(dayHandover.rawG) : undefined;
-    const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined;
-
-    // Calculate simplified profit. More precise cost accounting would need per-item cost tracking.
-    const profit = totalSales - purchaseAmount - expenseAmount;
+    const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined;
 
 
     return {

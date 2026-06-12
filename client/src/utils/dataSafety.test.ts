@@ -329,6 +329,15 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
+  test('financial report handover difference compares actual handover against profit', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+
+    expect(source).toContain('const profit = totalSales - purchaseAmount - expenseAmount');
+    expect(source).toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
+    expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');
