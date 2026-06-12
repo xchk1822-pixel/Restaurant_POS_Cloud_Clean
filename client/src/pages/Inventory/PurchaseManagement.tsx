@@ -206,71 +206,68 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     };
 
     const nextPurchaseOrders = [order, ...purchaseOrders];
-    setPurchaseOrders(nextPurchaseOrders);
-    try {
-      await smartAddDocument('purchase_orders', order);
-    } catch (error) {
-      console.error('同步采购单到 Firestore 失败:', error);
-      alert('采购单已保存到本机，但云端同步失败，请检查网络后重试。');
-    }
-
-    // ✅ 立即入库（无论现结还是赊账）
-    console.log('📦 开始入库，采购单物品:', newOrder.items);
-    setInventoryItems(items => items.map(item => {
-      const orderItem = newOrder.items.find(oi => oi.itemId === item.id);
-      if (orderItem) {
-        console.log(`📥 入库: ${item.name}, 原库存: ${item.currentStock}, 采购数量: ${orderItem.quantity}, 新库存: ${item.currentStock + orderItem.quantity}`);
-        smartIncrementField('inventory_items', item.id, 'currentStock', orderItem.quantity, {
-          lastModified: Date.now(),
-          lastUpdated: new Date()
-        }).catch(error => {
-          console.error(`❌ 同步采购入库失败: ${item.name}`, error);
-        });
-        return { ...item, currentStock: item.currentStock + orderItem.quantity };
-      }
-      return item;
+    const inventoryUpdates = newOrder.items.map(orderItem => ({
+      orderItem,
+      inventoryItem: inventoryItems.find(item => item.id === orderItem.itemId)
     }));
-    
-    // 🔄 同步创建开支记录（现结采购）- 使用 dataManager
+    const supplierCloudUpdate = newOrder.paymentType === 'credit' ? (() => {
+      const recalculatedBalance = nextPurchaseOrders
+        .filter(order => order.supplierId === newOrder.supplierId)
+        .reduce((sum, order) => sum + Math.max((Number(order.totalAmount) || 0) - (Number(order.paidAmount) || 0), 0), 0);
+      return { ...supplier, balance: recalculatedBalance, lastUpdated: new Date(), lastModified: now };
+    })() : null;
+    let purchaseExpense: any = null;
+
     if (newOrder.paymentType === 'cash') {
-      const expenseDate = getLocalDateString(); // 🔥 使用本地当前时间
-      const purchaseExpense = {
+      const expenseDate = getLocalDateString();
+      purchaseExpense = {
         id: `purchase_${Date.now()}`,
         date: expenseDate,
         categoryId: 'supplier_payment',
-        categoryName: '供应商货款',
+        categoryName: '\u4f9b\u5e94\u5546\u8d27\u6b3e',
         amount: totalAmount,
-        description: `采购现结 - ${supplier.name} (${newOrder.orderNumber})`,
+        description: `\u91c7\u8d2d\u73b0\u7ed3 - ${supplier.name} (${newOrder.orderNumber})`,
         supplierId: newOrder.supplierId,
         supplierName: supplier.name,
         relatedType: 'purchase',
         orderNumber: newOrder.orderNumber,
-        createdAt: getLocalDateString(), // 🔥 使用本地时间
+        createdAt: getLocalDateString(),
       };
-      
+    }
+
+    try {
+      await smartAddDocument('purchase_orders', order);
+      await Promise.all(newOrder.items.map(orderItem => smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', orderItem.quantity, {
+        lastModified: now,
+        lastUpdated: new Date()
+      })));
+      if (purchaseExpense) {
+        await smartAddDocument('expenses', purchaseExpense);
+      }
+      if (supplierCloudUpdate) {
+        await smartUpdateDocument('suppliers', newOrder.supplierId, supplierCloudUpdate);
+      }
+    } catch (error) {
+      console.error('\u4fdd\u5b58\u91c7\u8d2d\u5355\u5931\u8d25:', error);
+      alert('\u4fdd\u5b58\u91c7\u8d2d\u5355\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      return;
+    }
+
+    setPurchaseOrders(nextPurchaseOrders);
+    setInventoryItems(items => items.map(item => {
+      const inventoryUpdate = inventoryUpdates.find(update => update.orderItem.itemId === item.id);
+      if (!inventoryUpdate) return item;
+      return { ...item, currentStock: item.currentStock + inventoryUpdate.orderItem.quantity, lastModified: now, lastUpdated: new Date() };
+    }));
+    if (purchaseExpense) {
       const nextExpenses = [...dataManager.getData('expenses'), purchaseExpense];
       await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-      await smartAddDocument('expenses', purchaseExpense);
-      console.log('💰 已创建采购开支记录:', purchaseExpense);
     }
-
-    // 更新供应商欠款（赊账）
-    if (newOrder.paymentType === 'credit') {
-      setSuppliers(suppliers => suppliers.map(sup => {
-        if (sup.id === newOrder.supplierId) {
-          const recalculatedBalance = nextPurchaseOrders
-            .filter(order => order.supplierId === sup.id)
-            .reduce((sum, order) => sum + Math.max((Number(order.totalAmount) || 0) - (Number(order.paidAmount) || 0), 0), 0);
-          const updatedSupplier = { ...sup, balance: recalculatedBalance, lastUpdated: new Date(), lastModified: now };
-          smartUpdateDocument('suppliers', sup.id, updatedSupplier).catch(error => {
-            console.error('Failed to sync supplier debt to Firestore:', error);
-          });
-          return updatedSupplier;
-        }
-        return sup;
-      }));
+    if (supplierCloudUpdate) {
+      setSuppliers(suppliers => suppliers.map(sup =>
+        sup.id === newOrder.supplierId ? supplierCloudUpdate : sup
+      ));
     }
-
     alert(`采购单 ${newOrder.orderNumber} 创建成功！`);
     setShowNewOrderModal(false);
     setNewOrder({

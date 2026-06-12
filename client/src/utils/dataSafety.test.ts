@@ -200,6 +200,28 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("saveData(`payments_${supplierId}`");
   });
 
+  test('purchase order creation waits for linked cloud writes before local state updates', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+    const createBlock = source.slice(
+      source.indexOf('const order: PurchaseOrder = {'),
+      source.indexOf("alert(`閲囪喘鍗?")
+    );
+
+    expect(createBlock).toContain("await smartAddDocument('purchase_orders', order)");
+    expect(createBlock).toContain("await Promise.all(newOrder.items.map(orderItem => smartIncrementField('inventory_items', orderItem.itemId");
+    expect(createBlock).toContain("await smartAddDocument('expenses', purchaseExpense)");
+    expect(createBlock).toContain("await smartUpdateDocument('suppliers', newOrder.supplierId, supplierCloudUpdate)");
+    expect(createBlock.indexOf("await smartAddDocument('purchase_orders', order)")).toBeLessThan(
+      createBlock.indexOf('setPurchaseOrders(nextPurchaseOrders)')
+    );
+    expect(createBlock.indexOf("await Promise.all(newOrder.items.map(orderItem => smartIncrementField('inventory_items', orderItem.itemId")).toBeLessThan(
+      createBlock.indexOf('setInventoryItems(items => items.map')
+    );
+    expect(createBlock).not.toContain("smartIncrementField('inventory_items', item.id");
+    expect(createBlock).not.toContain('.catch(error =>');
+  });
+
   test('financial reports use collected order amounts and normalized expense dates', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
