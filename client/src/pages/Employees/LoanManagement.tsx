@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { dataManager } from '../../services/dataManager';
 import { smartAddDocument } from '../../services/smartSyncService';
+import { getVisibleLoanRecords } from '../../utils/employeeLoans';
 
 interface Employee {
   id: string;
@@ -19,6 +20,8 @@ interface LoanRecord {
   id: string;
   employeeId: string;
   employeeName?: string;
+  expenseId?: string;
+  relatedExpenseId?: string;
   date: string;
   amount: number;
   approvedBy?: string;
@@ -90,11 +93,15 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     }
 
     const employee = employees.find(e => e.id === loanFormData.employeeId);
+    const now = Date.now();
+    const loanId = now.toString();
+    const expenseId = `loan_${now}`;
     
     const newLoan: LoanRecord = {
-      id: Date.now().toString(),
+      id: loanId,
       employeeId: loanFormData.employeeId,
       employeeName: employee?.name || '',
+      expenseId,
       date: loanFormData.date || getLocalDateString(),
       amount: loanFormData.amount || 0,
       remainingAmount: loanFormData.amount || 0,
@@ -108,7 +115,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     const expenseDate = loanFormData.date || getLocalDateString();
     
     const newExpense = {
-      id: `loan_${Date.now()}`,
+      id: expenseId,
       date: expenseDate,
       categoryId: 'employee_loan', // 员工借款分类
       categoryName: '员工借款',
@@ -117,6 +124,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       employeeId: loanFormData.employeeId,
       employeeName: employee?.name,
       relatedType: 'loan',
+      relatedLoanId: loanId,
       createdAt: getLocalDateString(),
     };
 
@@ -248,7 +256,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     },
   };
 
-  const activeLoans = loanRecords.filter(l => l.status === 'active');
+  const loanExpenses = dataManager.getData('expenses');
+  const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenses);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

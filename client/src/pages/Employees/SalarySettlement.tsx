@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { getVisibleLoanRecords } from '../../utils/employeeLoans';
 
 interface Employee {
   id: string;
@@ -53,6 +54,8 @@ interface LoanRecord {
   id: string;
   employeeId: string;
   employeeName?: string;
+  expenseId?: string;
+  relatedExpenseId?: string;
   date: string;
   amount: number;
   approvedBy?: string;
@@ -128,10 +131,13 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     setCashFlowRecords(updated);
   };
 
+  const getActiveLoansForEmployee = (employeeId: string): LoanRecord[] => {
+    return getVisibleLoanRecords(loanRecords, dataManager.getData('expenses'))
+      .filter(loan => loan.employeeId === employeeId);
+  };
+
   const getRemainingLoan = (employeeId: string): number => {
-    const activeLoans = loanRecords.filter(
-      loan => loan.employeeId === employeeId && loan.status === 'active'
-    );
+    const activeLoans = getActiveLoansForEmployee(employeeId);
     return activeLoans.reduce((sum, loan) => sum + loan.remainingAmount, 0);
   };
 
@@ -251,9 +257,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     const salaryRecord = calculateSalary(employee, startDate, endDate, periodType, monthBenefits, monthSubsidy, monthSocialSecurity);
     
     // 处理借款扣除
-    const activeLoans = loanRecords.filter(
-      loan => loan.employeeId === employeeId && loan.status === 'active'
-    );
+    const activeLoans = getActiveLoansForEmployee(employeeId);
 
     const maxDeduction = salaryRecord.baseSalary * 0.3;
     let totalDeduction = 0;
@@ -725,9 +729,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
           <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }}>📅 选择员工和日期范围</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1rem' }}>
             {employees.filter(e => e.status === 'active').map((emp) => {
-              const activeLoans = loanRecords.filter(
-                loan => loan.employeeId === emp.id && loan.status === 'active'
-              );
+              const activeLoans = getActiveLoansForEmployee(emp.id);
               const totalLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0);
               
               return (
