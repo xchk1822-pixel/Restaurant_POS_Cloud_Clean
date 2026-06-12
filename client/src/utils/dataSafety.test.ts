@@ -625,6 +625,42 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("smartUpdateDocument('attendance_records'");
   });
 
+  test('employee loan and salary settlement wait for cloud writes before local state updates', () => {
+    const loanPath = path.join(process.cwd(), 'src/pages/Employees/LoanManagement.tsx');
+    const salaryPath = path.join(process.cwd(), 'src/pages/Employees/SalarySettlement.tsx');
+    const loanSource = fs.readFileSync(loanPath, 'utf8');
+    const salarySource = fs.readFileSync(salaryPath, 'utf8');
+    const addLoanBlock = loanSource.slice(
+      loanSource.indexOf('const handleAddLoan = async () => {'),
+      loanSource.indexOf('const styles = {')
+    );
+    const salaryBlock = salarySource.slice(
+      salarySource.indexOf('const handleSingleSettlement = async'),
+      salarySource.indexOf('const handleBatchSettlement')
+    );
+
+    expect(addLoanBlock.indexOf("await smartAddDocument('loan_records', newLoan)")).toBeLessThan(
+      addLoanBlock.indexOf('setLoanRecords(updated)')
+    );
+    expect(addLoanBlock.indexOf("await smartAddDocument('expenses', newExpense)")).toBeLessThan(
+      addLoanBlock.indexOf("dataManager.saveData('expenses', nextExpenses")
+    );
+    expect(addLoanBlock.indexOf('await recordCashFlow({')).toBeLessThan(
+      addLoanBlock.indexOf('setLoanRecords(updated)')
+    );
+    expect(salaryBlock.indexOf("await smartAddDocument('salary_records', salaryRecord)")).toBeLessThan(
+      salaryBlock.indexOf('setSalaryRecords(updatedSalaries)')
+    );
+    expect(salaryBlock.indexOf("await smartAddDocument('expenses', salaryExpense)")).toBeLessThan(
+      salaryBlock.indexOf("dataManager.saveData('expenses', nextExpenses")
+    );
+    expect(salaryBlock.indexOf("smartUpdateDocument('loan_records', loan.id, loan)")).toBeLessThan(
+      salaryBlock.indexOf('setLoanRecords(updatedLoans)')
+    );
+    expect(salaryBlock).not.toContain("console.error('同步借款扣减记录失败:'");
+    expect(salaryBlock).not.toContain("console.error('❌ 同步工资结算记录失败:'");
+  });
+
   test('shift handover drafts and history use store-scoped local storage', () => {
     const handoverPath = path.join(process.cwd(), 'src/pages/Manager/ShiftHandover.tsx');
     const source = fs.readFileSync(handoverPath, 'utf8');

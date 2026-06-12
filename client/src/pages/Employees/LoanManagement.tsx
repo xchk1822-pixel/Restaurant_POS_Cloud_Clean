@@ -70,17 +70,16 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       ...flow,
     };
     
-    const updated = [...cashFlowRecords, newFlow];
-    setCashFlowRecords(updated);
-    
-    // 🔥 同步到 Firestore
     try {
       await smartAddDocument('cash_flow_records', newFlow);
       console.log('✅ 现金流记录已同步到 Firestore');
     } catch (error) {
       console.error('❌ 同步现金流记录失败:', error);
+      throw error;
     }
-    
+
+    const updated = [...cashFlowRecords, newFlow];
+    setCashFlowRecords(updated);
     console.log('💰 现金流记录:', newFlow);
   };
 
@@ -104,26 +103,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     };
 
     const updated = [...loanRecords, newLoan];
-    setLoanRecords(updated);
-    
-    // 🔥 同步到 Firestore
-    try {
-      await smartAddDocument('loan_records', newLoan);
-      console.log('✅ 借款记录已同步到 Firestore');
-    } catch (error) {
-      console.error('❌ 同步借款记录失败:', error);
-    }
-    
-    // 记录现金流
-    recordCashFlow({
-      type: 'loan_out',
-      amount: loanFormData.amount || 0,
-      employeeId: loanFormData.employeeId,
-      employeeName: employee?.name || '',
-      date: loanFormData.date || getLocalDateString(),
-      description: `借款给${employee?.name}`,
-    });
-    
+
     // 🔄 同步创建开支记录（从营业额扣除）- 使用 dataManager
     const expenseDate = loanFormData.date || getLocalDateString();
     
@@ -139,11 +119,28 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       relatedType: 'loan',
       createdAt: getLocalDateString(),
     };
-    
+
+    try {
+      await smartAddDocument('loan_records', newLoan);
+      await smartAddDocument('expenses', newExpense);
+      await recordCashFlow({
+        type: 'loan_out',
+        amount: loanFormData.amount || 0,
+        employeeId: loanFormData.employeeId,
+        employeeName: employee?.name || '',
+        date: loanFormData.date || getLocalDateString(),
+        description: `借款给${employee?.name}`,
+      });
+      console.log('✅ 借款记录已同步到 Firestore');
+    } catch (error) {
+      console.error('❌ 保存借款记录失败:', error);
+      alert('保存借款失败，请检查网络后重试');
+      return;
+    }
+
+    setLoanRecords(updated);
     const nextExpenses = [...dataManager.getData('expenses'), newExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    await smartAddDocument('expenses', newExpense);
-    
     console.log('💰 已创建开支记录:', newExpense);
     
     setShowLoanModal(false);

@@ -117,14 +117,15 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       ...flow,
     };
     
-    const updated = [...cashFlowRecords, newFlow];
-    setCashFlowRecords(updated);
-
     try {
       await smartAddDocument('cash_flow_records', newFlow);
     } catch (error) {
       console.error('同步工资现金流水失败:', error);
+      throw error;
     }
+
+    const updated = [...cashFlowRecords, newFlow];
+    setCashFlowRecords(updated);
   };
 
   const getRemainingLoan = (employeeId: string): number => {
@@ -281,33 +282,12 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       return loan;
     });
 
-    setLoanRecords(updatedLoans);
-
-    try {
-      await Promise.all(
-        updatedLoans
-          .filter(loan => loansToDeduct.some(deduction => deduction.loanId === loan.id))
-          .map(loan => smartUpdateDocument('loan_records', loan.id, loan))
-      );
-    } catch (error) {
-      console.error('同步借款扣减记录失败:', error);
-    }
-
     // 更新薪资记录
     salaryRecord.loanRepayment = totalDeduction;
     salaryRecord.remainingLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0) - totalDeduction;
     salaryRecord.actualSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy - salaryRecord.socialSecurityEmployee - totalDeduction;
     
     const updatedSalaries = [...salaryRecords, salaryRecord];
-    setSalaryRecords(updatedSalaries);
-
-    // 🔥 同步到 Firestore
-    try {
-      await smartAddDocument('salary_records', salaryRecord);
-      console.log('✅ 工资结算记录已同步到 Firestore');
-    } catch (error) {
-      console.error('❌ 同步工资结算记录失败:', error);
-    }
 
     // 🔄 同步创建开支记录（从营业额扣除）- 使用 dataManager
     const expenseDate = getLocalDateString(); // 🔥 使用本地时间
@@ -325,25 +305,38 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       salaryPeriod: `${salaryRecord.startDate}_${salaryRecord.endDate}`,
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
-    
+
+    try {
+      await Promise.all(
+        updatedLoans
+          .filter(loan => loansToDeduct.some(deduction => deduction.loanId === loan.id))
+          .map(loan => smartUpdateDocument('loan_records', loan.id, loan))
+      );
+      await smartAddDocument('salary_records', salaryRecord);
+      await smartAddDocument('expenses', salaryExpense);
+      if (totalDeduction > 0) {
+        await recordCashFlow({
+          type: 'salary_deduction',
+          amount: totalDeduction,
+          employeeId: employeeId,
+          employeeName: employee.name,
+          date: expenseDate,
+          description: `${period} 薪资结算扣除借款`,
+          salaryPeriod: period,
+        });
+      }
+      console.log('✅ 工资结算记录已同步到 Firestore');
+    } catch (error) {
+      console.error('❌ 保存工资结算失败:', error);
+      alert('保存工资结算失败，请检查网络后重试');
+      return;
+    }
+
+    setLoanRecords(updatedLoans);
+    setSalaryRecords(updatedSalaries);
     const nextExpenses = [...dataManager.getData('expenses'), salaryExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    await smartAddDocument('expenses', salaryExpense);
-    
     console.log('💰 已创建薪资开支记录:', salaryExpense);
-
-    // 记录现金流
-    if (totalDeduction > 0) {
-      await recordCashFlow({
-        type: 'salary_deduction',
-        amount: totalDeduction,
-        employeeId: employeeId,
-        employeeName: employee.name,
-        date: expenseDate,
-        description: `${period} 薪资结算扣除借款`,
-        salaryPeriod: period,
-      });
-    }
 
     // 显示结算结果
     showSalarySlip(salaryRecord, employee);
