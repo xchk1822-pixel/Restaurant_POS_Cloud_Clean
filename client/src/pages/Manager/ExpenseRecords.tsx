@@ -116,11 +116,17 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       createdAt: getLocalDateString(), // 🔥 使用本地时间
     };
 
-    // Keep the local cache current, then write only the new document to Firestore.
+    // Write the new document first, then refresh the local cache.
     const nextExpenses = [...expenses, newExpense];
+    try {
+      await smartSetDocument('expenses', newExpense.id, newExpense);
+    } catch (error) {
+      console.error('保存开支记录失败:', error);
+      alert('保存开支记录失败，请检查网络后重试');
+      return;
+    }
     setExpenses(nextExpenses);
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    await smartSetDocument('expenses', newExpense.id, newExpense);
 
     setFormData({
       categoryId: categories[0]?.id || '',
@@ -136,8 +142,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const handleDeleteExpense = async (id: string) => {
     if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u6761\u8bb0\u5f55\u5417\uff1f')) {
       const nextExpenses = expenses.filter(exp => exp.id !== id);
+      try {
+        await smartDeleteDocument('expenses', id);
+      } catch (error) {
+        console.error('删除开支记录失败:', error);
+        alert('删除开支记录失败，请检查网络后重试');
+        return;
+      }
       setExpenses(nextExpenses);
-      await smartDeleteDocument('expenses', id);
       await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false, notify: false });
     }
   };
@@ -180,8 +192,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       code: newCategoryName.trim().toUpperCase().replace(/\s+/g, '_')
     };
     const nextCategories = [...categories, newCat];
+    try {
+      await smartSetDocument('expense_categories', newCat.id, newCat);
+    } catch (error) {
+      console.error('保存开支类别失败:', error);
+      alert('保存开支类别失败，请检查网络后重试');
+      return;
+    }
     setCategories(nextCategories);
-    await smartSetDocument('expense_categories', newCat.id, newCat);
     localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
     setNewCategoryName('');
   };
@@ -194,8 +212,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     }
     if (window.confirm('删除类别后，相关记录的类别将失效，确定删除吗？')) {
       const nextCategories = categories.filter(cat => cat.id !== id);
+      try {
+        await smartDeleteDocument('expense_categories', id);
+      } catch (error) {
+        console.error('删除开支类别失败:', error);
+        alert('删除开支类别失败，请检查网络后重试');
+        return;
+      }
       setCategories(nextCategories);
-      await smartDeleteDocument('expense_categories', id);
       localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
     }
   };
@@ -208,11 +232,16 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         exp.id === expenseId ? { ...exp, receipt: reader.result as string } : exp
       );
       const updatedExpense = updatedExpenses.find(exp => exp.id === expenseId);
+      if (!updatedExpense) return;
+      try {
+        await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
+      } catch (error) {
+        console.error('保存票据失败:', error);
+        alert('保存票据失败，请检查网络后重试');
+        return;
+      }
       setExpenses(updatedExpenses);
       await dataManager.saveData('expenses', updatedExpenses, { syncFirestore: false });
-      if (updatedExpense) {
-        await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
-      }
     };
     reader.readAsDataURL(file);
   };

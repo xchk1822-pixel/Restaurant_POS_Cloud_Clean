@@ -83,11 +83,46 @@ describe('production data safety guards', () => {
   test('expense records use explicit single-document cloud writes', () => {
     const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
     const source = fs.readFileSync(expensePath, 'utf8');
+    const addBlock = source.slice(
+      source.indexOf('const handleAddExpense = async () => {'),
+      source.indexOf('// ✅ 删除开支')
+    );
+    const deleteBlock = source.slice(
+      source.indexOf('const handleDeleteExpense = async'),
+      source.indexOf('const handleImageUpload')
+    );
+    const addCategoryBlock = source.slice(
+      source.indexOf('const handleAddCategory = async'),
+      source.indexOf('// 删除类别')
+    );
+    const deleteCategoryBlock = source.slice(
+      source.indexOf('const handleDeleteCategory = async'),
+      source.indexOf('// 处理票据上传')
+    );
+    const receiptBlock = source.slice(
+      source.indexOf('const handleReceiptUpload ='),
+      source.indexOf('const getExpenseDateTime')
+    );
 
     expect(source).not.toContain("dataService.saveData('expense_categories'");
     expect(source).not.toContain("dataManager.saveData('expenses', nextExpenses);");
     expect(source).not.toContain("dataManager.saveData('expenses', updatedExpenses);");
     expect(source).toContain("smartSetDocument('expenses', newExpense.id, newExpense)");
+    expect(addBlock.indexOf("await smartSetDocument('expenses', newExpense.id, newExpense)")).toBeLessThan(
+      addBlock.indexOf('setExpenses(nextExpenses)')
+    );
+    expect(deleteBlock.indexOf("await smartDeleteDocument('expenses', id)")).toBeLessThan(
+      deleteBlock.indexOf('setExpenses(nextExpenses)')
+    );
+    expect(addCategoryBlock.indexOf("await smartSetDocument('expense_categories', newCat.id, newCat)")).toBeLessThan(
+      addCategoryBlock.indexOf('setCategories(nextCategories)')
+    );
+    expect(deleteCategoryBlock.indexOf("await smartDeleteDocument('expense_categories', id)")).toBeLessThan(
+      deleteCategoryBlock.indexOf('setCategories(nextCategories)')
+    );
+    expect(receiptBlock.indexOf("await smartSetDocument('expenses', updatedExpense.id, updatedExpense)")).toBeLessThan(
+      receiptBlock.indexOf('setExpenses(updatedExpenses)')
+    );
   });
 
   test('expense category local cache is scoped to the current store', () => {
