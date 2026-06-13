@@ -34,13 +34,14 @@ describe('stocktake refresh helpers', () => {
       { id: 'main', name: 'Main Fridge', createdAt: '2026-06-11T09:00:00.000Z' },
     ]);
     const inventory = normalizeFridgeInventoryForRefresh([
-      { id: 'main-drink', fridgeId: 'main', itemId: 'drink', quantity: '7', lastModified: '100' },
+      { id: 'main-drink', fridgeId: 'main', itemId: 'drink', quantity: '7', sortOrder: '3', lastModified: '100' },
     ]);
 
     expect(fridges).toHaveLength(1);
     expect(fridges[0].createdAt).toBeInstanceOf(Date);
     expect(inventory).toHaveLength(1);
     expect(inventory[0].quantity).toBe(7);
+    expect(inventory[0].sortOrder).toBe(3);
     expect(inventory[0].lastModified).toBe(100);
   });
 });

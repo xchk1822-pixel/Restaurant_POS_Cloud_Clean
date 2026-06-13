@@ -69,14 +69,24 @@ interface InventoryCategory {
   key: string;
   name: string;
   icon: string;
+  sortOrder?: number;
   lastModified?: number;
 }
 
 const DEFAULT_INVENTORY_CATEGORIES: InventoryCategory[] = [
+  { id: 'cerveza', key: 'cerveza', name: 'Cerveza', icon: '🍺' },
+  { id: 'bebida', key: 'bebida', name: 'Bebida', icon: '🥤' },
+  { id: 'jugo', key: 'jugo', name: 'Jugo', icon: '🧃' },
   { id: 'ingredient', key: 'ingredient', name: '食材', icon: '🥬' },
   { id: 'alcohol', key: 'alcohol', name: '酒水', icon: '🍺' },
   { id: 'beverage', key: 'beverage', name: '饮料', icon: '🥤' },
   { id: 'other', key: 'other', name: '其他', icon: '📦' }
+];
+
+const REQUIRED_FRIDGE_INVENTORY_CATEGORIES: InventoryCategory[] = [
+  { id: 'cerveza', key: 'cerveza', name: 'Cerveza', icon: '🍺' },
+  { id: 'bebida', key: 'bebida', name: 'Bebida', icon: '🥤' },
+  { id: 'jugo', key: 'jugo', name: 'Jugo', icon: '🧃' },
 ];
 
 const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory[] => {
@@ -91,6 +101,7 @@ const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory
       key,
       name: String(category.name || key),
       icon: String(category.icon || '📦'),
+      sortOrder: Number(category.sortOrder ?? index),
       lastModified: Number(category.lastModified || 0) || now
     };
     const existing = merged.get(key);
@@ -99,7 +110,28 @@ const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory
     }
   });
 
-  return Array.from(merged.values());
+  return Array.from(merged.values())
+    .sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0));
+};
+
+const ensureRequiredFridgeInventoryCategories = (categories: InventoryCategory[]): InventoryCategory[] => {
+  const normalizedCategories = normalizeInventoryCategories(categories);
+  const existingKeys = new Set(normalizedCategories.map(category => String(category.key).toLowerCase()));
+  const existingNames = new Set(normalizedCategories.map(category => String(category.name).toLowerCase()));
+  const missingCategories = REQUIRED_FRIDGE_INVENTORY_CATEGORIES
+    .filter(category =>
+      !existingKeys.has(category.key.toLowerCase()) &&
+      !existingNames.has(category.name.toLowerCase())
+    )
+    .map((category, index) => ({
+      ...category,
+      sortOrder: normalizedCategories.length + index,
+      lastModified: Date.now(),
+    }));
+
+  return missingCategories.length > 0
+    ? normalizeInventoryCategories([...normalizedCategories, ...missingCategories])
+    : normalizedCategories;
 };
 
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
@@ -165,7 +197,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     try {
       const serviceData = normalizeInventoryCategories(dataService.getData('inventory_categories'));
       if (serviceData.length > 0) {
-        return serviceData;
+        return ensureRequiredFridgeInventoryCategories(serviceData);
       }
 
       const storeId = dataService.getCurrentStoreId();
@@ -179,7 +211,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
         if (saved) {
           const parsed = normalizeInventoryCategories(JSON.parse(saved));
           if (parsed.length > 0) {
-            return parsed;
+            return ensureRequiredFridgeInventoryCategories(parsed);
           }
         }
       }
@@ -187,7 +219,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       console.error('加载库存类别失败:', error);
     }
 
-    return normalizeInventoryCategories(DEFAULT_INVENTORY_CATEGORIES);
+    return ensureRequiredFridgeInventoryCategories(normalizeInventoryCategories(DEFAULT_INVENTORY_CATEGORIES));
   });
   
   React.useEffect(() => {
@@ -198,8 +230,22 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
         const cloudCategories = await smartGetDocuments('inventory_categories', true);
         if (cancelled) return;
 
-        const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
+        const normalizedCloudCategories = ensureRequiredFridgeInventoryCategories(
+          normalizeInventoryCategories(cloudCategories)
+        );
         if (normalizedCloudCategories.length > 0) {
+          const cloudCategoryKeys = new Set(cloudCategories.map((category: any) =>
+            String(category?.key || category?.id || '').toLowerCase()
+          ));
+          const missingRequiredCategories = normalizedCloudCategories.filter(category =>
+            REQUIRED_FRIDGE_INVENTORY_CATEGORIES.some(required => required.key === category.key) &&
+            !cloudCategoryKeys.has(category.key.toLowerCase())
+          );
+          if (missingRequiredCategories.length > 0) {
+            await Promise.all(missingRequiredCategories.map(category =>
+              smartSetDocument('inventory_categories', category.id || category.key, category)
+            ));
+          }
           setInventoryCategories(normalizedCloudCategories);
         }
       } catch (error) {
@@ -306,6 +352,19 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     saveInventoryCategorySnapshot(nextCategories);
   }, [saveInventoryCategorySnapshot]);
 
+  const saveInventoryCategoryOrder = React.useCallback(async (nextCategories: InventoryCategory[]) => {
+    const now = Date.now();
+    const orderedCategories = nextCategories.map((category, index) => ({
+      ...category,
+      id: category.id || category.key,
+      sortOrder: index,
+      lastModified: now,
+    }));
+
+    await Promise.all(orderedCategories.map(category => saveInventoryCategoryToCloud(category)));
+    saveInventoryCategorySnapshot(orderedCategories);
+  }, [saveInventoryCategorySnapshot, saveInventoryCategoryToCloud]);
+
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
       const saved = localStorage.getItem('inventory_stock_records');
@@ -346,6 +405,15 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     const colors = ['#d1fae5', '#fef3c7', '#dbeafe', '#f3f4f6', '#e0e7ff', '#fce7f3', '#ccfbf1'];
     const index = inventoryCategories.findIndex(c => c.key === category);
     return index !== -1 ? colors[index % colors.length] : '#e0e7ff';
+  };
+
+  const getDefaultUnitForInventoryCategory = (categoryKey: string) => {
+    const category = inventoryCategories.find(c => c.key === categoryKey || c.id === categoryKey);
+    const normalizedKey = String(categoryKey || '').toLowerCase();
+    const normalizedName = String(category?.name || '').toLowerCase();
+    const botCategories = ['alcohol', 'beverage', 'cerveza', 'bebida', 'jugo', 'jugos'];
+
+    return botCategories.includes(normalizedKey) || botCategories.includes(normalizedName) ? 'BOT' : 'lb';
   };
 
   const getFridgeStock = (itemId: string) => {
@@ -464,7 +532,14 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               📷 扫码
             </button>
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => {
+                setEditingItem({
+                  barcode: generateBarcode(),
+                  category: 'ingredient',
+                  unit: 'lb'
+                });
+                setShowAddModal(true);
+              }}
               style={{
                 padding: '0.45rem 0.75rem',
                 backgroundColor: '#10b981',
@@ -1234,7 +1309,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     onChange={(e) => {
                       const newCategory = e.target.value;
                       // ✅ 根据类别自动设置默认单位（西语缩写）
-                      const defaultUnit = (newCategory === 'beverage' || newCategory === 'alcohol') ? 'bot' : 'lb';
+                      const defaultUnit = getDefaultUnitForInventoryCategory(newCategory);
                       setEditingItem({...editingItem, category: newCategory, unit: defaultUnit});
                     }}
                     style={{
@@ -1479,8 +1554,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   setShowAddModal(false);
                   setEditingItem({
                     barcode: generateBarcode(),
-                    category: inventoryCategories[0]?.key || 'ingredient',
-                    unit: '\u514b'
+                    category: 'ingredient',
+                    unit: 'lb'
                   });
                   alert('\u5220\u9664\u6210\u529f\uff01');
                   }}
@@ -1502,8 +1577,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   setShowAddModal(false);
                   setEditingItem({
                     barcode: generateBarcode(),
-                    category: inventoryCategories[0]?.key || 'ingredient',
-                    unit: '克'
+                    category: 'ingredient',
+                    unit: 'lb'
                   });
                 }}
                 style={{
@@ -1576,7 +1651,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       barcode: editingItem.barcode!,
                       name: editingItem.name!,
                       category: editingItem.category!,
-                      unit: editingItem.unit || '克',
+                      unit: editingItem.unit || getDefaultUnitForInventoryCategory(editingItem.category || 'ingredient'),
                       currentStock: editingItem.currentStock || 0,
                       minStock: editingItem.minStock || 0,
                       costPrice: editingItem.costPrice || 0,
@@ -1631,7 +1706,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   } else {
                     // 添加新物品
                     const now = Date.now();
-                    const defaultUnit = (editingItem.category === 'beverage' || editingItem.category === 'alcohol') ? 'bot' : 'lb'; // ✅ 饮料酒水用bot，其他用lb
+                    const defaultUnit = getDefaultUnitForInventoryCategory(editingItem.category || 'ingredient');
                     const newItem: InventoryItem = {
                       id: editingItem.barcode!, // id必须等于barcode，作为全局唯一标识
                       barcode: editingItem.barcode!,
@@ -1683,8 +1758,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   setShowAddModal(false);
                   setEditingItem({
                     barcode: generateBarcode(),
-                    category: inventoryCategories[0]?.key || 'ingredient',
-                    unit: '克'
+                    category: 'ingredient',
+                    unit: 'lb'
                   });
                 }}
                 style={{
@@ -2421,7 +2496,12 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         alert('该类别已存在');
                         return;
                       }
-                      const newCategory = { ...editingInventoryCategory, id: editingInventoryCategory.key, lastModified: Date.now() };
+                      const newCategory = {
+                        ...editingInventoryCategory,
+                        id: editingInventoryCategory.key,
+                        sortOrder: inventoryCategories.length,
+                        lastModified: Date.now()
+                      };
                       try {
                         await saveInventoryCategoryChange([...inventoryCategories, newCategory], newCategory);
                       } catch (error) {
@@ -2472,6 +2552,58 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={async () => {
+                          if (idx <= 0) return;
+                          const nextCategories = [...inventoryCategories];
+                          [nextCategories[idx - 1], nextCategories[idx]] = [nextCategories[idx], nextCategories[idx - 1]];
+                          try {
+                            await saveInventoryCategoryOrder(nextCategories);
+                          } catch (error) {
+                            console.error('保存库存类别排序失败:', error);
+                            alert('保存类别排序失败，请检查网络后重试');
+                          }
+                        }}
+                        disabled={idx <= 0}
+                        style={{
+                          padding: '0.35rem 0.5rem',
+                          backgroundColor: idx <= 0 ? '#e5e7eb' : '#f3f4f6',
+                          color: '#374151',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.25rem',
+                          cursor: idx <= 0 ? 'not-allowed' : 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: '600'
+                        }}
+                      >
+                        ▲
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (idx >= inventoryCategories.length - 1) return;
+                          const nextCategories = [...inventoryCategories];
+                          [nextCategories[idx], nextCategories[idx + 1]] = [nextCategories[idx + 1], nextCategories[idx]];
+                          try {
+                            await saveInventoryCategoryOrder(nextCategories);
+                          } catch (error) {
+                            console.error('保存库存类别排序失败:', error);
+                            alert('保存类别排序失败，请检查网络后重试');
+                          }
+                        }}
+                        disabled={idx >= inventoryCategories.length - 1}
+                        style={{
+                          padding: '0.35rem 0.5rem',
+                          backgroundColor: idx >= inventoryCategories.length - 1 ? '#e5e7eb' : '#f3f4f6',
+                          color: '#374151',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.25rem',
+                          cursor: idx >= inventoryCategories.length - 1 ? 'not-allowed' : 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: '600'
+                        }}
+                      >
+                        ▼
+                      </button>
                       <button
                         onClick={async () => {
                           const newName = prompt('修改类别名称:', cat.name);

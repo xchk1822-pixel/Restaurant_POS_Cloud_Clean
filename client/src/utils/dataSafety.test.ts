@@ -674,6 +674,38 @@ describe('production data safety guards', () => {
     expect(addItemBlock).not.toContain('.catch(error =>');
   });
 
+  test('fridge item category filter and ordering are cloud-safe', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const moveBlock = source.slice(
+      source.indexOf("const moveItem = async"),
+      source.indexOf('const exportToCSV')
+    );
+
+    expect(source).toContain("import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory'");
+    expect(source).toContain('canItemEnterFridge(item, inventoryCategories)');
+    expect(source).not.toContain("item.category === 'beverage' || item.category === 'alcohol'");
+    expect(source).toContain('resolveFridgeItemOrder(fridgeItems');
+    expect(moveBlock).toContain("await Promise.all(");
+    expect(moveBlock).toContain("smartUpdateDocument('fridge_inventory', record.id, record)");
+    expect(moveBlock.indexOf("await Promise.all(")).toBeLessThan(
+      moveBlock.indexOf('setItemOrder(newOrder)')
+    );
+  });
+
+  test('inventory category order is saved as cloud sortOrder', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain('sortOrder?: number');
+    expect(source).toContain('const saveInventoryCategoryOrder = React.useCallback');
+    expect(source).toContain('sortOrder: index');
+    expect(source).toContain('await Promise.all(orderedCategories.map(category => saveInventoryCategoryToCloud(category)))');
+    expect(source).toContain('await saveInventoryCategoryOrder(nextCategories)');
+    expect(source).toContain("return botCategories.includes(normalizedKey) || botCategories.includes(normalizedName) ? 'BOT' : 'lb'");
+    expect(source).toContain("const botCategories = ['alcohol', 'beverage', 'cerveza', 'bebida', 'jugo', 'jugos']");
+  });
+
   test('fridge remove-item flow waits for warehouse return and fridge delete before local state updates', () => {
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
     const source = fs.readFileSync(fridgePath, 'utf8');

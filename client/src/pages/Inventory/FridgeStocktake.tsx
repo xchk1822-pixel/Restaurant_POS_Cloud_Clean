@@ -5,11 +5,13 @@ import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDo
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import { normalizeFridgeInventoryForRefresh, normalizeFridgesForRefresh, normalizeInventoryItemsForRefresh, saveFridgeRefreshCache, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
+import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory';
 
 interface FridgeItem {
   fridgeId: string;
   itemId: string;
   quantity: number;
+  sortOrder?: number;
   itemName?: string;
   unit?: string;
   barcode?: string;
@@ -51,6 +53,9 @@ const FridgeStocktake: React.FC = () => {
     try {
       const saved = localStorage.getItem('inventory_categories');
       return saved ? JSON.parse(saved) : [
+        { key: 'cerveza', name: 'Cerveza', icon: '🍺' },
+        { key: 'bebida', name: 'Bebida', icon: '🥤' },
+        { key: 'jugo', name: 'Jugo', icon: '🧃' },
         { key: 'ingredient', name: '食材', icon: '🥬' },
         { key: 'alcohol', name: '酒水', icon: '🍺' },
         { key: 'beverage', name: '饮料', icon: '🥤' },
@@ -58,6 +63,9 @@ const FridgeStocktake: React.FC = () => {
       ];
     } catch {
       return [
+        { key: 'cerveza', name: 'Cerveza', icon: '🍺' },
+        { key: 'bebida', name: 'Bebida', icon: '🥤' },
+        { key: 'jugo', name: 'Jugo', icon: '🧃' },
         { key: 'ingredient', name: '食材', icon: '🥬' },
         { key: 'alcohol', name: '酒水', icon: '🍺' },
         { key: 'beverage', name: '饮料', icon: '🥤' },
@@ -67,6 +75,7 @@ const FridgeStocktake: React.FC = () => {
   });
   
   const stocktakeHistoryStorageKey = dataService.getStoreKey('fridge_stocktake_history');
+  const getFridgeItemOrderStorageKey = (fridgeId: string) => dataService.getStoreKey(`fridge_item_order_${fridgeId}`);
 
   // 盘点历史
   const [stocktakeHistory, setStocktakeHistory] = useState<any[]>(() => {
@@ -105,6 +114,9 @@ const FridgeStocktake: React.FC = () => {
   };
 
   const fridgeItems = getFridgeItems();
+  const fridgeItemOrderSignature = fridgeItems
+    .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)
+    .join('|');
   const refreshFridgeData = async () => {
     setIsRefreshing(true);
     try {
@@ -161,7 +173,8 @@ const FridgeStocktake: React.FC = () => {
     // 加载或初始化排序
     const loadOrder = () => {
       try {
-        const saved = localStorage.getItem(`fridge_item_order_${selectedFridge}`);
+        const orderStorageKey = getFridgeItemOrderStorageKey(selectedFridge);
+        const saved = localStorage.getItem(orderStorageKey);
         const currentItemIds = fridgeItems.map(item => item.itemId);
         
         if (saved) {
@@ -170,17 +183,18 @@ const FridgeStocktake: React.FC = () => {
           const newItems = currentItemIds.filter(id => !savedOrder.includes(id));
           
           // 合并：保留原有顺序 + 新商品追加到末尾
-          const mergedOrder = [...existingItems, ...newItems];
+          const mergedOrder = resolveFridgeItemOrder(fridgeItems, [...existingItems, ...newItems]);
           setItemOrder(mergedOrder);
           
           // 如果有变化，保存更新后的顺序
           if (newItems.length > 0) {
-            localStorage.setItem(`fridge_item_order_${selectedFridge}`, JSON.stringify(mergedOrder));
+            localStorage.setItem(orderStorageKey, JSON.stringify(mergedOrder));
           }
         } else {
           // 没有保存的顺序，使用默认顺序
-          setItemOrder(currentItemIds);
-          localStorage.setItem(`fridge_item_order_${selectedFridge}`, JSON.stringify(currentItemIds));
+          const resolvedOrder = resolveFridgeItemOrder(fridgeItems, currentItemIds);
+          setItemOrder(resolvedOrder);
+          localStorage.setItem(orderStorageKey, JSON.stringify(resolvedOrder));
         }
       } catch (error) {
         console.error('加载排序失败:', error);
@@ -190,12 +204,12 @@ const FridgeStocktake: React.FC = () => {
     };
     
     loadOrder();
-  }, [selectedFridge, fridgeItems.length]);
+  }, [selectedFridge, fridgeItemOrderSignature]);
 
   // 自动保存排序
   useEffect(() => {
     if (itemOrder.length > 0 && selectedFridge) {
-      localStorage.setItem(`fridge_item_order_${selectedFridge}`, JSON.stringify(itemOrder));
+      localStorage.setItem(getFridgeItemOrderStorageKey(selectedFridge), JSON.stringify(itemOrder));
     }
   }, [itemOrder, selectedFridge]);
 
@@ -312,6 +326,13 @@ const FridgeStocktake: React.FC = () => {
 
     const now = Date.now();
     const fridgeInventoryId = `${selectedFridge}-${item.id}`;
+    const existingFridgeRecord = fridgeInventory.find(
+      record => record.fridgeId === selectedFridge && record.itemId === item.id
+    );
+    const nextSortOrder = fridgeInventory
+      .filter(record => record.fridgeId === selectedFridge)
+      .reduce((max, record) => Math.max(max, Number(record.sortOrder ?? -1)), -1) + 1;
+    const sortOrder = existingFridgeRecord?.sortOrder ?? nextSortOrder;
 
     if (transferModal.type === 'add') {
       if (item.currentStock < transferQuantity) {
@@ -327,6 +348,7 @@ const FridgeStocktake: React.FC = () => {
         await smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', transferQuantity, {
           fridgeId: selectedFridge,
           itemId: item.id,
+          sortOrder,
           lastModified: now
         });
       } catch (error) {
@@ -349,6 +371,7 @@ const FridgeStocktake: React.FC = () => {
             ...newInv[existingIndex],
             id: newInv[existingIndex].id || fridgeInventoryId,
             quantity: newInv[existingIndex].quantity + transferQuantity,
+            sortOrder,
             lastModified: now
           };
           return newInv;
@@ -359,6 +382,7 @@ const FridgeStocktake: React.FC = () => {
           fridgeId: selectedFridge,
           itemId: item.id,
           quantity: transferQuantity,
+          sortOrder,
           lastModified: now
         }];
       });
@@ -455,6 +479,9 @@ const FridgeStocktake: React.FC = () => {
 
     const now = Date.now();
     const fridgeInventoryId = `${selectedFridge}-${item.id}`;
+    const nextSortOrder = fridgeInventory
+      .filter(record => record.fridgeId === selectedFridge)
+      .reduce((max, record) => Math.max(max, Number(record.sortOrder ?? -1)), -1) + 1;
 
     try {
       await smartIncrementField('inventory_items', item.id, 'currentStock', -newItemData.quantity, {
@@ -464,6 +491,7 @@ const FridgeStocktake: React.FC = () => {
       await smartIncrementField('fridge_inventory', fridgeInventoryId, 'quantity', newItemData.quantity, {
         fridgeId: selectedFridge,
         itemId: item.id,
+        sortOrder: nextSortOrder,
         lastModified: now
       });
     } catch (error) {
@@ -480,8 +508,10 @@ const FridgeStocktake: React.FC = () => {
       fridgeId: selectedFridge,
       itemId: item.id,
       quantity: newItemData.quantity,
+      sortOrder: nextSortOrder,
       lastModified: now
     }]);
+    setItemOrder(prev => [...prev.filter(id => id !== item.id), item.id]);
 
     alert(`\u6dfb\u52a0\u6210\u529f\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${newItemData.quantity} ${item.unit}\n\u5df2\u6dfb\u52a0\u5230\uff1a${fridges.find(f => f.id === selectedFridge)?.name}`);
     setShowAddItemModal(false);
@@ -594,7 +624,7 @@ const FridgeStocktake: React.FC = () => {
   };
 
   // 移动商品顺序
-  const moveItem = (itemId: string, direction: 'up' | 'down') => {
+  const moveItem = async (itemId: string, direction: 'up' | 'down') => {
     const index = itemOrder.indexOf(itemId);
     if (index === -1) return;
     
@@ -603,7 +633,41 @@ const FridgeStocktake: React.FC = () => {
     
     const newOrder = [...itemOrder];
     [newOrder[index], newOrder[newIndex]] = [newOrder[newIndex], newOrder[index]];
+    const now = Date.now();
+    const orderUpdates = newOrder
+      .map((orderedItemId, sortOrder) => {
+        const record = fridgeInventory.find(inv =>
+          inv.fridgeId === selectedFridge && inv.itemId === orderedItemId
+        );
+        if (!record) return null;
+        const recordId = record.id || `${record.fridgeId}-${record.itemId}`;
+        return {
+          ...record,
+          id: recordId,
+          sortOrder,
+          lastModified: now,
+        };
+      })
+      .filter((record): record is NonNullable<typeof record> => record !== null);
+
+    try {
+      await Promise.all(
+        orderUpdates.map(record => smartUpdateDocument('fridge_inventory', record.id, record))
+      );
+    } catch (error) {
+      console.error('保存冰箱排序失败:', error);
+      alert('保存冰箱排序失败，请检查网络后重试');
+      return;
+    }
+
     setItemOrder(newOrder);
+    localStorage.setItem(getFridgeItemOrderStorageKey(selectedFridge), JSON.stringify(newOrder));
+    setFridgeInventory(inv => inv.map(record => {
+      const updatedRecord = orderUpdates.find(update =>
+        update.fridgeId === record.fridgeId && update.itemId === record.itemId
+      );
+      return updatedRecord || record;
+    }));
   };
 
   // 导出CSV
@@ -854,9 +918,12 @@ const FridgeStocktake: React.FC = () => {
               <tbody>
                 {(() => {
                   const sortedItems = itemOrder.length > 0 
-                    ? itemOrder
-                        .map(id => fridgeItems.find(item => item.itemId === id))
-                        .filter((item): item is NonNullable<typeof item> => item !== undefined)
+                    ? [
+                        ...itemOrder
+                          .map(id => fridgeItems.find(item => item.itemId === id))
+                          .filter((item): item is NonNullable<typeof item> => item !== undefined),
+                        ...fridgeItems.filter(item => !itemOrder.includes(item.itemId))
+                      ]
                     : fridgeItems;
                   
                   return sortedItems.map((item) => {
@@ -1388,7 +1455,7 @@ const FridgeStocktake: React.FC = () => {
             <div style={{ marginBottom: '1rem' }}>
               <input
                 type="text"
-                placeholder="搜索商品（仅显示饮料/酒水）..."
+                placeholder="搜索商品（Cerveza / Bebida / Jugo）..."
                 value={addSearchTerm}
                 onChange={(e) => setAddSearchTerm(e.target.value)}
                 style={{
@@ -1409,7 +1476,7 @@ const FridgeStocktake: React.FC = () => {
                 return inventoryItems
                   .filter(item => {
                     // ✅ 只允许饮料和酒水进冰箱
-                    const isAllowedCategory = item.category === 'beverage' || item.category === 'alcohol';
+                    const isAllowedCategory = canItemEnterFridge(item, inventoryCategories);
                     // ✅ 只显示未在任何冰箱的商品
                     const notInAnyFridge = !allFridgeItemIds.has(item.id);
                     // ✅ 搜索筛选

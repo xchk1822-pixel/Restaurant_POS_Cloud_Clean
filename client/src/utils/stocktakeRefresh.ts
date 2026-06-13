@@ -20,6 +20,7 @@ export const normalizeFridgeInventoryForRefresh = (records: any[]) => {
   return records.map((record: any) => ({
     ...record,
     quantity: Number(record.quantity) || 0,
+    sortOrder: record.sortOrder === undefined ? undefined : Number(record.sortOrder) || 0,
     lastModified: Number(record.lastModified || 0) || Date.now(),
   }));
 };

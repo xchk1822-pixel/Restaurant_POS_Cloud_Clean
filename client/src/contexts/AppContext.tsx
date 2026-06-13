@@ -104,6 +104,7 @@ export interface FridgeInventory {
   fridgeId: string;
   itemId: string;
   quantity: number;  // 该冰箱中该商品的数量
+  sortOrder?: number;
   lastModified?: number; // 🔥 添加时间戳（用于多设备同步）
 }
 
