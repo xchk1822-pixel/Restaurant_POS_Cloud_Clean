@@ -110,11 +110,24 @@ export const buildFridgeStocktakeHistoryRecords = ({
   now: number;
   date: string;
 }): any[] => {
-  return fridges
-    .map((fridge: any) => {
-      const fridgeRecords = fridgeInventory.filter((record: any) => record.fridgeId === fridge.id);
-      if (fridgeRecords.length === 0) return null;
+  const fridgeNames = new Map<string, string>();
+  fridges.forEach((fridge: any) => {
+    if (fridge?.id) {
+      fridgeNames.set(String(fridge.id), fridge.name || String(fridge.id));
+    }
+  });
 
+  const groupedInventory = new Map<string, any[]>();
+  fridgeInventory.forEach((record: any) => {
+    if (!record?.fridgeId) return;
+    const fridgeId = String(record.fridgeId);
+    const records = groupedInventory.get(fridgeId) || [];
+    records.push(record);
+    groupedInventory.set(fridgeId, records);
+  });
+
+  return Array.from(groupedInventory.entries())
+    .map(([fridgeId, fridgeRecords]) => {
       const items = fridgeRecords.map((record: any) => {
         const warehouseItem = inventoryItems.find((item: any) => item.id === record.itemId);
         const warehouseStock = Number(warehouseItem?.currentStock || 0);
@@ -134,17 +147,16 @@ export const buildFridgeStocktakeHistoryRecords = ({
       });
 
       return {
-        id: `stocktake-${now}-${fridge.id}`,
-        fridgeId: fridge.id,
-        fridgeName: fridge.name,
+        id: `stocktake-${now}-${fridgeId}`,
+        fridgeId,
+        fridgeName: fridgeNames.get(fridgeId) || fridgeRecords[0]?.fridgeName || fridgeId,
         date,
         createdAt: new Date(now),
         lastModified: now,
         items,
         totalDiscrepancies: items.filter(item => item.difference !== 0).length,
       };
-    })
-    .filter(Boolean);
+    });
 };
 
 export const printStocktakeHistory = (elementId: string) => {

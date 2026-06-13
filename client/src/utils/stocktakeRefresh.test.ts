@@ -105,4 +105,28 @@ describe('stocktake refresh helpers', () => {
     expect(records[0].totalDiscrepancies).toBe(1);
     expect(records[1].totalDiscrepancies).toBe(0);
   });
+
+  test('uses fridge inventory as the source of truth when fridge master data is incomplete', () => {
+    const records = buildFridgeStocktakeHistoryRecords({
+      fridges: [
+        { id: 'fridge-2', name: '2号冰箱' },
+      ],
+      fridgeInventory: [
+        { id: 'one-a', fridgeId: 'fridge-1', fridgeName: '1号冰箱', itemId: 'a', itemName: 'Agua', quantity: 4 },
+        { id: 'two-b', fridgeId: 'fridge-2', fridgeName: '2号冰箱', itemId: 'b', itemName: 'Toña', quantity: 8 },
+        { id: 'three-c', fridgeId: 'fridge-3', fridgeName: '3号冰箱', itemId: 'c', itemName: 'Jugo', quantity: 6 },
+      ],
+      inventoryItems: [
+        { id: 'a', name: 'Agua', unit: 'BOT', currentStock: 10 },
+        { id: 'b', name: 'Toña', unit: 'BOT', currentStock: 12 },
+        { id: 'c', name: 'Jugo', unit: 'BOT', currentStock: 5 },
+      ],
+      actualQuantities: { a: 4, b: 7, c: 6 },
+      now: 1000,
+      date: '2026-06-13',
+    });
+
+    expect(records.map(record => record.fridgeId)).toEqual(['fridge-1', 'fridge-2', 'fridge-3']);
+    expect(records.map(record => record.fridgeName)).toEqual(['1号冰箱', '2号冰箱', '3号冰箱']);
+  });
 });
