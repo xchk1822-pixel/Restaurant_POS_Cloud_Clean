@@ -213,10 +213,15 @@ export const calculateFinancialReportTotals = ({
   expenseAmount: number;
   handoverAmount?: number;
 }): { totalSales: number; profit: number; difference?: number } => {
-  const totalSales = roundMoney(toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment));
-  const baseProfit = roundMoney(totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount));
+  const cash = roundMoney(toMoneyNumber(cashPayment));
+  const card = roundMoney(toMoneyNumber(cardPayment));
+  const purchase = toMoneyNumber(purchaseAmount);
+  const expense = toMoneyNumber(expenseAmount);
+  const totalSales = roundMoney(cash + card);
+  const baseProfit = roundMoney(totalSales - purchase - expense);
+  const expectedCashHandover = roundMoney(cash - purchase - expense);
   const difference = handoverAmount !== undefined
-    ? roundMoney(baseProfit - toMoneyNumber(handoverAmount))
+    ? roundMoney(toMoneyNumber(handoverAmount) - expectedCashHandover)
     : undefined;
   const profit = roundMoney(baseProfit + (difference || 0));
 

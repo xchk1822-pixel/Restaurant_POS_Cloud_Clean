@@ -79,7 +79,7 @@ describe('finance metrics helpers', () => {
     expect(getOrderFinancialDateKey({ ...order, paymentStatus: 'unpaid' })).toBe('');
   });
 
-  test('calculates financial report totals with handover difference included in profit loss', () => {
+  test('calculates financial report totals with cash-based handover difference included in profit loss', () => {
     expect(calculateFinancialReportTotals({
       cashPayment: 100,
       cardPayment: 30,
@@ -88,8 +88,8 @@ describe('finance metrics helpers', () => {
       handoverAmount: 95,
     })).toEqual({
       totalSales: 130,
-      profit: 105,
-      difference: 5,
+      profit: 125,
+      difference: 25,
     });
 
     expect(calculateFinancialReportTotals({
@@ -100,8 +100,8 @@ describe('finance metrics helpers', () => {
       handoverAmount: 105,
     })).toEqual({
       totalSales: 130,
-      profit: 95,
-      difference: -5,
+      profit: 135,
+      difference: 35,
     });
 
     expect(calculateFinancialReportTotals({
@@ -112,7 +112,19 @@ describe('finance metrics helpers', () => {
       handoverAmount: 140,
     })).toEqual({
       totalSales: 200,
-      profit: 160,
+      profit: 140,
+      difference: -10,
+    });
+
+    expect(calculateFinancialReportTotals({
+      cashPayment: 500,
+      cardPayment: 500,
+      purchaseAmount: 100,
+      expenseAmount: 100,
+      handoverAmount: 310,
+    })).toEqual({
+      totalSales: 1000,
+      profit: 810,
       difference: 10,
     });
 
@@ -124,8 +136,8 @@ describe('finance metrics helpers', () => {
       handoverAmount: 7850,
     })).toEqual({
       totalSales: 28370,
-      profit: 7809.76,
-      difference: -20.12,
+      profit: 7850,
+      difference: 20.12,
     });
   });
 
