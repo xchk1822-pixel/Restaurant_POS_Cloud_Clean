@@ -330,7 +330,7 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
-  test('financial report totals use cash card expense and profit handover formulas', () => {
+  test('financial report totals use cash card expense and include handover difference in profit loss', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
     const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
@@ -338,15 +338,17 @@ describe('production data safety guards', () => {
 
     expect(source).toContain('calculateFinancialReportTotals({');
     expect(source).toContain('getLatestHandoverAmountForDate(handovers, date)');
-    expect(metricsSource).toContain('const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment)');
-    expect(metricsSource).toContain('const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount)');
+    expect(metricsSource).toContain('const roundMoney =');
+    expect(metricsSource).toContain('const totalSales = roundMoney(toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment))');
+    expect(metricsSource).toContain('const baseProfit = roundMoney(totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount))');
     expect(metricsSource).toContain('const difference = handoverAmount !== undefined');
-    expect(metricsSource).toContain('? profit - toMoneyNumber(handoverAmount)');
-    expect(source).toContain("{'\\u8425\\u4e1a\\u989d - \\u91c7\\u8d2d\\u4ed8\\u6b3e - \\u65e5\\u5e38\\u5f00\\u652f'}");
-    expect(source).toContain("'\\u5229\\u6da6 - \\u5b9e\\u4ea4'");
+    expect(metricsSource).toContain('? roundMoney(baseProfit - toMoneyNumber(handoverAmount))');
+    expect(metricsSource).toContain('const profit = roundMoney(baseProfit + (difference || 0))');
+    expect(source).toContain("{'\\u8425\\u4e1a\\u989d - \\u91c7\\u8d2d\\u4ed8\\u6b3e - \\u65e5\\u5e38\\u5f00\\u652f + \\u8bef\\u5dee'}");
+    expect(source).toContain("'\\u57fa\\u7840\\u76c8\\u4e8f - \\u5b9e\\u4ea4'");
+    expect(source).toContain('\\u76c8\\u4e8f\\uff08\\u542b\\u8bef\\u5dee\\uff09');
+    expect(source).toContain('\\u4f9b\\u5e94\\u5546\\u8d27\\u6b3e\\uff08\\u5f53\\u524d\\u5269\\u4f59\\u6b20\\u6b3e\\uff09');
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
-    expect(source).not.toContain('const profit = baseProfit + (difference || 0)');
-    expect(source).not.toContain('\\u542b\\u8bef\\u5dee');
   });
 
   test('financial reports show expense breakdown only for daily reports and print daily details', () => {
@@ -360,7 +362,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('isDaily ? `');
     expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u548c\\u91c7\\u8d2d\\u5355\\u660e\\u7ec6');
     expect(source).toContain('\\u4ea4\\u73ed\\u8bef\\u5dee');
-    expect(source).toContain('\\u5229\\u6da6 - \\u5b9e\\u4ea4');
+    expect(source).toContain('\\u57fa\\u7840\\u76c8\\u4e8f - \\u5b9e\\u4ea4');
     expect(source).toContain('\\u5355\\u53f7/\\u7c7b\\u522b');
     expect(source).toContain('\\u5546\\u54c1/\\u8bf4\\u660e');
     expect(source).toContain('difference-box');

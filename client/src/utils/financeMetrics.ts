@@ -13,6 +13,8 @@ const toMoneyNumber = (value: any): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
 export interface ExpenseReportDetail {
   id: string;
   dateKey: string;
@@ -211,11 +213,12 @@ export const calculateFinancialReportTotals = ({
   expenseAmount: number;
   handoverAmount?: number;
 }): { totalSales: number; profit: number; difference?: number } => {
-  const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment);
-  const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount);
+  const totalSales = roundMoney(toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment));
+  const baseProfit = roundMoney(totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount));
   const difference = handoverAmount !== undefined
-    ? profit - toMoneyNumber(handoverAmount)
+    ? roundMoney(baseProfit - toMoneyNumber(handoverAmount))
     : undefined;
+  const profit = roundMoney(baseProfit + (difference || 0));
 
   return {
     totalSales,
