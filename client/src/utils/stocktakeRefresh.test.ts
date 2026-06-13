@@ -1,4 +1,5 @@
 import {
+  buildFridgeStocktakeHistoryRecords,
   formatStocktakeRecordDateTime,
   getStocktakeRecordDateKey,
   normalizeFridgeInventoryForRefresh,
@@ -64,5 +65,44 @@ describe('stocktake refresh helpers', () => {
 
     expect(result.map(record => record.id)).toEqual(['new', 'middle', 'old']);
     expect(result[0].date).toBe('2026-06-13');
+  });
+
+  test('builds one fridge stocktake history record for each fridge', () => {
+    const records = buildFridgeStocktakeHistoryRecords({
+      fridges: [
+        { id: 'beer', name: '1号冰箱' },
+        { id: 'drink', name: '2号冰箱' },
+      ],
+      fridgeInventory: [
+        { id: 'beer-a', fridgeId: 'beer', itemId: 'a', quantity: 10 },
+        { id: 'drink-b', fridgeId: 'drink', itemId: 'b', quantity: 5 },
+      ],
+      inventoryItems: [
+        { id: 'a', name: 'Toña', unit: 'BOT', currentStock: 20 },
+        { id: 'b', name: 'Coca Cola', unit: 'BOT', currentStock: 30 },
+      ],
+      actualQuantities: { a: 8, b: 5 },
+      now: 1000,
+      date: '2026-06-13',
+    });
+
+    expect(records).toHaveLength(2);
+    expect(records.map(record => record.fridgeId)).toEqual(['beer', 'drink']);
+    expect(records[0].items[0]).toMatchObject({
+      itemId: 'a',
+      itemName: 'Toña',
+      systemStock: 10,
+      actualStock: 8,
+      difference: -2,
+    });
+    expect(records[1].items[0]).toMatchObject({
+      itemId: 'b',
+      itemName: 'Coca Cola',
+      systemStock: 5,
+      actualStock: 5,
+      difference: 0,
+    });
+    expect(records[0].totalDiscrepancies).toBe(1);
+    expect(records[1].totalDiscrepancies).toBe(0);
   });
 });

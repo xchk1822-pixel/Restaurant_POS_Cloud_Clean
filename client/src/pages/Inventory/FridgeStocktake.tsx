@@ -5,6 +5,7 @@ import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDo
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import {
+  buildFridgeStocktakeHistoryRecords,
   formatStocktakeRecordDateTime,
   getStocktakeRecordDateKey,
   normalizeFridgeInventoryForRefresh,
@@ -13,6 +14,7 @@ import {
   normalizeStocktakeHistoryForRefresh,
   saveFridgeRefreshCache,
   saveInventoryRefreshCache,
+  printStocktakeHistory,
   sortStocktakeHistoryRecords,
 } from '../../utils/stocktakeRefresh';
 import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory';
@@ -193,17 +195,6 @@ const FridgeStocktake: React.FC = () => {
 
   // 初始化：加载实际数量和排序
   useEffect(() => {
-    // ✅ 初始化实际数量（清空，等待人工清点）
-    const initial: Record<string, number> = {};
-    fridgeItems.forEach(item => {
-      // 只保留之前的输入值，不清空
-      if (actualQuantities[item.itemId] !== undefined) {
-        initial[item.itemId] = actualQuantities[item.itemId];
-      }
-      // 新商品或清空后，默认为空（null表示未盘点）
-    });
-    setActualQuantities(initial);
-    
     // 加载或初始化排序
     const loadOrder = () => {
       try {
@@ -554,7 +545,17 @@ const FridgeStocktake: React.FC = () => {
   };
   const completeStocktake = async () => {
     // ✅ 检查是否有未清点的商品
-    const uncountedItems = fridgeItems.filter(item => actualQuantities[item.itemId] === undefined);
+    const allFridgeItems = fridgeInventory.map(inv => {
+      const item = inventoryItems.find(i => i.id === inv.itemId);
+      const fridge = fridges.find(f => f.id === inv.fridgeId);
+      return {
+        ...inv,
+        itemName: item?.name || (inv as any).itemName || '未知商品',
+        unit: item?.unit || (inv as any).unit || '',
+        fridgeName: fridge?.name || '未知冰箱',
+      };
+    });
+    const uncountedItems = allFridgeItems.filter(item => actualQuantities[item.itemId] === undefined);
     
     if (uncountedItems.length > 0) {
       alert(`⚠️ 还有 ${uncountedItems.length} 个商品未清点：\n${uncountedItems.map(item => '• ' + item.itemName).join('\n')}\n\n请完成所有商品的清点后再确认`);
@@ -564,12 +565,12 @@ const FridgeStocktake: React.FC = () => {
     const discrepancies: any[] = [];
     let hasDifference = false;
 
-    fridgeItems.forEach(item => {
+    allFridgeItems.forEach(item => {
       const actual = actualQuantities[item.itemId] ?? 0;
       const difference = actual - item.quantity;
       if (difference !== 0) {
         discrepancies.push({
-          itemName: item.itemName,
+          itemName: `${item.fridgeName} - ${item.itemName}`,
           systemStock: item.quantity,
           actualStock: actual,
           difference
@@ -593,7 +594,7 @@ const FridgeStocktake: React.FC = () => {
 
     // 更新冰箱库存
     const newInventory = fridgeInventory.map(inv => {
-      if (inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined) {
+      if (actualQuantities[inv.itemId] !== undefined) {
         return {
           ...inv,
           id: inv.id || `${inv.fridgeId}-${inv.itemId}`,
@@ -605,7 +606,7 @@ const FridgeStocktake: React.FC = () => {
     });
 
     const updatedFridgeRecords = newInventory.filter(inv =>
-      inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined
+      actualQuantities[inv.itemId] !== undefined
     );
     await Promise.all(
       updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))
@@ -615,10 +616,18 @@ const FridgeStocktake: React.FC = () => {
     try {
       const saved = localStorage.getItem(stocktakeHistoryStorageKey);
       const history = saved ? JSON.parse(saved) : [];
-      const stocktakeRecord = {
+      const stocktakeRecords = buildFridgeStocktakeHistoryRecords({
+        fridges,
+        fridgeInventory,
+        inventoryItems,
+        actualQuantities,
+        now,
+        date: getLocalDateString(),
+      });
+      const stocktakeRecord = stocktakeRecords[0] || {
         id: `stocktake-${Date.now()}`,
-        fridgeId: selectedFridge,
-        fridgeName: fridges.find(f => f.id === selectedFridge)?.name,
+        fridgeId: 'all-fridges',
+        fridgeName: 'All Fridges',
         date: getLocalDateString(), // 🔥 使用本地时间
         createdAt: new Date(),
         lastModified: now,
@@ -642,10 +651,13 @@ const FridgeStocktake: React.FC = () => {
         }),
         totalDiscrepancies: discrepancies.length
       };
-      await smartAddDocument('fridge_stocktake_history', stocktakeRecord);
+      const recordsToSave = stocktakeRecords.length > 0 ? stocktakeRecords : [stocktakeRecord];
+      await Promise.all(
+        recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))
+      );
 
       setFridgeInventory(newInventory);
-      cacheStocktakeHistory([stocktakeRecord, ...history]);
+      cacheStocktakeHistory([...recordsToSave, ...history]);
     } catch (error) {
       console.error('保存盘点历史失败:', error);
       alert('\u4fdd\u5b58\u76d8\u70b9\u7ed3\u679c\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
@@ -1805,10 +1817,10 @@ const FridgeStocktake: React.FC = () => {
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden'
-          }} className="print-container">
+          }} id="fridge-stocktake-print" className="print-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ margin: 0 }}>📋 今日盘点汇总</h3>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.75rem' }}>
                 <input
                   type="date"
                   value={selectedHistoryDate}
@@ -1835,7 +1847,7 @@ const FridgeStocktake: React.FC = () => {
                   📥 导出CSV
                 </button>
                 <button
-                  onClick={() => window.print()}
+                  onClick={() => printStocktakeHistory('fridge-stocktake-print')}
                   style={{
                     padding: '0.4rem 0.8rem',
                     backgroundColor: '#3b82f6',
@@ -1998,7 +2010,7 @@ if (typeof document !== 'undefined') {
         margin: 10mm;
       }
       
-      body > *:not(.print-container) {
+      .stocktake-print-actions {
         display: none !important;
       }
       

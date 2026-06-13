@@ -9,6 +9,7 @@ import {
   getStocktakeRecordDateKey,
   normalizeInventoryItemsForRefresh,
   normalizeStocktakeHistoryForRefresh,
+  printStocktakeHistory,
   saveInventoryRefreshCache,
   sortStocktakeHistoryRecords,
 } from '../../utils/stocktakeRefresh';
@@ -523,10 +524,10 @@ const WarehouseStocktake: React.FC = () => {
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden'
-            }} className="print-container">
+            }} id="warehouse-stocktake-print" className="print-container">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h3 style={{ margin: 0 }}>📋 今日盘点汇总</h3>
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.75rem' }}>
                   <input
                     type="date"
                     value={selectedHistoryDate}
@@ -553,7 +554,7 @@ const WarehouseStocktake: React.FC = () => {
                     📥 导出CSV
                   </button>
                   <button
-                    onClick={() => window.print()}
+                    onClick={() => printStocktakeHistory('warehouse-stocktake-print')}
                     style={{
                       padding: '0.4rem 0.8rem',
                       backgroundColor: '#3b82f6',
@@ -712,7 +713,7 @@ if (typeof document !== 'undefined') {
         margin: 10mm;
       }
       
-      body > *:not(.print-container) {
+      .stocktake-print-actions {
         display: none !important;
       }
       

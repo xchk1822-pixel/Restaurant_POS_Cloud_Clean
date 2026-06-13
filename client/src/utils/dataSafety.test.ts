@@ -629,13 +629,30 @@ describe('production data safety guards', () => {
     expect(warehouseCompleteBlock).toContain("await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)))");
     expect(fridgeCompleteBlock).toContain("updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))");
     expect(warehouseCompleteBlock).toContain("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)");
-    expect(fridgeCompleteBlock).toContain("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)");
+    expect(fridgeCompleteBlock).toContain("recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))");
     expect(warehouseCompleteBlock.indexOf("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)")).toBeLessThan(
       warehouseCompleteBlock.indexOf('cacheStocktakeHistory([stocktakeRecord, ...history])')
     );
-    expect(fridgeCompleteBlock.indexOf("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)")).toBeLessThan(
-      fridgeCompleteBlock.indexOf('cacheStocktakeHistory([stocktakeRecord, ...history])')
+    expect(fridgeCompleteBlock.indexOf("recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))")).toBeLessThan(
+      fridgeCompleteBlock.indexOf('cacheStocktakeHistory([...recordsToSave, ...history])')
     );
+  });
+
+  test('fridge stocktake completion records all fridges instead of only selected fridge', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+    const completeBlock = source.slice(
+      source.indexOf('const completeStocktake = async'),
+      source.indexOf('const moveItem')
+    );
+
+    expect(completeBlock).toContain('const allFridgeItems = fridgeInventory.map');
+    expect(completeBlock).toContain('buildFridgeStocktakeHistoryRecords({');
+    expect(completeBlock).toContain('cacheStocktakeHistory([...recordsToSave, ...history])');
+    expect(completeBlock).not.toContain('const uncountedItems = fridgeItems.filter');
+    expect(completeBlock).not.toContain('fridgeId: selectedFridge');
+    expect(completeBlock).not.toContain('inv.fridgeId === selectedFridge && actualQuantities[inv.itemId] !== undefined');
+    expect(source).not.toContain('setActualQuantities(initial)');
   });
 
   test('stocktake history modal refreshes cloud history and keeps local date keys', () => {
@@ -659,6 +676,20 @@ describe('production data safety guards', () => {
     const rules = fs.readFileSync(rulesPath, 'utf8');
     expect(rules).toContain('match /stores/{storeId}/warehouse_stocktake_history/{historyId}');
     expect(rules).toContain('match /stores/{storeId}/fridge_stocktake_history/{historyId}');
+  });
+
+  test('stocktake history print uses modal content instead of hiding the React root', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+
+    expect(warehouseSource).toContain("printStocktakeHistory('warehouse-stocktake-print')");
+    expect(fridgeSource).toContain("printStocktakeHistory('fridge-stocktake-print')");
+    expect(warehouseSource).not.toContain('body > *:not(.print-container)');
+    expect(fridgeSource).not.toContain('body > *:not(.print-container)');
+    expect(warehouseSource).not.toContain('onClick={() => window.print()}');
+    expect(fridgeSource).not.toContain('onClick={() => window.print()}');
   });
 
   test('fridge creation waits for deterministic cloud write before local state update', () => {

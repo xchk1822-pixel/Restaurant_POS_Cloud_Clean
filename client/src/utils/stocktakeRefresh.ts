@@ -94,3 +94,98 @@ export const normalizeStocktakeHistoryForRefresh = (records: any[]) => {
     lastModified: Number(record.lastModified || 0) || getStocktakeTimestamp(record) || Date.now(),
   })));
 };
+
+export const buildFridgeStocktakeHistoryRecords = ({
+  fridges,
+  fridgeInventory,
+  inventoryItems,
+  actualQuantities,
+  now,
+  date,
+}: {
+  fridges: any[];
+  fridgeInventory: any[];
+  inventoryItems: any[];
+  actualQuantities: Record<string, number>;
+  now: number;
+  date: string;
+}): any[] => {
+  return fridges
+    .map((fridge: any) => {
+      const fridgeRecords = fridgeInventory.filter((record: any) => record.fridgeId === fridge.id);
+      if (fridgeRecords.length === 0) return null;
+
+      const items = fridgeRecords.map((record: any) => {
+        const warehouseItem = inventoryItems.find((item: any) => item.id === record.itemId);
+        const warehouseStock = Number(warehouseItem?.currentStock || 0);
+        const fridgeStock = Number(record.quantity || 0);
+        const actualStock = Number(actualQuantities[record.itemId] ?? 0);
+
+        return {
+          itemId: record.itemId,
+          itemName: warehouseItem?.name || record.itemName || '未知商品',
+          unit: warehouseItem?.unit || record.unit || '',
+          totalStock: warehouseStock + fridgeStock,
+          warehouseStock,
+          systemStock: fridgeStock,
+          actualStock,
+          difference: actualStock - fridgeStock,
+        };
+      });
+
+      return {
+        id: `stocktake-${now}-${fridge.id}`,
+        fridgeId: fridge.id,
+        fridgeName: fridge.name,
+        date,
+        createdAt: new Date(now),
+        lastModified: now,
+        items,
+        totalDiscrepancies: items.filter(item => item.difference !== 0).length,
+      };
+    })
+    .filter(Boolean);
+};
+
+export const printStocktakeHistory = (elementId: string) => {
+  const source = document.getElementById(elementId);
+  if (!source) {
+    window.print();
+    return;
+  }
+
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Stocktake History</title>
+        <style>
+          @page { size: A4; margin: 10mm; }
+          body { font-family: Arial, "Microsoft YaHei", sans-serif; color: #111827; margin: 0; }
+          h3 { font-size: 14pt; margin: 0 0 8px 0; }
+          .stocktake-print-actions, button, input[type="date"] { display: none !important; }
+          div { max-height: none !important; overflow: visible !important; }
+          table { width: 100% !important; border-collapse: collapse !important; font-size: 9pt !important; }
+          tr { page-break-inside: avoid; }
+          thead { display: table-header-group; }
+          th, td { border: 1px solid #111827 !important; padding: 4px 6px !important; font-size: 9pt !important; }
+          th { background: #f3f4f6 !important; font-weight: 700 !important; }
+        </style>
+      </head>
+      <body>${source.innerHTML}</body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 250);
+};
