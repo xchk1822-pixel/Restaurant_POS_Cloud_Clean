@@ -420,8 +420,12 @@ describe('production data safety guards', () => {
     const source = fs.readFileSync(menuPath, 'utf8');
 
     expect(source).toContain('const [menuSearchTerm, setMenuSearchTerm] = useState');
+    expect(source).toContain('const [selectedMenuCategory, setSelectedMenuCategory] = useState');
+    expect(source).toContain('const menuCategoryOptions = Array.from');
     expect(source).toContain('const filteredMenuItems = menuItems.filter');
     expect(source).toContain('placeholder="搜索菜品名称、分类或价格"');
+    expect(source).toContain('value={selectedMenuCategory}');
+    expect(source).toContain('<option value="all">全部类别</option>');
     expect(source).toContain('filteredMenuItems.map(menu =>');
     expect(source).toContain('menuItems.map(m =>');
     expect(source).toContain("await smartUpdateDocument('menu_items', menu.id, updatedMenu)");

@@ -57,6 +57,7 @@ const MenuManagement: React.FC = () => {
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [menuSearchTerm, setMenuSearchTerm] = useState('');
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState('all');
   
   // 从 localStorage 加载分类配置
   useEffect(() => {
@@ -113,7 +114,13 @@ const MenuManagement: React.FC = () => {
   };
 
   const normalizedMenuSearchTerm = menuSearchTerm.trim().toLowerCase();
+  const menuCategoryOptions = Array.from(new Set([
+    ...categories,
+    ...menuItems.map(menu => menu.category).filter(Boolean),
+  ]));
   const filteredMenuItems = menuItems.filter(menu => {
+    const matchesCategory = selectedMenuCategory === 'all' || menu.category === selectedMenuCategory;
+    if (!matchesCategory) return false;
     if (!normalizedMenuSearchTerm) return true;
 
     return [
@@ -220,7 +227,7 @@ const MenuManagement: React.FC = () => {
           padding: '0.85rem 1rem',
           borderBottom: '1px solid #e5e7eb',
           display: 'grid',
-          gridTemplateColumns: '1fr auto',
+          gridTemplateColumns: 'minmax(240px, 1fr) minmax(180px, 240px) auto',
           gap: '0.75rem',
           alignItems: 'center',
           backgroundColor: '#f9fafb'
@@ -239,13 +246,36 @@ const MenuManagement: React.FC = () => {
               boxSizing: 'border-box'
             }}
           />
+          <select
+            value={selectedMenuCategory}
+            onChange={(e) => setSelectedMenuCategory(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '0.6rem 0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '0.375rem',
+              fontSize: '0.9rem',
+              backgroundColor: 'white',
+              boxSizing: 'border-box'
+            }}
+          >
+            <option value="all">全部类别</option>
+            {menuCategoryOptions.map(categoryName => (
+              <option key={categoryName} value={categoryName}>
+                {categoryName} ({menuItems.filter(menu => menu.category === categoryName).length})
+              </option>
+            ))}
+          </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
               显示 {filteredMenuItems.length} / {menuItems.length}
             </span>
-            {menuSearchTerm && (
+            {(menuSearchTerm || selectedMenuCategory !== 'all') && (
               <button
-                onClick={() => setMenuSearchTerm('')}
+                onClick={() => {
+                  setMenuSearchTerm('');
+                  setSelectedMenuCategory('all');
+                }}
                 style={{
                   padding: '0.5rem 0.75rem',
                   backgroundColor: '#e5e7eb',
