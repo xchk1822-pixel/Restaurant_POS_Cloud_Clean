@@ -237,7 +237,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     supplierDebt: supplierDebtTotal
   }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
-    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate, expenseCategories)
+    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate, expenseCategories, dataManager.getData('purchases'))
     : { summaries: [], details: [], groups: [] };
 
   const styles = {
@@ -398,16 +398,18 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     const expenseGroupRows = dailyExpenseBreakdown.groups.map(group => `
       <tr class="group-row">
-        <td colspan="3"><strong>${htmlEscape(group.typeLabel)} - ${htmlEscape(group.title)}</strong></td>
+        <td colspan="5"><strong>${htmlEscape(group.typeLabel)} - ${htmlEscape(group.title)}</strong></td>
         <td class="num"><strong>${group.count}</strong></td>
         <td class="num"><strong>${money(group.amount)}</strong></td>
       </tr>
       ${group.details.map((expense, index) => `
       <tr class="detail-row">
-        <td></td>
         <td>${index + 1}</td>
         <td>${htmlEscape(expense.typeLabel)}</td>
+        <td>${htmlEscape(expense.orderNumber || expense.category || '-')}</td>
         <td>${htmlEscape(expense.description || '-')}</td>
+        <td class="num">${expense.quantity !== undefined ? expense.quantity : '-'}</td>
+        <td class="num">${expense.unitPrice !== undefined ? money(expense.unitPrice) : '-'}</td>
         <td class="num">${money(expense.amount)}</td>
       </tr>
       `).join('')}
@@ -468,7 +470,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e</div><div class="value">${money(summary.supplierDebt)}</div></div>
           <div class="box"><div class="label">\u5229\u6da6</div><div class="value">${money(summary.profit)}</div></div>
           <div class="box"><div class="label">\u5b9e\u4ea4\u73b0\u91d1</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
-          <div class="box difference-box"><div class="label">\u73b0\u91d1\u8bef\u5dee\uff08\u73b0\u91d1-\u5b9e\u4ea4\uff09</div><div class="value difference-value ${printDifferenceClass}">${summary.hasHandover ? signedMoney(summary.difference) : '\u672a\u4ea4\u73ed'}</div></div>
+          <div class="box difference-box"><div class="label">\u4ea4\u73ed\u8bef\u5dee\uff08\u5229\u6da6-\u5b9e\u4ea4\uff09</div><div class="value difference-value ${printDifferenceClass}">${summary.hasHandover ? signedMoney(summary.difference) : '\u672a\u4ea4\u73ed'}</div></div>
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
@@ -476,10 +478,10 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
-          <h2>\u5f53\u5929\u5f00\u652f\u660e\u7ec6\u6c47\u603b</h2>
+          <h2>\u5f53\u5929\u5f00\u652f\u548c\u91c7\u8d2d\u5355\u660e\u7ec6</h2>
           <table>
-            <thead><tr><th style="width: 24px;"></th><th style="width: 40px;">#</th><th style="width: 110px;">\u7c7b\u578b</th><th>\u660e\u7ec6</th><th style="width: 110px;">\u91d1\u989d</th></tr></thead>
-            <tbody>${expenseGroupRows || '<tr><td colspan="5" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
+            <thead><tr><th style="width: 32px;">#</th><th style="width: 78px;">\u7c7b\u578b</th><th style="width: 96px;">\u5355\u53f7/\u7c7b\u522b</th><th>\u5546\u54c1/\u8bf4\u660e</th><th style="width: 58px;">\u6570\u91cf</th><th style="width: 76px;">\u5355\u4ef7</th><th style="width: 88px;">\u91d1\u989d</th></tr></thead>
+            <tbody>${expenseGroupRows || '<tr><td colspan="7" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
           </table>
         ` : ''}
         <div class="footer"><div class="sign">\u5236\u8868\u4eba</div><div class="sign">\u5ba1\u6838\u4eba</div></div>
@@ -540,7 +542,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
             <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u5229\u6da6'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f'} | {'\u5229\u6da6\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#64748b', '#64748b')}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue('#64748b')}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
-            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981', summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}><div style={styles.statLabel}>{'\u73b0\u91d1\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u73b0\u91d1 - \u5b9e\u4ea4'}</div></div>
+            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981', summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5229\u6da6 - \u5b9e\u4ea4'}</div></div>
           </div>
 
           <div style={styles.card}>
@@ -588,7 +590,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           {reportType === 'daily' && (
             <>
               <div style={styles.card}>
-                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u660e\u7ec6\u6c47\u603b'}</div>
+                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u548c\u91c7\u8d2d\u5355\u660e\u7ec6'}</div>
                 {dailyExpenseBreakdown.groups.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
                 ) : (
@@ -596,10 +598,12 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                     <table style={styles.table}>
                       <thead>
                         <tr>
-                          <th style={styles.th}></th>
                           <th style={{ ...styles.th, width: '4rem' }}>#</th>
                           <th style={styles.th}>{'\u7c7b\u578b'}</th>
-                          <th style={styles.th}>{'\u660e\u7ec6'}</th>
+                          <th style={styles.th}>{'\u5355\u53f7/\u7c7b\u522b'}</th>
+                          <th style={styles.th}>{'\u5546\u54c1/\u8bf4\u660e'}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u6570\u91cf'}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5355\u4ef7'}</th>
                           <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91d1\u989d'}</th>
                         </tr>
                       </thead>
@@ -607,7 +611,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                         {dailyExpenseBreakdown.groups.map((group, groupIndex) => (
                           <React.Fragment key={`${group.type}-${group.category}-${groupIndex}`}>
                             <tr>
-                              <td style={{ ...styles.td, background: '#f9fafb' }} colSpan={3}>
+                              <td style={{ ...styles.td, background: '#f9fafb' }} colSpan={5}>
                                 <strong>{group.typeLabel} - {group.title}</strong>
                               </td>
                               <td style={{ ...styles.td, background: '#f9fafb', color: '#6b7280' }}>
@@ -619,10 +623,12 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                             </tr>
                             {group.details.map((expense, index) => (
                               <tr key={expense.id || `${groupIndex}-${index}`}>
-                                <td style={styles.td}></td>
                                 <td style={styles.td}>{index + 1}</td>
                                 <td style={styles.td}>{expense.typeLabel}</td>
+                                <td style={styles.td}>{expense.orderNumber || expense.category}</td>
                                 <td style={styles.td}>{expense.description}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{expense.quantity !== undefined ? expense.quantity : '-'}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{expense.unitPrice !== undefined ? money(expense.unitPrice) : '-'}</td>
                                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(expense.amount)}</td>
                               </tr>
                             ))}

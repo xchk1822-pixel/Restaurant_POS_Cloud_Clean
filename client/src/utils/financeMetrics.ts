@@ -22,6 +22,10 @@ export interface ExpenseReportDetail {
   description: string;
   amount: number;
   createdAt: string;
+  supplierName?: string;
+  orderNumber?: string;
+  quantity?: number;
+  unitPrice?: number;
 }
 
 export interface ExpenseReportSummary {
@@ -80,41 +84,104 @@ const getExpenseCategoryLabel = (
   return getExpenseTypeLabel(type);
 };
 
+const normalizeText = (value: any): string => String(value || '').trim();
+
+const findMatchingPurchaseOrder = (expense: any, purchaseOrders: any[]): any | undefined => {
+  const expenseOrderId = normalizeText(expense?.orderId || expense?.purchaseOrderId);
+  const expenseOrderNumber = normalizeText(expense?.orderNumber || expense?.invoiceNumber);
+  const expenseSupplierId = normalizeText(expense?.supplierId);
+  const expenseSupplierName = normalizeText(expense?.supplierName);
+
+  return purchaseOrders.find((order: any) => {
+    const orderId = normalizeText(order?.id);
+    const orderNumber = normalizeText(order?.orderNumber || order?.invoiceNumber);
+    const supplierId = normalizeText(order?.supplierId);
+    const supplierName = normalizeText(order?.supplierName);
+
+    if (expenseOrderId && orderId === expenseOrderId) return true;
+    if (!expenseOrderNumber || orderNumber !== expenseOrderNumber) return false;
+    if (expenseSupplierId && supplierId) return expenseSupplierId === supplierId;
+    if (expenseSupplierName && supplierName) return expenseSupplierName === supplierName;
+    return true;
+  });
+};
+
+const buildExpenseDetailRows = (
+  expense: any,
+  date: string,
+  type: 'purchase' | 'operating',
+  typeLabel: string,
+  category: string,
+  purchaseOrders: any[]
+): ExpenseReportDetail[] => {
+  const baseDetail = {
+    id: String(expense?.id || ''),
+    dateKey: date,
+    type,
+    typeLabel,
+    category,
+    createdAt: String(expense?.createdAt || expense?.updatedAt || expense?.date || expense?.id || ''),
+    supplierName: normalizeText(expense?.supplierName) || undefined,
+    orderNumber: normalizeText(expense?.orderNumber || expense?.invoiceNumber) || undefined,
+  };
+
+  if (type === 'purchase') {
+    const order = findMatchingPurchaseOrder(expense, purchaseOrders);
+    const orderItems = Array.isArray(order?.items) ? order.items : [];
+    if (orderItems.length > 0) {
+      return orderItems.map((item: any, index: number) => ({
+        ...baseDetail,
+        id: `${baseDetail.id || order?.id || 'purchase'}-${index}`,
+        category: getExpenseCategoryLabel({ ...expense, supplierName: order?.supplierName || expense?.supplierName, orderNumber: order?.orderNumber || expense?.orderNumber }, type, []),
+        description: String(item?.itemName || item?.name || '-'),
+        amount: toMoneyNumber(item?.subtotal ?? (toMoneyNumber(item?.quantity) * toMoneyNumber(item?.unitPrice))),
+        supplierName: normalizeText(order?.supplierName || expense?.supplierName) || undefined,
+        orderNumber: normalizeText(order?.orderNumber || expense?.orderNumber || expense?.invoiceNumber) || undefined,
+        quantity: toMoneyNumber(item?.quantity),
+        unitPrice: toMoneyNumber(item?.unitPrice),
+      }));
+    }
+  }
+
+  return [{
+    ...baseDetail,
+    description: String(expense?.description || expense?.note || expense?.supplierName || '-'),
+    amount: toMoneyNumber(expense?.amount),
+  }];
+};
+
 export const buildDailyExpenseBreakdown = (
   expenses: any[],
   date: string,
-  categories: any[] = []
+  categories: any[] = [],
+  purchaseOrders: any[] = []
 ): { summaries: ExpenseReportSummary[]; details: ExpenseReportDetail[]; groups: ExpenseReportGroup[] } => {
-  const details = expenses
-    .filter((expense: any) => getExpenseDateKey(expense) === date)
-    .map((expense: any): ExpenseReportDetail => {
+  const filteredExpenses = expenses.filter((expense: any) => getExpenseDateKey(expense) === date);
+  const details = filteredExpenses
+    .flatMap((expense: any): ExpenseReportDetail[] => {
       const type = getExpenseType(expense);
-      return {
-        id: String(expense?.id || ''),
-        dateKey: date,
-        type,
-        typeLabel: getExpenseTypeLabel(type),
-        category: getExpenseCategoryLabel(expense, type, categories),
-        description: String(expense?.description || expense?.note || expense?.supplierName || '-'),
-        amount: toMoneyNumber(expense?.amount),
-        createdAt: String(expense?.createdAt || expense?.updatedAt || expense?.date || expense?.id || ''),
-      };
+      const typeLabel = getExpenseTypeLabel(type);
+      const category = getExpenseCategoryLabel(expense, type, categories);
+      return buildExpenseDetailRows(expense, date, type, typeLabel, category, purchaseOrders);
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const summaryMap = new Map<string, ExpenseReportSummary>();
-  details.forEach(detail => {
-    const key = `${detail.type}|${detail.category}`;
+  filteredExpenses.forEach(expense => {
+    const type = getExpenseType(expense);
+    const typeLabel = getExpenseTypeLabel(type);
+    const category = getExpenseCategoryLabel(expense, type, categories);
+    const key = `${type}|${category}`;
     const current = summaryMap.get(key) || {
-      type: detail.type,
-      typeLabel: detail.typeLabel,
-      category: detail.category,
+      type,
+      typeLabel,
+      category,
       count: 0,
       amount: 0,
     };
 
     current.count += 1;
-    current.amount += detail.amount;
+    current.amount += toMoneyNumber(expense?.amount);
     summaryMap.set(key, current);
   });
 
@@ -147,7 +214,7 @@ export const calculateFinancialReportTotals = ({
   const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment);
   const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount);
   const difference = handoverAmount !== undefined
-    ? toMoneyNumber(cashPayment) - toMoneyNumber(handoverAmount)
+    ? profit - toMoneyNumber(handoverAmount)
     : undefined;
 
   return {

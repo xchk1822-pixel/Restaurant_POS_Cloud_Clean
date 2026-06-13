@@ -103,6 +103,18 @@ describe('finance metrics helpers', () => {
       profit: 100,
       difference: -5,
     });
+
+    expect(calculateFinancialReportTotals({
+      cashPayment: 200,
+      cardPayment: 0,
+      purchaseAmount: 50,
+      expenseAmount: 0,
+      handoverAmount: 140,
+    })).toEqual({
+      totalSales: 200,
+      profit: 150,
+      difference: 10,
+    });
   });
 
   test('uses latest handover amount for the report date', () => {
@@ -151,6 +163,16 @@ describe('finance metrics helpers', () => {
     ], '2026-06-12', [
       { id: 'cat-rent', name: '租金' },
       { id: 'supplier_payment', name: '供应商货款' },
+    ], [
+      {
+        id: 'po-1',
+        orderNumber: 'INV-001',
+        supplierName: 'A供应商饮料',
+        items: [
+          { itemName: 'Coca Cola', quantity: 2, unitPrice: 35, subtotal: 70 },
+          { itemName: 'Toña', quantity: 1, unitPrice: 30, subtotal: 30 },
+        ],
+      },
     ]);
 
     expect(breakdown.summaries).toEqual([
@@ -162,10 +184,19 @@ describe('finance metrics helpers', () => {
       amount: group.amount,
       descriptions: group.details.map(detail => detail.description),
     }))).toEqual([
-      { title: 'A供应商饮料 - 单号 INV-001', amount: 100, descriptions: ['Supplier A'] },
+      { title: 'A供应商饮料 - 单号 INV-001', amount: 100, descriptions: ['Coca Cola', 'Toña'] },
       { title: '租金', amount: 50, descriptions: ['追加', '店租'] },
     ]);
-    expect(breakdown.details.map(detail => detail.description)).toEqual(['追加', '店租', 'Supplier A']);
+    expect(breakdown.details.map(detail => detail.description)).toEqual(['追加', '店租', 'Coca Cola', 'Toña']);
     expect(breakdown.details.map(detail => detail.category)).not.toContain('cat-rent');
+    expect(breakdown.groups[0].details.map(detail => ({
+      orderNumber: detail.orderNumber,
+      quantity: detail.quantity,
+      unitPrice: detail.unitPrice,
+      amount: detail.amount,
+    }))).toEqual([
+      { orderNumber: 'INV-001', quantity: 2, unitPrice: 35, amount: 70 },
+      { orderNumber: 'INV-001', quantity: 1, unitPrice: 30, amount: 30 },
+    ]);
   });
 });
