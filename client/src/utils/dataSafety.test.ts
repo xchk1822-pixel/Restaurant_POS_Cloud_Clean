@@ -602,7 +602,7 @@ describe('production data safety guards', () => {
     );
     expect(editBlock).toContain("await smartUpdateDocument('menu_items', menuItem.id");
     expect(editBlock.indexOf("await smartUpdateDocument('menu_items', menuItem.id")).toBeLessThan(
-      editBlock.indexOf('setMenuItems(items => items.map')
+      editBlock.indexOf('setMenuItems(items =>')
     );
     expect(editBlock).not.toContain("smartUpdateDocument('menu_items', menuItem.id, {");
     expect(editBlock).not.toContain('.catch(error =>');
@@ -616,6 +616,24 @@ describe('production data safety guards', () => {
       addBlock.indexOf('setMenuItems([...menuItems, newMenuItem])')
     );
     expect(addBlock).not.toContain("smartAddDocument('menu_items', newMenuItem).catch");
+  });
+
+  test('sellable fridge inventory items are guaranteed to have linked menu items', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+    const editStart = source.indexOf('const updatedInventoryItem = {');
+    const addStart = source.indexOf('const newItem: InventoryItem = {');
+    const editBlock = source.slice(editStart, addStart);
+    const addBlock = source.slice(addStart, source.indexOf('setShowAddModal(false);', addStart));
+
+    expect(source).toContain('const SELLABLE_DIRECT_MENU_CATEGORY_KEYS');
+    expect(source).toContain('const isDirectMenuInventoryCategory');
+    expect(source).toContain('const getMenuCategoryForInventoryCategory');
+    expect(editBlock).toContain('isDirectMenuInventoryCategory(updatedInventoryItem.category)');
+    expect(editBlock).toContain('updatedMenuItem = {');
+    expect(editBlock).toContain("await smartAddDocument('menu_items', updatedMenuItem)");
+    expect(addBlock).toContain('isDirectMenuInventoryCategory(newItem.category)');
+    expect(addBlock).toContain('getMenuCategoryForInventoryCategory(newItem.category)');
   });
 
   test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {

@@ -89,6 +89,19 @@ const REQUIRED_FRIDGE_INVENTORY_CATEGORIES: InventoryCategory[] = [
   { id: 'jugo', key: 'jugo', name: 'Jugo', icon: '🧃' },
 ];
 
+const SELLABLE_DIRECT_MENU_CATEGORY_KEYS = ['alcohol', 'beverage', 'cerveza', 'bebida', 'jugo', 'jugos'];
+
+const isDirectMenuInventoryCategory = (categoryKey?: string): boolean => {
+  return SELLABLE_DIRECT_MENU_CATEGORY_KEYS.includes(String(categoryKey || '').toLowerCase());
+};
+
+const getMenuCategoryForInventoryCategory = (categoryKey?: string): string => {
+  const normalizedKey = String(categoryKey || '').toLowerCase();
+  if (normalizedKey === 'alcohol' || normalizedKey === 'cerveza') return 'Cerveza';
+  if (normalizedKey === 'jugo' || normalizedKey === 'jugos') return 'Jugo';
+  return 'Bebida';
+};
+
 const normalizeInventoryCategories = (categories: any[] = []): InventoryCategory[] => {
   const now = Date.now();
   const merged = new Map<string, InventoryCategory>();
@@ -1530,7 +1543,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     return;
                   }
 
-                  const linkedMenuItems = (editingItem.category === 'beverage' || editingItem.category === 'alcohol')
+                  const linkedMenuItems = isDirectMenuInventoryCategory(editingItem.category)
                     ? menuItems.filter(m => m.stockItemId === itemId)
                     : [];
                   const linkedFridgeInventory = fridgeInventory.filter(inv => inv.itemId === itemId);
@@ -1671,19 +1684,33 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         await smartDeleteDocument('inventory_items', editingItem.id);
                       }
 
-                      if (oldItem && (oldItem.category === 'beverage' || oldItem.category === 'alcohol')) {
+                      if (isDirectMenuInventoryCategory(updatedInventoryItem.category)) {
                         const menuItem = menuItems.find(m => m.stockItemId === editingItem.id);
                         if (menuItem) {
                           updatedMenuItem = {
                             ...menuItem,
                             name: editingItem.name!,
                             price: editingItem.salePrice || 0,
-                            category: editingItem.category === 'beverage' ? '\u996e\u6599' : '\u9152\u6c34',
+                            category: getMenuCategoryForInventoryCategory(updatedInventoryItem.category),
                             type: 'direct',
                             stockItemId: newId,
+                            available: menuItem.available !== false,
                             lastModified: now
                           };
                           await smartUpdateDocument('menu_items', menuItem.id, updatedMenuItem);
+                        } else {
+                          updatedMenuItem = {
+                            id: `menu-${newId}`,
+                            name: editingItem.name!,
+                            nameEs: '',
+                            price: editingItem.salePrice || 0,
+                            category: getMenuCategoryForInventoryCategory(updatedInventoryItem.category),
+                            type: 'direct' as 'direct',
+                            stockItemId: newId,
+                            available: true,
+                            lastModified: now
+                          };
+                          await smartAddDocument('menu_items', updatedMenuItem);
                         }
                       }
                     } catch (error) {
@@ -1697,9 +1724,12 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     ));
 
                     if (updatedMenuItem) {
-                      setMenuItems(items => items.map(m =>
-                        m.id === updatedMenuItem.id ? updatedMenuItem : m
-                      ));
+                      setMenuItems(items => {
+                        const exists = items.some(m => m.id === updatedMenuItem.id);
+                        return exists
+                          ? items.map(m => m.id === updatedMenuItem.id ? updatedMenuItem : m)
+                          : [...items, updatedMenuItem];
+                      });
                     }
 
                     alert('\u4fee\u6539\u6210\u529f\uff01');
@@ -1726,13 +1756,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     try {
                       await smartAddDocument('inventory_items', newItem);
 
-                      if (editingItem.category === 'beverage' || editingItem.category === 'alcohol') {
+                      if (isDirectMenuInventoryCategory(newItem.category)) {
                         newMenuItem = {
                           id: `menu-${Date.now()}`,
                           name: editingItem.name!,
                           nameEs: '',
                           price: editingItem.salePrice || 0,
-                          category: editingItem.category === 'beverage' ? '\u996e\u6599' : '\u9152\u6c34',
+                          category: getMenuCategoryForInventoryCategory(newItem.category),
                           type: 'direct' as 'direct',
                           stockItemId: newItem.id,
                           available: true,
