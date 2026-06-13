@@ -13,6 +13,84 @@ const toMoneyNumber = (value: any): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+export interface ExpenseReportDetail {
+  id: string;
+  dateKey: string;
+  type: 'purchase' | 'operating';
+  typeLabel: string;
+  category: string;
+  description: string;
+  amount: number;
+  createdAt: string;
+}
+
+export interface ExpenseReportSummary {
+  type: 'purchase' | 'operating';
+  typeLabel: string;
+  category: string;
+  count: number;
+  amount: number;
+}
+
+const getExpenseType = (expense: any): 'purchase' | 'operating' =>
+  isPurchaseRelatedExpense(expense) ? 'purchase' : 'operating';
+
+const getExpenseTypeLabel = (type: 'purchase' | 'operating'): string =>
+  type === 'purchase' ? '\u91c7\u8d2d\u4ed8\u6b3e' : '\u65e5\u5e38\u5f00\u652f';
+
+const getExpenseCategoryLabel = (expense: any, type: 'purchase' | 'operating'): string =>
+  String(
+    expense?.categoryName ||
+    expense?.category ||
+    expense?.categoryId ||
+    getExpenseTypeLabel(type)
+  );
+
+export const buildDailyExpenseBreakdown = (
+  expenses: any[],
+  date: string
+): { summaries: ExpenseReportSummary[]; details: ExpenseReportDetail[] } => {
+  const details = expenses
+    .filter((expense: any) => getExpenseDateKey(expense) === date)
+    .map((expense: any): ExpenseReportDetail => {
+      const type = getExpenseType(expense);
+      return {
+        id: String(expense?.id || ''),
+        dateKey: date,
+        type,
+        typeLabel: getExpenseTypeLabel(type),
+        category: getExpenseCategoryLabel(expense, type),
+        description: String(expense?.description || expense?.note || expense?.supplierName || '-'),
+        amount: toMoneyNumber(expense?.amount),
+        createdAt: String(expense?.createdAt || expense?.updatedAt || expense?.date || expense?.id || ''),
+      };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const summaryMap = new Map<string, ExpenseReportSummary>();
+  details.forEach(detail => {
+    const key = `${detail.type}|${detail.category}`;
+    const current = summaryMap.get(key) || {
+      type: detail.type,
+      typeLabel: detail.typeLabel,
+      category: detail.category,
+      count: 0,
+      amount: 0,
+    };
+
+    current.count += 1;
+    current.amount += detail.amount;
+    summaryMap.set(key, current);
+  });
+
+  const summaries = Array.from(summaryMap.values()).sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'purchase' ? -1 : 1;
+    return a.category.localeCompare(b.category);
+  });
+
+  return { summaries, details };
+};
+
 export const calculateFinancialReportTotals = ({
   cashPayment,
   cardPayment,

@@ -325,7 +325,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('getOrderFinancialDateKey(order) === date');
     expect(source).toContain('getOrderPaymentBreakdown(order)');
     expect(source).toContain('getExpenseDateKey(exp)');
-    expect(source).toContain('getExpenseDateKey(expense) === selectedDate');
+    expect(source).toContain('buildDailyExpenseBreakdown(dataManager.getData');
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
@@ -344,6 +344,22 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
     expect(source).not.toContain('const profit = baseProfit + (difference || 0)');
     expect(source).not.toContain('\\u542b\\u8bef\\u5dee');
+  });
+
+  test('financial reports show expense breakdown only for daily reports and print daily details', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+    const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
+    const metricsSource = fs.readFileSync(metricsPath, 'utf8');
+
+    expect(source).toContain('buildDailyExpenseBreakdown(dataManager.getData');
+    expect(source).toContain("reportType === 'daily'");
+    expect(source).toContain('isDaily ? `');
+    expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u5206\\u7c7b\\u6c47\\u603b');
+    expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u660e\\u7ec6');
+    expect(source).toContain('\\u73b0\\u91d1\\u8bef\\u5dee');
+    expect(source).toContain('\\u73b0\\u91d1 - \\u5b9e\\u4ea4');
+    expect(metricsSource).toContain('export const buildDailyExpenseBreakdown');
   });
 
   test('POS saves settled cash amounts instead of tendered cash including change', () => {

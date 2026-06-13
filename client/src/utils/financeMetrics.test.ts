@@ -1,4 +1,5 @@
 import {
+  buildDailyExpenseBreakdown,
   calculateFinancialReportTotals,
   getExpenseDateKey,
   getOrderCollectedAmount,
@@ -101,5 +102,47 @@ describe('finance metrics helpers', () => {
       profit: 100,
       difference: -5,
     });
+  });
+
+  test('builds daily expense category summaries and details for reports', () => {
+    const breakdown = buildDailyExpenseBreakdown([
+      {
+        id: 'purchase_1',
+        date: '2026-06-12',
+        amount: 100,
+        relatedType: 'purchase',
+        categoryName: '采购付款',
+        description: 'Supplier A',
+        createdAt: '2026-06-12T10:00:00.000-06:00',
+      },
+      {
+        id: 'rent_1',
+        date: '2026-06-12',
+        amount: 30,
+        categoryName: '租金',
+        description: '店租',
+        createdAt: '2026-06-12T11:00:00.000-06:00',
+      },
+      {
+        id: 'rent_2',
+        date: '2026-06-12',
+        amount: 20,
+        categoryName: '租金',
+        description: '追加',
+        createdAt: '2026-06-12T12:00:00.000-06:00',
+      },
+      {
+        id: 'other_day',
+        date: '2026-06-11',
+        amount: 999,
+        categoryName: '不应出现',
+      },
+    ], '2026-06-12');
+
+    expect(breakdown.summaries).toEqual([
+      { type: 'purchase', typeLabel: '采购付款', category: '采购付款', count: 1, amount: 100 },
+      { type: 'operating', typeLabel: '日常开支', category: '租金', count: 2, amount: 50 },
+    ]);
+    expect(breakdown.details.map(detail => detail.description)).toEqual(['追加', '店租', 'Supplier A']);
   });
 });

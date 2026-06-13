@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { calculateFinancialReportTotals, getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
@@ -218,8 +218,13 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     expenseAmount: acc.expenseAmount + report.expenseAmount,
     profit: acc.profit + report.profit,
     difference: acc.difference + (report.difference || 0),
+    handoverAmount: acc.handoverAmount + (report.handoverAmount || 0),
+    hasHandover: acc.hasHandover || report.handoverAmount !== undefined,
     supplierDebt: supplierDebtTotal
-  }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, supplierDebt: supplierDebtTotal });
+  }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
+  const dailyExpenseBreakdown = reportType === 'daily'
+    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate)
+    : { summaries: [], details: [] };
 
   const styles = {
     container: {
@@ -355,12 +360,6 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     const firstDate = dailyReports[0]?.date || selectedDate;
     const lastDate = dailyReports[dailyReports.length - 1]?.date || selectedDate;
     const title = isDaily ? `\u8d22\u52a1\u65e5\u62a5 ${selectedDate}` : `\u8d22\u52a1\u6c47\u603b\u62a5\u8868 ${firstDate} - ${lastDate}`;
-    const dailyExpenseDetails = isDaily
-      ? dataManager.getData('expenses')
-          .filter((expense: any) => getExpenseDateKey(expense) === selectedDate)
-          .sort((a: any, b: any) => String(a.createdAt || a.id || '').localeCompare(String(b.createdAt || b.id || '')))
-      : [];
-
     const reportRows = dailyReports.map(report => `
       <tr>
         <td>${htmlEscape(report.date)}</td>
@@ -378,10 +377,20 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       </tr>
     `).join('');
 
-    const expenseRows = dailyExpenseDetails.map((expense: any, index: number) => `
+    const expenseSummaryRows = dailyExpenseBreakdown.summaries.map(summaryRow => `
+      <tr>
+        <td>${htmlEscape(summaryRow.typeLabel)}</td>
+        <td>${htmlEscape(summaryRow.category)}</td>
+        <td class="num">${summaryRow.count}</td>
+        <td class="num">${money(summaryRow.amount)}</td>
+      </tr>
+    `).join('');
+
+    const expenseRows = dailyExpenseBreakdown.details.map((expense, index) => `
       <tr>
         <td>${index + 1}</td>
-        <td>${htmlEscape(expense.categoryName || expense.categoryId || '\u5f00\u652f')}</td>
+        <td>${htmlEscape(expense.typeLabel)}</td>
+        <td>${htmlEscape(expense.category)}</td>
         <td>${htmlEscape(expense.description || '-')}</td>
         <td class="num">${money(expense.amount)}</td>
       </tr>
@@ -434,6 +443,8 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
           <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e</div><div class="value">${money(summary.supplierDebt)}</div></div>
           <div class="box"><div class="label">\u5229\u6da6</div><div class="value">${money(summary.profit)}</div></div>
+          <div class="box"><div class="label">\u5b9e\u4ea4\u73b0\u91d1</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
+          <div class="box"><div class="label">\u73b0\u91d1\u8bef\u5dee</div><div class="value">${summary.hasHandover ? signedMoney(summary.difference) : '-'}</div></div>
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
@@ -441,10 +452,15 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
+          <h2>\u5f53\u5929\u5f00\u652f\u5206\u7c7b\u6c47\u603b</h2>
+          <table>
+            <thead><tr><th style="width: 120px;">\u7c7b\u578b</th><th>\u7c7b\u522b</th><th style="width: 70px;">\u7b14\u6570</th><th style="width: 110px;">\u5408\u8ba1</th></tr></thead>
+            <tbody>${expenseSummaryRows || '<tr><td colspan="4" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
+          </table>
           <h2>\u5f53\u5929\u5f00\u652f\u660e\u7ec6</h2>
           <table>
-            <thead><tr><th style="width: 40px;">#</th><th style="width: 140px;">\u7c7b\u522b</th><th>\u8bf4\u660e</th><th style="width: 110px;">\u91d1\u989d</th></tr></thead>
-            <tbody>${expenseRows || '<tr><td colspan="4" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
+            <thead><tr><th style="width: 40px;">#</th><th style="width: 110px;">\u7c7b\u578b</th><th style="width: 140px;">\u7c7b\u522b</th><th>\u8bf4\u660e</th><th style="width: 110px;">\u91d1\u989d</th></tr></thead>
+            <tbody>${expenseRows || '<tr><td colspan="5" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
           </table>
         ` : ''}
         <div class="footer"><div class="sign">\u5236\u8868\u4eba</div><div class="sign">\u5ba1\u6838\u4eba</div></div>
@@ -504,6 +520,8 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard('#d97706', '#d97706')}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue('#d97706')}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
             <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
             <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u5229\u6da6'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f'} | {'\u5229\u6da6\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard('#64748b', '#64748b')}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue('#64748b')}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
+            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981', summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}><div style={styles.statLabel}>{'\u73b0\u91d1\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u73b0\u91d1 - \u5b9e\u4ea4'}</div></div>
           </div>
 
           <div style={styles.card}>
@@ -547,6 +565,72 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
               </div>
             )}
           </div>
+
+          {reportType === 'daily' && (
+            <>
+              <div style={styles.card}>
+                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u5206\u7c7b\u6c47\u603b'}</div>
+                {dailyExpenseBreakdown.summaries.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>{'\u7c7b\u578b'}</th>
+                          <th style={styles.th}>{'\u7c7b\u522b'}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u7b14\u6570'}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5408\u8ba1'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dailyExpenseBreakdown.summaries.map((row, index) => (
+                          <tr key={`${row.type}-${row.category}-${index}`}>
+                            <td style={styles.td}>{row.typeLabel}</td>
+                            <td style={styles.td}>{row.category}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{row.count}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: row.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(row.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.card}>
+                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u660e\u7ec6'}</div>
+                {dailyExpenseBreakdown.details.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>#</th>
+                          <th style={styles.th}>{'\u7c7b\u578b'}</th>
+                          <th style={styles.th}>{'\u7c7b\u522b'}</th>
+                          <th style={styles.th}>{'\u8bf4\u660e'}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91d1\u989d'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dailyExpenseBreakdown.details.map((expense, index) => (
+                          <tr key={expense.id || index}>
+                            <td style={styles.td}>{index + 1}</td>
+                            <td style={styles.td}>{expense.typeLabel}</td>
+                            <td style={styles.td}>{expense.category}</td>
+                            <td style={styles.td}>{expense.description}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(expense.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           <button onClick={handlePrint} style={styles.printBtn}>{'\u6253\u5370\u62a5\u8868'}</button>
         </div>
