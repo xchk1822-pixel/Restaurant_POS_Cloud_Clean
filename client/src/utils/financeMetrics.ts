@@ -32,24 +32,59 @@ export interface ExpenseReportSummary {
   amount: number;
 }
 
+export interface ExpenseReportGroup extends ExpenseReportSummary {
+  title: string;
+  details: ExpenseReportDetail[];
+}
+
 const getExpenseType = (expense: any): 'purchase' | 'operating' =>
   isPurchaseRelatedExpense(expense) ? 'purchase' : 'operating';
 
 const getExpenseTypeLabel = (type: 'purchase' | 'operating'): string =>
   type === 'purchase' ? '\u91c7\u8d2d\u4ed8\u6b3e' : '\u65e5\u5e38\u5f00\u652f';
 
-const getExpenseCategoryLabel = (expense: any, type: 'purchase' | 'operating'): string =>
-  String(
-    expense?.categoryName ||
-    expense?.category ||
-    expense?.categoryId ||
-    getExpenseTypeLabel(type)
+const getCategoryNameFromList = (categoryId: string, categories: any[]): string => {
+  if (!categoryId) return '';
+  const category = categories.find((item: any) =>
+    String(item?.id || '') === categoryId ||
+    String(item?.key || '') === categoryId ||
+    String(item?.code || '') === categoryId
   );
+  return String(category?.name || '');
+};
+
+const looksLikeInternalCategoryId = (value: string): boolean =>
+  /^cat[-_]/i.test(value) || value === 'supplier_payment';
+
+const getExpenseCategoryLabel = (
+  expense: any,
+  type: 'purchase' | 'operating',
+  categories: any[]
+): string => {
+  const supplierName = String(expense?.supplierName || '').trim();
+  const orderNumber = String(expense?.orderNumber || expense?.invoiceNumber || '').trim();
+
+  if (type === 'purchase' && (supplierName || orderNumber)) {
+    return `${supplierName || getExpenseTypeLabel(type)}${orderNumber ? ` - \u5355\u53f7 ${orderNumber}` : ''}`;
+  }
+
+  const categoryId = String(expense?.categoryId || '').trim();
+  const categoryFromList = getCategoryNameFromList(categoryId, categories);
+  if (categoryFromList) return categoryFromList;
+
+  const explicitCategory = String(expense?.categoryName || expense?.category || '').trim();
+  if (explicitCategory) return explicitCategory;
+
+  if (categoryId && !looksLikeInternalCategoryId(categoryId)) return categoryId;
+
+  return getExpenseTypeLabel(type);
+};
 
 export const buildDailyExpenseBreakdown = (
   expenses: any[],
-  date: string
-): { summaries: ExpenseReportSummary[]; details: ExpenseReportDetail[] } => {
+  date: string,
+  categories: any[] = []
+): { summaries: ExpenseReportSummary[]; details: ExpenseReportDetail[]; groups: ExpenseReportGroup[] } => {
   const details = expenses
     .filter((expense: any) => getExpenseDateKey(expense) === date)
     .map((expense: any): ExpenseReportDetail => {
@@ -59,7 +94,7 @@ export const buildDailyExpenseBreakdown = (
         dateKey: date,
         type,
         typeLabel: getExpenseTypeLabel(type),
-        category: getExpenseCategoryLabel(expense, type),
+        category: getExpenseCategoryLabel(expense, type, categories),
         description: String(expense?.description || expense?.note || expense?.supplierName || '-'),
         amount: toMoneyNumber(expense?.amount),
         createdAt: String(expense?.createdAt || expense?.updatedAt || expense?.date || expense?.id || ''),
@@ -87,8 +122,13 @@ export const buildDailyExpenseBreakdown = (
     if (a.type !== b.type) return a.type === 'purchase' ? -1 : 1;
     return a.category.localeCompare(b.category);
   });
+  const groups = summaries.map(summary => ({
+    ...summary,
+    title: summary.category,
+    details: details.filter(detail => detail.type === summary.type && detail.category === summary.category),
+  }));
 
-  return { summaries, details };
+  return { summaries, details, groups };
 };
 
 export const calculateFinancialReportTotals = ({
@@ -115,6 +155,20 @@ export const calculateFinancialReportTotals = ({
     profit,
     difference,
   };
+};
+
+export const getLatestHandoverAmountForDate = (handovers: any[], date: string): number | undefined => {
+  const latest = handovers
+    .filter((handover: any) => String(handover?.t || '').startsWith(date))
+    .sort((a: any, b: any) => {
+      const aTime = toTimestampMillis(a?.createdAt || a?.updatedAt || String(a?.t || '').replace(' ', 'T')) || 0;
+      const bTime = toTimestampMillis(b?.createdAt || b?.updatedAt || String(b?.t || '').replace(' ', 'T')) || 0;
+      return bTime - aTime;
+    })[0];
+
+  if (!latest) return undefined;
+  const amount = toMoneyNumber(latest.rawG ?? latest.g);
+  return amount || undefined;
 };
 
 export const getOrderCollectedAmount = (order: any): number => {

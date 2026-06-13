@@ -326,6 +326,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('getOrderPaymentBreakdown(order)');
     expect(source).toContain('getExpenseDateKey(exp)');
     expect(source).toContain('buildDailyExpenseBreakdown(dataManager.getData');
+    expect(source).toContain("smartGetDocuments('expense_categories', true)");
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
@@ -336,6 +337,7 @@ describe('production data safety guards', () => {
     const metricsSource = fs.readFileSync(metricsPath, 'utf8');
 
     expect(source).toContain('calculateFinancialReportTotals({');
+    expect(source).toContain('getLatestHandoverAmountForDate(handovers, date)');
     expect(metricsSource).toContain('const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment)');
     expect(metricsSource).toContain('const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount)');
     expect(metricsSource).toContain('const difference = handoverAmount !== undefined');
@@ -355,11 +357,15 @@ describe('production data safety guards', () => {
     expect(source).toContain('buildDailyExpenseBreakdown(dataManager.getData');
     expect(source).toContain("reportType === 'daily'");
     expect(source).toContain('isDaily ? `');
-    expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u5206\\u7c7b\\u6c47\\u603b');
-    expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u660e\\u7ec6');
+    expect(source).toContain('\\u5f53\\u5929\\u5f00\\u652f\\u660e\\u7ec6\\u6c47\\u603b');
     expect(source).toContain('\\u73b0\\u91d1\\u8bef\\u5dee');
     expect(source).toContain('\\u73b0\\u91d1 - \\u5b9e\\u4ea4');
+    expect(source).toContain('difference-box');
+    expect(source).toContain('difference-value');
     expect(metricsSource).toContain('export const buildDailyExpenseBreakdown');
+    expect(metricsSource).toContain('getCategoryNameFromList');
+    expect(metricsSource).toContain('supplierName || getExpenseTypeLabel(type)');
+    expect(source).not.toContain('\\u5f53\\u5929\\u5f00\\u652f\\u5206\\u7c7b\\u6c47\\u603b');
   });
 
   test('POS saves settled cash amounts instead of tendered cash including change', () => {

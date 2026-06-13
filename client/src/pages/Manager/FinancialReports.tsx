@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
@@ -43,8 +44,17 @@ const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/'/g, '&#039;');
 
 const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders: propOrders }) => {
+  const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
   const [orders, setOrders] = useState<any[]>(() => {
     return propOrders || dataManager.getData('orders');
+  });
+  const [expenseCategories, setExpenseCategories] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem(expenseCategoryStorageKey);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
@@ -61,11 +71,12 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const refreshFinancialData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers] = await Promise.all([
+      const [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers, cloudExpenseCategories] = await Promise.all([
         smartGetDocuments('pos_orders', true),
         smartGetDocuments('expenses', true),
         smartGetDocuments('purchase_orders', true),
         smartGetDocuments('handovers', true),
+        smartGetDocuments('expense_categories', true),
       ]);
 
       await Promise.all([
@@ -77,6 +88,10 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
       dataManager.clearCache();
       setOrders(cloudOrders);
+      if (cloudExpenseCategories.length > 0) {
+        setExpenseCategories(cloudExpenseCategories);
+        localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudExpenseCategories));
+      }
       setDataVersion(version => version + 1);
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -85,7 +100,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [expenseCategoryStorageKey]);
 
   useEffect(() => {
     refreshFinancialData();
@@ -149,8 +164,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     // Read shift handover records.
     const handovers = dataManager.getData('handovers');
-    const dayHandover = handovers.find((h: any) => h.t && h.t.startsWith(date));
-    const handoverAmount = dayHandover ? parseFloat(dayHandover.rawG) : undefined;
+    const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
     const { totalSales, profit, difference } = calculateFinancialReportTotals({
       cashPayment,
       cardPayment,
@@ -223,8 +237,8 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     supplierDebt: supplierDebtTotal
   }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
-    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate)
-    : { summaries: [], details: [] };
+    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate, expenseCategories)
+    : { summaries: [], details: [], groups: [] };
 
   const styles = {
     container: {
@@ -360,6 +374,11 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     const firstDate = dailyReports[0]?.date || selectedDate;
     const lastDate = dailyReports[dailyReports.length - 1]?.date || selectedDate;
     const title = isDaily ? `\u8d22\u52a1\u65e5\u62a5 ${selectedDate}` : `\u8d22\u52a1\u6c47\u603b\u62a5\u8868 ${firstDate} - ${lastDate}`;
+    const printDifferenceClass = !summary.hasHandover || summary.difference === 0
+      ? 'difference-zero'
+      : summary.difference > 0
+        ? 'difference-positive'
+        : 'difference-negative';
     const reportRows = dailyReports.map(report => `
       <tr>
         <td>${htmlEscape(report.date)}</td>
@@ -377,23 +396,21 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       </tr>
     `).join('');
 
-    const expenseSummaryRows = dailyExpenseBreakdown.summaries.map(summaryRow => `
-      <tr>
-        <td>${htmlEscape(summaryRow.typeLabel)}</td>
-        <td>${htmlEscape(summaryRow.category)}</td>
-        <td class="num">${summaryRow.count}</td>
-        <td class="num">${money(summaryRow.amount)}</td>
+    const expenseGroupRows = dailyExpenseBreakdown.groups.map(group => `
+      <tr class="group-row">
+        <td colspan="3"><strong>${htmlEscape(group.typeLabel)} - ${htmlEscape(group.title)}</strong></td>
+        <td class="num"><strong>${group.count}</strong></td>
+        <td class="num"><strong>${money(group.amount)}</strong></td>
       </tr>
-    `).join('');
-
-    const expenseRows = dailyExpenseBreakdown.details.map((expense, index) => `
-      <tr>
+      ${group.details.map((expense, index) => `
+      <tr class="detail-row">
+        <td></td>
         <td>${index + 1}</td>
         <td>${htmlEscape(expense.typeLabel)}</td>
-        <td>${htmlEscape(expense.category)}</td>
         <td>${htmlEscape(expense.description || '-')}</td>
         <td class="num">${money(expense.amount)}</td>
       </tr>
+      `).join('')}
     `).join('');
 
     const printWindow = window.open('', '_blank');
@@ -409,25 +426,32 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         <meta charset="utf-8" />
         <title>${htmlEscape(title)}</title>
         <style>
-          @page { size: A4; margin: 14mm; }
+          @page { size: A4; margin: 10mm; }
           * { box-sizing: border-box; }
-          body { font-family: Arial, "Microsoft YaHei", sans-serif; color: #111827; margin: 0; font-size: 12px; }
-          h1 { font-size: 22px; text-align: center; margin: 0 0 6px; }
-          h2 { font-size: 15px; margin: 18px 0 8px; border-bottom: 1px solid #d1d5db; padding-bottom: 5px; }
-          .meta { text-align: center; color: #6b7280; margin-bottom: 14px; }
-          .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
-          .box { border: 1px solid #d1d5db; padding: 8px; min-height: 54px; }
-          .label { color: #6b7280; font-size: 11px; margin-bottom: 4px; }
-          .value { font-size: 16px; font-weight: 700; }
+          body { font-family: Arial, "Microsoft YaHei", sans-serif; color: #111827; margin: 0; font-size: 10.5px; line-height: 1.18; }
+          h1 { font-size: 18px; text-align: center; margin: 0 0 4px; }
+          h2 { font-size: 12px; margin: 10px 0 5px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }
+          .meta { text-align: center; color: #6b7280; margin-bottom: 8px; }
+          .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 8px; }
+          .box { border: 1px solid #d1d5db; padding: 4px 5px; min-height: 38px; }
+          .difference-box { border: 2px solid #f59e0b; background: #fffbeb; }
+          .label { color: #6b7280; font-size: 9px; margin-bottom: 2px; }
+          .value { font-size: 12px; font-weight: 700; }
+          .difference-value { font-size: 14px; font-weight: 800; }
+          .difference-positive { color: #d97706; }
+          .difference-negative { color: #dc2626; }
+          .difference-zero { color: #047857; }
           table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
+          th, td { border: 1px solid #d1d5db; padding: 3px 4px; vertical-align: top; }
           th { background: #f3f4f6; font-weight: 700; }
           .num { text-align: right; white-space: nowrap; }
+          .group-row td { background: #f9fafb; font-weight: 700; padding-top: 4px; padding-bottom: 4px; }
+          .detail-row td { font-size: 10px; padding-top: 2px; padding-bottom: 2px; }
           .positive { color: #047857; }
           .negative { color: #dc2626; }
           .warning { color: #d97706; }
-          .footer { margin-top: 24px; display: flex; justify-content: space-between; color: #374151; }
-          .sign { width: 180px; border-top: 1px solid #111827; padding-top: 6px; text-align: center; }
+          .footer { margin-top: 18px; display: flex; justify-content: space-between; color: #374151; }
+          .sign { width: 160px; border-top: 1px solid #111827; padding-top: 4px; text-align: center; }
           @media print { button { display: none; } }
         </style>
       </head>
@@ -444,7 +468,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e</div><div class="value">${money(summary.supplierDebt)}</div></div>
           <div class="box"><div class="label">\u5229\u6da6</div><div class="value">${money(summary.profit)}</div></div>
           <div class="box"><div class="label">\u5b9e\u4ea4\u73b0\u91d1</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
-          <div class="box"><div class="label">\u73b0\u91d1\u8bef\u5dee</div><div class="value">${summary.hasHandover ? signedMoney(summary.difference) : '-'}</div></div>
+          <div class="box difference-box"><div class="label">\u73b0\u91d1\u8bef\u5dee\uff08\u73b0\u91d1-\u5b9e\u4ea4\uff09</div><div class="value difference-value ${printDifferenceClass}">${summary.hasHandover ? signedMoney(summary.difference) : '\u672a\u4ea4\u73ed'}</div></div>
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
@@ -452,15 +476,10 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
-          <h2>\u5f53\u5929\u5f00\u652f\u5206\u7c7b\u6c47\u603b</h2>
+          <h2>\u5f53\u5929\u5f00\u652f\u660e\u7ec6\u6c47\u603b</h2>
           <table>
-            <thead><tr><th style="width: 120px;">\u7c7b\u578b</th><th>\u7c7b\u522b</th><th style="width: 70px;">\u7b14\u6570</th><th style="width: 110px;">\u5408\u8ba1</th></tr></thead>
-            <tbody>${expenseSummaryRows || '<tr><td colspan="4" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
-          </table>
-          <h2>\u5f53\u5929\u5f00\u652f\u660e\u7ec6</h2>
-          <table>
-            <thead><tr><th style="width: 40px;">#</th><th style="width: 110px;">\u7c7b\u578b</th><th style="width: 140px;">\u7c7b\u522b</th><th>\u8bf4\u660e</th><th style="width: 110px;">\u91d1\u989d</th></tr></thead>
-            <tbody>${expenseRows || '<tr><td colspan="5" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
+            <thead><tr><th style="width: 24px;"></th><th style="width: 40px;">#</th><th style="width: 110px;">\u7c7b\u578b</th><th>\u660e\u7ec6</th><th style="width: 110px;">\u91d1\u989d</th></tr></thead>
+            <tbody>${expenseGroupRows || '<tr><td colspan="5" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
           </table>
         ` : ''}
         <div class="footer"><div class="sign">\u5236\u8868\u4eba</div><div class="sign">\u5ba1\u6838\u4eba</div></div>
@@ -569,60 +588,45 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           {reportType === 'daily' && (
             <>
               <div style={styles.card}>
-                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u5206\u7c7b\u6c47\u603b'}</div>
-                {dailyExpenseBreakdown.summaries.length === 0 ? (
+                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u660e\u7ec6\u6c47\u603b'}</div>
+                {dailyExpenseBreakdown.groups.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={styles.table}>
                       <thead>
                         <tr>
+                          <th style={styles.th}></th>
+                          <th style={{ ...styles.th, width: '4rem' }}>#</th>
                           <th style={styles.th}>{'\u7c7b\u578b'}</th>
-                          <th style={styles.th}>{'\u7c7b\u522b'}</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u7b14\u6570'}</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5408\u8ba1'}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {dailyExpenseBreakdown.summaries.map((row, index) => (
-                          <tr key={`${row.type}-${row.category}-${index}`}>
-                            <td style={styles.td}>{row.typeLabel}</td>
-                            <td style={styles.td}>{row.category}</td>
-                            <td style={{ ...styles.td, textAlign: 'right' }}>{row.count}</td>
-                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: row.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(row.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div style={styles.card}>
-                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u660e\u7ec6'}</div>
-                {dailyExpenseBreakdown.details.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={styles.table}>
-                      <thead>
-                        <tr>
-                          <th style={styles.th}>#</th>
-                          <th style={styles.th}>{'\u7c7b\u578b'}</th>
-                          <th style={styles.th}>{'\u7c7b\u522b'}</th>
-                          <th style={styles.th}>{'\u8bf4\u660e'}</th>
+                          <th style={styles.th}>{'\u660e\u7ec6'}</th>
                           <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91d1\u989d'}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {dailyExpenseBreakdown.details.map((expense, index) => (
-                          <tr key={expense.id || index}>
-                            <td style={styles.td}>{index + 1}</td>
-                            <td style={styles.td}>{expense.typeLabel}</td>
-                            <td style={styles.td}>{expense.category}</td>
-                            <td style={styles.td}>{expense.description}</td>
-                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(expense.amount)}</td>
-                          </tr>
+                        {dailyExpenseBreakdown.groups.map((group, groupIndex) => (
+                          <React.Fragment key={`${group.type}-${group.category}-${groupIndex}`}>
+                            <tr>
+                              <td style={{ ...styles.td, background: '#f9fafb' }} colSpan={3}>
+                                <strong>{group.typeLabel} - {group.title}</strong>
+                              </td>
+                              <td style={{ ...styles.td, background: '#f9fafb', color: '#6b7280' }}>
+                                {group.count} {'\u7b14'}
+                              </td>
+                              <td style={{ ...styles.td, background: '#f9fafb', textAlign: 'right', fontWeight: '700', color: group.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>
+                                {money(group.amount)}
+                              </td>
+                            </tr>
+                            {group.details.map((expense, index) => (
+                              <tr key={expense.id || `${groupIndex}-${index}`}>
+                                <td style={styles.td}></td>
+                                <td style={styles.td}>{index + 1}</td>
+                                <td style={styles.td}>{expense.typeLabel}</td>
+                                <td style={styles.td}>{expense.description}</td>
+                                <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(expense.amount)}</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>

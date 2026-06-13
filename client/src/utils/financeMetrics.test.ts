@@ -2,6 +2,7 @@ import {
   buildDailyExpenseBreakdown,
   calculateFinancialReportTotals,
   getExpenseDateKey,
+  getLatestHandoverAmountForDate,
   getOrderCollectedAmount,
   getOrderFinancialDateKey,
   getOrderPaymentBreakdown,
@@ -104,22 +105,32 @@ describe('finance metrics helpers', () => {
     });
   });
 
-  test('builds daily expense category summaries and details for reports', () => {
+  test('uses latest handover amount for the report date', () => {
+    expect(getLatestHandoverAmountForDate([
+      { id: 'newer', t: '2026-06-12 21:00:00', rawG: 105 },
+      { id: 'older', t: '2026-06-12 09:00:00', rawG: 95 },
+      { id: 'other-day', t: '2026-06-11 23:00:00', rawG: 999 },
+    ], '2026-06-12')).toBe(105);
+  });
+
+  test('builds daily expense groups with readable category names and purchase order labels', () => {
     const breakdown = buildDailyExpenseBreakdown([
       {
         id: 'purchase_1',
         date: '2026-06-12',
         amount: 100,
         relatedType: 'purchase',
-        categoryName: '采购付款',
+        categoryId: 'supplier_payment',
         description: 'Supplier A',
+        supplierName: 'A供应商饮料',
+        orderNumber: 'INV-001',
         createdAt: '2026-06-12T10:00:00.000-06:00',
       },
       {
         id: 'rent_1',
         date: '2026-06-12',
         amount: 30,
-        categoryName: '租金',
+        categoryId: 'cat-rent',
         description: '店租',
         createdAt: '2026-06-12T11:00:00.000-06:00',
       },
@@ -127,7 +138,7 @@ describe('finance metrics helpers', () => {
         id: 'rent_2',
         date: '2026-06-12',
         amount: 20,
-        categoryName: '租金',
+        categoryId: 'cat-rent',
         description: '追加',
         createdAt: '2026-06-12T12:00:00.000-06:00',
       },
@@ -137,12 +148,24 @@ describe('finance metrics helpers', () => {
         amount: 999,
         categoryName: '不应出现',
       },
-    ], '2026-06-12');
+    ], '2026-06-12', [
+      { id: 'cat-rent', name: '租金' },
+      { id: 'supplier_payment', name: '供应商货款' },
+    ]);
 
     expect(breakdown.summaries).toEqual([
-      { type: 'purchase', typeLabel: '采购付款', category: '采购付款', count: 1, amount: 100 },
+      { type: 'purchase', typeLabel: '采购付款', category: 'A供应商饮料 - 单号 INV-001', count: 1, amount: 100 },
       { type: 'operating', typeLabel: '日常开支', category: '租金', count: 2, amount: 50 },
     ]);
+    expect(breakdown.groups.map(group => ({
+      title: group.title,
+      amount: group.amount,
+      descriptions: group.details.map(detail => detail.description),
+    }))).toEqual([
+      { title: 'A供应商饮料 - 单号 INV-001', amount: 100, descriptions: ['Supplier A'] },
+      { title: '租金', amount: 50, descriptions: ['追加', '店租'] },
+    ]);
     expect(breakdown.details.map(detail => detail.description)).toEqual(['追加', '店租', 'Supplier A']);
+    expect(breakdown.details.map(detail => detail.category)).not.toContain('cat-rent');
   });
 });
