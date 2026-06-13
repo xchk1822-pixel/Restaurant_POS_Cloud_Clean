@@ -4,7 +4,14 @@ import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本
 import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
-import { normalizeInventoryItemsForRefresh, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
+import {
+  formatStocktakeRecordDateTime,
+  getStocktakeRecordDateKey,
+  normalizeInventoryItemsForRefresh,
+  normalizeStocktakeHistoryForRefresh,
+  saveInventoryRefreshCache,
+  sortStocktakeHistoryRecords,
+} from '../../utils/stocktakeRefresh';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -61,6 +68,34 @@ const WarehouseStocktake: React.FC = () => {
   };
 
   const filteredItems = getFilteredItems();
+  const cacheStocktakeHistory = (records: any[]) => {
+    const sortedHistory = sortStocktakeHistoryRecords(records).slice(0, 50);
+    setStocktakeHistory(sortedHistory);
+    localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(sortedHistory));
+    return sortedHistory;
+  };
+
+  const mergeAndCacheStocktakeHistory = (cloudHistory: any[]) => {
+    const normalizedCloudHistory = normalizeStocktakeHistoryForRefresh(cloudHistory);
+    const mergedHistory = mergeRecordsByVersion(stocktakeHistory, normalizedCloudHistory);
+    return cacheStocktakeHistory(mergedHistory);
+  };
+
+  const refreshWarehouseHistory = async () => {
+    const cloudHistory = await smartGetDocuments('warehouse_stocktake_history', true);
+    return mergeAndCacheStocktakeHistory(cloudHistory);
+  };
+
+  const openHistoryModal = async () => {
+    setShowHistoryModal(true);
+    try {
+      await refreshWarehouseHistory();
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新仓库盘点历史失败:', error);
+    }
+  };
+
   const refreshWarehouseData = async () => {
     setIsRefreshing(true);
     try {
@@ -73,11 +108,7 @@ const WarehouseStocktake: React.FC = () => {
       setInventoryItems(normalizedCloudItems);
       saveInventoryRefreshCache(dataService.getCurrentStoreId(), normalizedCloudItems);
 
-      if (cloudHistory.length > 0) {
-        const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
-        setStocktakeHistory(mergedHistory);
-        localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(mergedHistory.slice(0, 50)));
-      }
+      mergeAndCacheStocktakeHistory(cloudHistory);
 
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -188,9 +219,7 @@ const WarehouseStocktake: React.FC = () => {
           return item;
         });
       });
-      history.unshift(stocktakeRecord);
-      localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(history.slice(0, 50)));
-      setStocktakeHistory(history.slice(0, 50));
+      cacheStocktakeHistory([stocktakeRecord, ...history]);
     } catch (error) {
       console.error('保存盘点历史失败:', error);
       alert('保存盘点结果失败，请检查网络后重试');
@@ -203,7 +232,7 @@ const WarehouseStocktake: React.FC = () => {
   // 导出CSV
   const exportToCSV = () => {
     const filteredHistory = stocktakeHistory.filter(record => {
-      const recordDate = getLocalDateString(new Date(record.date)); // 🔥 使用本地时间
+      const recordDate = getStocktakeRecordDateKey(record);
       return recordDate === selectedHistoryDate;
     });
 
@@ -216,7 +245,7 @@ const WarehouseStocktake: React.FC = () => {
     csv += '盘点时间,商品名称,分类,单位,系统库存,盘点值,差异\n';
     
     filteredHistory.forEach(record => {
-      const date = new Date(record.date).toLocaleString('zh-CN');
+      const date = formatStocktakeRecordDateTime(record);
       
       record.items.forEach((item: any) => {
         csv += `${date},${item.itemName},${item.category || ''},${item.unit || ''},${item.systemStock},${item.actualStock},${item.difference}\n`;
@@ -267,7 +296,7 @@ const WarehouseStocktake: React.FC = () => {
             {isRefreshing ? '同步中...' : '刷新仓库'}
           </button>
           <button
-            onClick={() => setShowHistoryModal(true)}
+            onClick={openHistoryModal}
             style={{
               padding: '0.6rem 1.2rem',
               backgroundColor: '#8b5cf6',
@@ -469,16 +498,7 @@ const WarehouseStocktake: React.FC = () => {
 
       {/* 盘点历史弹窗 */}
       {showHistoryModal && (() => {
-        // 每次打开时重新加载历史
-            const reloadHistory = () => {
-              try {
-                const saved = localStorage.getItem(stocktakeHistoryStorageKey);
-                return saved ? JSON.parse(saved) : [];
-              } catch {
-            return [];
-          }
-        };
-        const currentHistory = reloadHistory();
+        const currentHistory = stocktakeHistory;
         
         return (
           <div style={{
@@ -566,7 +586,7 @@ const WarehouseStocktake: React.FC = () => {
               <div style={{ flex: 1, overflowY: 'auto', maxHeight: 'calc(80vh - 120px)' }}>
                 {(() => {
                   const filteredHistory = currentHistory.filter((record: any) => {
-                    const recordDate = getLocalDateString(new Date(record.date)); // 🔥 使用本地时间
+                    const recordDate = getStocktakeRecordDateKey(record);
                     return recordDate === selectedHistoryDate;
                   });
 
@@ -601,7 +621,7 @@ const WarehouseStocktake: React.FC = () => {
                                   📦 仓库盘点
                                 </div>
                                 <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                                  {new Date(record.date).toLocaleString('zh-CN')}
+                                  {formatStocktakeRecordDateTime(record)}
                                 </div>
                               </div>
                               <div style={{

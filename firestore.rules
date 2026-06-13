@@ -141,6 +141,16 @@ service cloud.firestore {
     match /stores/{storeId}/fridge_inventory/{inventoryId} {
       allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
     }
+
+    // 仓库盘点历史
+    match /stores/{storeId}/warehouse_stocktake_history/{historyId} {
+      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+    }
+
+    // 冰箱盘点历史
+    match /stores/{storeId}/fridge_stocktake_history/{historyId} {
+      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+    }
     
     // 客户
     match /stores/{storeId}/customers/{customerId} {

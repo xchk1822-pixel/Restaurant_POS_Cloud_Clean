@@ -4,7 +4,17 @@ import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本
 import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
-import { normalizeFridgeInventoryForRefresh, normalizeFridgesForRefresh, normalizeInventoryItemsForRefresh, saveFridgeRefreshCache, saveInventoryRefreshCache } from '../../utils/stocktakeRefresh';
+import {
+  formatStocktakeRecordDateTime,
+  getStocktakeRecordDateKey,
+  normalizeFridgeInventoryForRefresh,
+  normalizeFridgesForRefresh,
+  normalizeInventoryItemsForRefresh,
+  normalizeStocktakeHistoryForRefresh,
+  saveFridgeRefreshCache,
+  saveInventoryRefreshCache,
+  sortStocktakeHistoryRecords,
+} from '../../utils/stocktakeRefresh';
 import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory';
 
 interface FridgeItem {
@@ -117,6 +127,34 @@ const FridgeStocktake: React.FC = () => {
   const fridgeItemOrderSignature = fridgeItems
     .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)
     .join('|');
+  const cacheStocktakeHistory = (records: any[]) => {
+    const sortedHistory = sortStocktakeHistoryRecords(records).slice(0, 50);
+    setStocktakeHistory(sortedHistory);
+    localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(sortedHistory));
+    return sortedHistory;
+  };
+
+  const mergeAndCacheStocktakeHistory = (cloudHistory: any[]) => {
+    const normalizedCloudHistory = normalizeStocktakeHistoryForRefresh(cloudHistory);
+    const mergedHistory = mergeRecordsByVersion(stocktakeHistory, normalizedCloudHistory);
+    return cacheStocktakeHistory(mergedHistory);
+  };
+
+  const refreshFridgeHistory = async () => {
+    const cloudHistory = await smartGetDocuments('fridge_stocktake_history', true);
+    return mergeAndCacheStocktakeHistory(cloudHistory);
+  };
+
+  const openHistoryModal = async () => {
+    setShowHistoryModal(true);
+    try {
+      await refreshFridgeHistory();
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('刷新冰箱盘点历史失败:', error);
+    }
+  };
+
   const refreshFridgeData = async () => {
     setIsRefreshing(true);
     try {
@@ -142,11 +180,7 @@ const FridgeStocktake: React.FC = () => {
       saveFridgeRefreshCache(storeId, normalizedFridges, normalizedFridgeInventory);
       saveInventoryRefreshCache(storeId, normalizedCloudItems);
 
-      if (cloudHistory.length > 0) {
-        const mergedHistory = mergeRecordsByVersion(stocktakeHistory, cloudHistory);
-        setStocktakeHistory(mergedHistory);
-        localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(mergedHistory.slice(0, 50)));
-      }
+      mergeAndCacheStocktakeHistory(cloudHistory);
 
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -611,9 +645,7 @@ const FridgeStocktake: React.FC = () => {
       await smartAddDocument('fridge_stocktake_history', stocktakeRecord);
 
       setFridgeInventory(newInventory);
-      history.unshift(stocktakeRecord);
-      localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(history.slice(0, 50)));
-      setStocktakeHistory(history.slice(0, 50));
+      cacheStocktakeHistory([stocktakeRecord, ...history]);
     } catch (error) {
       console.error('保存盘点历史失败:', error);
       alert('\u4fdd\u5b58\u76d8\u70b9\u7ed3\u679c\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
@@ -673,7 +705,7 @@ const FridgeStocktake: React.FC = () => {
   // 导出CSV
   const exportToCSV = () => {
     const filteredHistory = stocktakeHistory.filter(record => {
-      const recordDate = getLocalDateString(new Date(record.date)); // 🔥 使用本地时间
+      const recordDate = getStocktakeRecordDateKey(record);
       return recordDate === selectedHistoryDate;
     });
 
@@ -688,7 +720,7 @@ const FridgeStocktake: React.FC = () => {
     filteredHistory.forEach(record => {
       const fridge = fridges.find(f => f.id === record.fridgeId);
       const fridgeName = fridge?.name || record.fridgeName || '未知冰箱';
-      const date = new Date(record.date).toLocaleString('zh-CN');
+      const date = formatStocktakeRecordDateTime(record);
       
       record.items.forEach((item: any) => {
         csv += `${fridgeName},${date},${item.itemName},${item.unit || ''},${item.totalStock},${item.warehouseStock},${item.systemStock},${item.actualStock},${item.difference}\n`;
@@ -753,7 +785,7 @@ const FridgeStocktake: React.FC = () => {
             ➕ 冰箱管理
           </button>
           <button
-            onClick={() => setShowHistoryModal(true)}
+            onClick={openHistoryModal}
             style={{
               padding: '0.6rem 1.2rem',
               backgroundColor: '#8b5cf6',
@@ -1748,16 +1780,7 @@ const FridgeStocktake: React.FC = () => {
 
       {/* 盘点历史弹窗 */}
       {showHistoryModal && (() => {
-        // 每次打开时重新加载历史
-        const reloadHistory = () => {
-          try {
-                const saved = localStorage.getItem(stocktakeHistoryStorageKey);
-            return saved ? JSON.parse(saved) : [];
-          } catch {
-            return [];
-          }
-        };
-        const currentHistory = reloadHistory();
+        const currentHistory = stocktakeHistory;
         
         return (
         <div style={{
@@ -1845,7 +1868,7 @@ const FridgeStocktake: React.FC = () => {
             <div style={{ flex: 1, overflowY: 'auto', maxHeight: 'calc(80vh - 120px)' }}>
               {(() => {
               const filteredHistory = currentHistory.filter((record: any) => {
-                const recordDate = getLocalDateString(new Date(record.date)); // 🔥 使用本地时间
+                const recordDate = getStocktakeRecordDateKey(record);
                 return recordDate === selectedHistoryDate;
               });
 
@@ -1882,7 +1905,7 @@ const FridgeStocktake: React.FC = () => {
                               🧊 {latestRecord.fridgeName || '未知冰箱'}
                             </div>
                             <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                              {new Date(latestRecord.date).toLocaleString('zh-CN')}
+                              {formatStocktakeRecordDateTime(latestRecord)}
                             </div>
                           </div>
                           <div style={{

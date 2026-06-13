@@ -1,3 +1,9 @@
+import {
+  formatNicaraguaDateTime,
+  getLocalDateString,
+  toTimestampMillis,
+} from './localTime';
+
 export const normalizeInventoryItemsForRefresh = (items: any[]) => {
   return items.map((item: any) => ({
     ...item,
@@ -46,4 +52,45 @@ export const saveFridgeRefreshCache = (
     storeId ? `store_${storeId}_fridge_inventory` : 'fridge_inventory',
     JSON.stringify(fridgeInventory)
   );
+};
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const getStocktakeTimestamp = (record: any): number => {
+  return toTimestampMillis(record?.createdAt)
+    || toTimestampMillis(record?.lastModified)
+    || toTimestampMillis(record?.date);
+};
+
+export const getStocktakeRecordDateKey = (recordOrDate: any): string => {
+  const value = recordOrDate?.date ?? recordOrDate;
+
+  if (typeof value === 'string' && DATE_ONLY_PATTERN.test(value)) {
+    return value;
+  }
+
+  const timestamp = toTimestampMillis(value);
+  return timestamp ? getLocalDateString(new Date(timestamp)) : '';
+};
+
+export const formatStocktakeRecordDateTime = (record: any): string => {
+  const value = record?.createdAt || record?.date || record;
+
+  if (typeof value === 'string' && DATE_ONLY_PATTERN.test(value)) {
+    return value;
+  }
+
+  return formatNicaraguaDateTime(value) || String(record?.date || '');
+};
+
+export const sortStocktakeHistoryRecords = <T extends { id?: string }>(records: T[]): T[] => {
+  return [...records].sort((a: any, b: any) => getStocktakeTimestamp(b) - getStocktakeTimestamp(a));
+};
+
+export const normalizeStocktakeHistoryForRefresh = (records: any[]) => {
+  return sortStocktakeHistoryRecords(records.map((record: any) => ({
+    ...record,
+    date: getStocktakeRecordDateKey(record),
+    lastModified: Number(record.lastModified || 0) || getStocktakeTimestamp(record) || Date.now(),
+  })));
 };

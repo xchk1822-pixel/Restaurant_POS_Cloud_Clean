@@ -631,11 +631,34 @@ describe('production data safety guards', () => {
     expect(warehouseCompleteBlock).toContain("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)");
     expect(fridgeCompleteBlock).toContain("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)");
     expect(warehouseCompleteBlock.indexOf("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)")).toBeLessThan(
-      warehouseCompleteBlock.indexOf('setStocktakeHistory(history.slice(0, 50))')
+      warehouseCompleteBlock.indexOf('cacheStocktakeHistory([stocktakeRecord, ...history])')
     );
     expect(fridgeCompleteBlock.indexOf("await smartAddDocument('fridge_stocktake_history', stocktakeRecord)")).toBeLessThan(
-      fridgeCompleteBlock.indexOf('setStocktakeHistory(history.slice(0, 50))')
+      fridgeCompleteBlock.indexOf('cacheStocktakeHistory([stocktakeRecord, ...history])')
     );
+  });
+
+  test('stocktake history modal refreshes cloud history and keeps local date keys', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+
+    expect(warehouseSource).toContain("smartGetDocuments('warehouse_stocktake_history', true)");
+    expect(fridgeSource).toContain("smartGetDocuments('fridge_stocktake_history', true)");
+    expect(warehouseSource).toContain('normalizeStocktakeHistoryForRefresh(cloudHistory)');
+    expect(fridgeSource).toContain('normalizeStocktakeHistoryForRefresh(cloudHistory)');
+    expect(warehouseSource).toContain('const openHistoryModal = async');
+    expect(fridgeSource).toContain('const openHistoryModal = async');
+    expect(warehouseSource).toContain('getStocktakeRecordDateKey(record)');
+    expect(fridgeSource).toContain('getStocktakeRecordDateKey(record)');
+    expect(warehouseSource).not.toContain('getLocalDateString(new Date(record.date))');
+    expect(fridgeSource).not.toContain('getLocalDateString(new Date(record.date))');
+
+    const rulesPath = path.join(process.cwd(), '../firestore.rules');
+    const rules = fs.readFileSync(rulesPath, 'utf8');
+    expect(rules).toContain('match /stores/{storeId}/warehouse_stocktake_history/{historyId}');
+    expect(rules).toContain('match /stores/{storeId}/fridge_stocktake_history/{historyId}');
   });
 
   test('fridge creation waits for deterministic cloud write before local state update', () => {

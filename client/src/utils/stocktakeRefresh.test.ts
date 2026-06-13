@@ -1,7 +1,10 @@
 import {
+  formatStocktakeRecordDateTime,
+  getStocktakeRecordDateKey,
   normalizeFridgeInventoryForRefresh,
   normalizeFridgesForRefresh,
   normalizeInventoryItemsForRefresh,
+  normalizeStocktakeHistoryForRefresh,
 } from './stocktakeRefresh';
 
 describe('stocktake refresh helpers', () => {
@@ -43,5 +46,23 @@ describe('stocktake refresh helpers', () => {
     expect(inventory[0].quantity).toBe(7);
     expect(inventory[0].sortOrder).toBe(3);
     expect(inventory[0].lastModified).toBe(100);
+  });
+
+  test('keeps local date-only stocktake records on the selected Nicaragua date', () => {
+    const record = { date: '2026-06-13', createdAt: '2026-06-13 09:30:00' };
+
+    expect(getStocktakeRecordDateKey(record)).toBe('2026-06-13');
+    expect(formatStocktakeRecordDateTime(record)).toContain('2026');
+  });
+
+  test('normalizes stocktake history newest first for refresh caches', () => {
+    const result = normalizeStocktakeHistoryForRefresh([
+      { id: 'old', date: '2026-06-11', lastModified: 100 },
+      { id: 'new', date: '2026-06-13', lastModified: 300 },
+      { id: 'middle', date: '2026-06-12', lastModified: 200 },
+    ]);
+
+    expect(result.map(record => record.id)).toEqual(['new', 'middle', 'old']);
+    expect(result[0].date).toBe('2026-06-13');
   });
 });
