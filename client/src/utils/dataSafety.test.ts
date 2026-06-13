@@ -329,15 +329,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
   });
 
-  test('financial report handover difference compares actual handover against cash amount', () => {
+  test('financial report totals use cash card expense and cash handover formulas', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
+    const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
+    const metricsSource = fs.readFileSync(metricsPath, 'utf8');
 
-    expect(source).toContain('const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined');
-    expect(source).toContain('const profit = baseProfit + (difference || 0)');
-    expect(source).toContain("\\u51c0\\u5229\\u6da6\\uff08\\u542b\\u8bef\\u5dee\\uff09");
+    expect(source).toContain('calculateFinancialReportTotals({');
+    expect(metricsSource).toContain('const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment)');
+    expect(metricsSource).toContain('const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount)');
+    expect(metricsSource).toContain('const difference = handoverAmount !== undefined');
+    expect(metricsSource).toContain('? toMoneyNumber(cashPayment) - toMoneyNumber(handoverAmount)');
+    expect(source).toContain("{'\\u8425\\u4e1a\\u989d - \\u91c7\\u8d2d\\u4ed8\\u6b3e - \\u65e5\\u5e38\\u5f00\\u652f'}");
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
-    expect(source).not.toContain('const difference = handoverAmount !== undefined ? cashPayment - handoverAmount : undefined');
+    expect(source).not.toContain('const profit = baseProfit + (difference || 0)');
+    expect(source).not.toContain('\\u542b\\u8bef\\u5dee');
   });
 
   test('POS saves settled cash amounts instead of tendered cash including change', () => {

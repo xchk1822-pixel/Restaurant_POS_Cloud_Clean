@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { calculateFinancialReportTotals, getExpenseDateKey, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
@@ -98,7 +98,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     console.log(`  - ${date} orders:`, dayOrders.length);
 
-    const totalSales = dayOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+    const collectedSales = dayOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
     const orderCount = dayOrders.filter((order: any) => getOrderCollectedAmount(order) > 0).length;
 
     // Calculate cash and card income from settled orders.
@@ -111,15 +111,15 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       cardPayment += breakdown.card;
     });
 
-    // Cash plus card should match total sales.
+    // Cash plus card should match collected sales.
     const totalPayment = cashPayment + cardPayment;
-    if (Math.abs(totalPayment - totalSales) > 0.01 && totalSales > 0) {
-      console.warn('Cash plus card does not match total sales', {
-        totalSales,
+    if (Math.abs(totalPayment - collectedSales) > 0.01 && collectedSales > 0) {
+      console.warn('Cash plus card does not match collected sales', {
+        collectedSales,
         cashPayment,
         cardPayment,
         totalPayment,
-        difference: totalPayment - totalSales
+        difference: totalPayment - collectedSales
       });
     }
 
@@ -147,16 +147,17 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       return sum;
     }, 0);
 
-    // Calculate simplified base profit. More precise cost accounting would need per-item cost tracking.
-    const baseProfit = totalSales - purchaseAmount - expenseAmount;
-
     // Read shift handover records.
     const handovers = dataManager.getData('handovers');
     const dayHandover = handovers.find((h: any) => h.t && h.t.startsWith(date));
     const handoverAmount = dayHandover ? parseFloat(dayHandover.rawG) : undefined;
-    const difference = handoverAmount !== undefined ? handoverAmount - cashPayment : undefined;
-    const profit = baseProfit + (difference || 0);
-
+    const { totalSales, profit, difference } = calculateFinancialReportTotals({
+      cashPayment,
+      cardPayment,
+      purchaseAmount,
+      expenseAmount,
+      handoverAmount,
+    });
 
     return {
       date,
@@ -432,11 +433,11 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u91c7\u8d2d\u4ed8\u6b3e</div><div class="value">${money(summary.purchaseAmount)}</div></div>
           <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
           <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e</div><div class="value">${money(summary.supplierDebt)}</div></div>
-          <div class="box"><div class="label">\u51c0\u5229\u6da6\uff08\u542b\u8bef\u5dee\uff09</div><div class="value">${money(summary.profit)}</div></div>
+          <div class="box"><div class="label">\u5229\u6da6</div><div class="value">${money(summary.profit)}</div></div>
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
-          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u8ba2\u5355\u6570</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u5229\u6da6\uff08\u542b\u8bef\u5dee\uff09</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
+          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u8ba2\u5355\u6570</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u5229\u6da6</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
@@ -502,7 +503,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard('#f59e0b', '#f59e0b')}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue('#f59e0b')}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
             <div style={styles.statCard('#d97706', '#d97706')}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue('#d97706')}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
             <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
-            <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u51c0\u5229\u6da6\uff08\u542b\u8bef\u5dee\uff09'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u542b\u8bef\u5dee'} {signedMoney(summary.difference)} | {'\u5229\u6da6\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u5229\u6da6'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f'} | {'\u5229\u6da6\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
           </div>
 
           <div style={styles.card}>
@@ -521,7 +522,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5237\u5361'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5f00\u652f'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5229\u6da6\uff08\u542b\u8bef\u5dee\uff09'}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5229\u6da6'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5b9e\u4ea4'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8bef\u5dee'}</th>
                     </tr>

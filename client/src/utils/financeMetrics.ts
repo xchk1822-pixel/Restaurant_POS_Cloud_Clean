@@ -13,6 +13,32 @@ const toMoneyNumber = (value: any): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+export const calculateFinancialReportTotals = ({
+  cashPayment,
+  cardPayment,
+  purchaseAmount,
+  expenseAmount,
+  handoverAmount,
+}: {
+  cashPayment: number;
+  cardPayment: number;
+  purchaseAmount: number;
+  expenseAmount: number;
+  handoverAmount?: number;
+}): { totalSales: number; profit: number; difference?: number } => {
+  const totalSales = toMoneyNumber(cashPayment) + toMoneyNumber(cardPayment);
+  const profit = totalSales - toMoneyNumber(purchaseAmount) - toMoneyNumber(expenseAmount);
+  const difference = handoverAmount !== undefined
+    ? toMoneyNumber(cashPayment) - toMoneyNumber(handoverAmount)
+    : undefined;
+
+  return {
+    totalSales,
+    profit,
+    difference,
+  };
+};
+
 export const getOrderCollectedAmount = (order: any): number => {
   if (!order || order.status === 'cancelled') return 0;
 

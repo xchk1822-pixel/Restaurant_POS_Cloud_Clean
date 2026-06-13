@@ -1,4 +1,5 @@
 import {
+  calculateFinancialReportTotals,
   getExpenseDateKey,
   getOrderCollectedAmount,
   getOrderFinancialDateKey,
@@ -74,5 +75,31 @@ describe('finance metrics helpers', () => {
 
     expect(getOrderFinancialDateKey(order)).toBe('2026-06-11');
     expect(getOrderFinancialDateKey({ ...order, paymentStatus: 'unpaid' })).toBe('');
+  });
+
+  test('calculates financial report totals from cash card expense and handover formulas', () => {
+    expect(calculateFinancialReportTotals({
+      cashPayment: 100,
+      cardPayment: 30,
+      purchaseAmount: 20,
+      expenseAmount: 10,
+      handoverAmount: 95,
+    })).toEqual({
+      totalSales: 130,
+      profit: 100,
+      difference: 5,
+    });
+
+    expect(calculateFinancialReportTotals({
+      cashPayment: 100,
+      cardPayment: 30,
+      purchaseAmount: 20,
+      expenseAmount: 10,
+      handoverAmount: 105,
+    })).toEqual({
+      totalSales: 130,
+      profit: 100,
+      difference: -5,
+    });
   });
 });
