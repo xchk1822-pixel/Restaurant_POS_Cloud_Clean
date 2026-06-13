@@ -134,6 +134,26 @@ const MenuManagement: React.FC = () => {
       .some(value => String(value).toLowerCase().includes(normalizedMenuSearchTerm));
   });
 
+  const directStockItemIds = new Set(
+    menuItems
+      .filter(menu => (menu.type === 'direct' || (!menu.type && menu.stockItemId)) && menu.stockItemId)
+      .map(menu => menu.stockItemId)
+  );
+  const recipeIngredientItemIds = new Set(
+    menuItems
+      .filter(menu => menu.type === 'recipe' || (menu.ingredients || []).length > 0)
+      .flatMap(menu => (menu.ingredients || []).map(ingredient => ingredient.itemId).filter(Boolean))
+  );
+  const currentRecipeIngredientIds = new Set(
+    (editingMenu?.ingredients || []).map(ingredient => ingredient.itemId).filter(Boolean)
+  );
+  const directDeductionInventoryItems = inventoryItems.filter(
+    item => !recipeIngredientItemIds.has(item.id) || item.id === editingMenu?.stockItemId
+  );
+  const recipeIngredientInventoryItems = inventoryItems.filter(
+    item => !directStockItemIds.has(item.id) || currentRecipeIngredientIds.has(item.id)
+  );
+
   return (
     <div style={{ 
       padding: '1.5rem', 
@@ -659,7 +679,7 @@ const MenuManagement: React.FC = () => {
                     }}
                   >
                     <option value="">请选择库存物品</option>
-                    {inventoryItems.map(item => (
+                    {directDeductionInventoryItems.map(item => (
                       <option key={item.id} value={item.id}>{item.name} (当前库存: {item.currentStock} {item.unit})</option>
                     ))}
                   </select>
@@ -695,7 +715,7 @@ const MenuManagement: React.FC = () => {
                         }}
                       >
                         <option value="">选择物品</option>
-                        {inventoryItems.map(item => (
+                        {recipeIngredientInventoryItems.map(item => (
                           <option key={item.id} value={item.id}>{item.name}</option>
                         ))}
                       </select>

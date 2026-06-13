@@ -427,6 +427,15 @@ describe('production data safety guards', () => {
     expect(source).toContain('value={selectedMenuCategory}');
     expect(source).toContain('<option value="all">全部类别</option>');
     expect(source).toContain('filteredMenuItems.map(menu =>');
+    expect(source).toContain('const directStockItemIds = new Set');
+    expect(source).toContain('const recipeIngredientItemIds = new Set');
+    expect(source).toContain('const currentRecipeIngredientIds = new Set');
+    expect(source).toContain('const directDeductionInventoryItems = inventoryItems.filter');
+    expect(source).toContain('const recipeIngredientInventoryItems = inventoryItems.filter');
+    expect(source).toContain("item.id === editingMenu?.stockItemId");
+    expect(source).toContain('currentRecipeIngredientIds.has(item.id)');
+    expect(source).toContain('directDeductionInventoryItems.map(item =>');
+    expect(source).toContain('recipeIngredientInventoryItems.map(item =>');
     expect(source).toContain('menuItems.map(m =>');
     expect(source).toContain("await smartUpdateDocument('menu_items', menu.id, updatedMenu)");
     expect(source).toContain("await smartDeleteDocument('menu_items', menu.id)");
