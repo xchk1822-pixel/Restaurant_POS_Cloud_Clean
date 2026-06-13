@@ -56,6 +56,7 @@ const MenuManagement: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [menuSearchTerm, setMenuSearchTerm] = useState('');
   
   // 从 localStorage 加载分类配置
   useEffect(() => {
@@ -110,6 +111,21 @@ const MenuManagement: React.FC = () => {
       lastModified: Date.now()
     });
   };
+
+  const normalizedMenuSearchTerm = menuSearchTerm.trim().toLowerCase();
+  const filteredMenuItems = menuItems.filter(menu => {
+    if (!normalizedMenuSearchTerm) return true;
+
+    return [
+      menu.name,
+      menu.nameEs,
+      menu.category,
+      String(menu.price),
+      `C$ ${menu.price.toFixed(2)}`,
+    ]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(normalizedMenuSearchTerm));
+  });
 
   return (
     <div style={{ 
@@ -200,15 +216,67 @@ const MenuManagement: React.FC = () => {
 
       {/* 菜品卡片列表 */}
       <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          padding: '0.85rem 1rem',
+          borderBottom: '1px solid #e5e7eb',
+          display: 'grid',
+          gridTemplateColumns: '1fr auto',
+          gap: '0.75rem',
+          alignItems: 'center',
+          backgroundColor: '#f9fafb'
+        }}>
+          <input
+            type="text"
+            value={menuSearchTerm}
+            onChange={(e) => setMenuSearchTerm(e.target.value)}
+            placeholder="搜索菜品名称、分类或价格"
+            style={{
+              width: '100%',
+              padding: '0.6rem 0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '0.375rem',
+              fontSize: '0.9rem',
+              boxSizing: 'border-box'
+            }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              显示 {filteredMenuItems.length} / {menuItems.length}
+            </span>
+            {menuSearchTerm && (
+              <button
+                onClick={() => setMenuSearchTerm('')}
+                style={{
+                  padding: '0.5rem 0.75rem',
+                  backgroundColor: '#e5e7eb',
+                  color: '#374151',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.85rem',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                清空
+              </button>
+            )}
+          </div>
+        </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
           {menuItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
               <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🍽️</div>
               <p>暂无菜品，点击"添加菜品"开始创建</p>
             </div>
+          ) : filteredMenuItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔎</div>
+              <p>没有找到匹配的菜品</p>
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
-              {menuItems.map(menu => (
+              {filteredMenuItems.map(menu => (
                 <div key={menu.id} style={{
                   padding: '1rem',
                   border: '1px solid #e5e7eb',

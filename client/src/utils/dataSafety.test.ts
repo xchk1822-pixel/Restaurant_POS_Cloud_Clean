@@ -415,6 +415,19 @@ describe('production data safety guards', () => {
     expect(source).toContain('focusSearchInput();');
   });
 
+  test('menu management provides a local search box without changing cloud writes', () => {
+    const menuPath = path.join(process.cwd(), 'src/pages/Inventory/MenuManagement.tsx');
+    const source = fs.readFileSync(menuPath, 'utf8');
+
+    expect(source).toContain('const [menuSearchTerm, setMenuSearchTerm] = useState');
+    expect(source).toContain('const filteredMenuItems = menuItems.filter');
+    expect(source).toContain('placeholder="搜索菜品名称、分类或价格"');
+    expect(source).toContain('filteredMenuItems.map(menu =>');
+    expect(source).toContain('menuItems.map(m =>');
+    expect(source).toContain("await smartUpdateDocument('menu_items', menu.id, updatedMenu)");
+    expect(source).toContain("await smartDeleteDocument('menu_items', menu.id)");
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');
