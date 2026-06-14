@@ -3620,11 +3620,11 @@ const POS: React.FC = () => {
                       onChange={(e) => {
                         if (e.target.checked) {
                           // 鉁?鍚敤鎶樻墸鏃堕渶瑕佸簵闀挎巿鏉?
-                          const password = prompt('🔑 请输入店长密码以启用折扣：');
-                          if (password === 'admin123') {
+                          const password = prompt('🔑 请输入店长/老板密码以启用折扣：');
+                          if (password && managerAuthorizationPasswords.includes(password.trim())) {
                             setDiscountEnabled(true);
                           } else {
-                            alert('❌ 密码错误，需要店长授权');
+                            alert('❌ 密码错误，需要店长或老板授权');
                           }
                         } else {
                           // 绂佺敤鎶樻墸涓嶉渶瑕佹巿鏉?

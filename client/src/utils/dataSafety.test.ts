@@ -392,6 +392,19 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('cashAmount,');
   });
 
+  test('POS discount authorization accepts the shared manager password list', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const discountBlock = source.slice(
+      source.indexOf('id="discount-checkbox"') - 900,
+      source.indexOf('id="points-checkbox"')
+    );
+
+    expect(source).toContain("const managerAuthorizationPasswords = ['admin123', '123456']");
+    expect(discountBlock).toContain('managerAuthorizationPasswords.includes(password.trim())');
+    expect(discountBlock).not.toContain("password === 'admin123'");
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');
