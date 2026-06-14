@@ -392,14 +392,19 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('cashAmount,');
   });
 
-  test('POS menu category selector expands and collapses instead of horizontal scrolling', () => {
+  test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');
 
-    expect(source).toContain('categoriesExpanded');
-    expect(source).toContain('setCategoriesExpanded');
-    expect(source).toContain("aria-expanded={categoriesExpanded}");
     expect(source).toContain("flexWrap: 'wrap'");
+    expect(source).toContain("alignContent: 'flex-start'");
+    expect(source).not.toContain('categoriesExpanded');
+    expect(source).not.toContain('setCategoriesExpanded');
+    expect(source).not.toContain('aria-expanded');
+    expect(source).not.toContain('展开分类');
+    expect(source).not.toContain('收起分类');
+    expect(source).not.toContain('maxHeight:');
+    expect(source).not.toContain("overflowY: 'hidden'");
     expect(source).not.toContain("overflowX: 'auto'");
   });
 

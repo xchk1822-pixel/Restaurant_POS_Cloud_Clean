@@ -16,7 +16,6 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
   const { menuItems: contextMenuItems, categories } = useAppContext();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const focusSearchInput = useCallback(() => {
@@ -68,37 +67,17 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
+        alignContent: 'flex-start',
         gap: '0.5rem',
         padding: '0.5rem',
         borderBottom: '1px solid #e5e7eb',
-        maxHeight: categoriesExpanded ? '150px' : '46px',
-        overflowY: categoriesExpanded ? 'auto' : 'hidden',
         flexShrink: 0
       }}>
-        <button
-          type="button"
-          aria-expanded={categoriesExpanded}
-          onClick={() => setCategoriesExpanded(prev => !prev)}
-          style={{
-            padding: '0.375rem 0.75rem',
-            borderRadius: '0.375rem',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-            cursor: 'pointer',
-            border: '1px solid #d1d5db',
-            backgroundColor: categoriesExpanded ? '#1f2937' : '#ffffff',
-            color: categoriesExpanded ? '#ffffff' : '#374151'
-          }}
-        >
-          {categoriesExpanded ? '\u6536\u8d77\u5206\u7c7b' : '\u5c55\u5f00\u5206\u7c7b'}
-        </button>
         {categoryList.map(category => (
           <button
             key={category}
             onClick={() => {
               setSelectedCategory(category);
-              setCategoriesExpanded(false);
               focusSearchInput();
             }}
             style={{
