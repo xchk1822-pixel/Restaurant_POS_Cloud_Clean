@@ -641,6 +641,30 @@ describe('production data safety guards', () => {
     expect(addBlock).toContain('getMenuCategoryForInventoryCategory(newItem.category)');
   });
 
+  test('menu image uploads keep the original file without client compression', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/menuImageService.ts');
+    const managementPath = path.join(process.cwd(), 'src/pages/Inventory/MenuManagement.tsx');
+    const source = fs.readFileSync(servicePath, 'utf8');
+    const managementSource = fs.readFileSync(managementPath, 'utf8');
+
+    expect(source).not.toContain('compressMenuImage');
+    expect(source).not.toContain('../utils/imageCompression');
+    expect(source).not.toContain('thumbPath');
+    expect(source).not.toContain('mediumPath');
+    expect(source).not.toContain('imageThumbStoragePath');
+    expect(source).not.toContain('imageThumbUrl');
+    expect(source).toContain('uploadOriginalMenuImage');
+    expect(source).toContain('uploadBytes(ref(storage, imagePath), file');
+    expect(source).toContain('thumbSize: file.size');
+    expect(source).toContain('mediumSize: file.size');
+    expect(managementSource).toContain('imageThumbUrl: selectedImageFile ? undefined : editingMenu.imageThumbUrl');
+    expect(managementSource).toContain('imageThumbStoragePath: selectedImageFile ? undefined : editingMenu.imageThumbStoragePath');
+    expect(managementSource).toContain('保存时原图上传');
+    expect(managementSource).toContain('图片上传中...');
+    expect(managementSource).not.toContain('保存时压缩上传');
+    expect(managementSource).not.toContain('图片处理中...');
+  });
+
   test('stocktake active refresh is cloud-authoritative and history cache is store-scoped', () => {
     const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');

@@ -36,7 +36,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
     getMenuImageCache(menuId)
       .then(cache => {
         if (cancelled || !cache) return;
-        const dataUrl = variant === 'medium' ? cache.mediumDataUrl : cache.thumbDataUrl;
+        const dataUrl = cache.originalDataUrl || (variant === 'medium' ? cache.mediumDataUrl : cache.thumbDataUrl);
         if (dataUrl) setCachedSrc(dataUrl);
       })
       .catch(error => {

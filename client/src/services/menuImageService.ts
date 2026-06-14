@@ -1,13 +1,10 @@
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
-import { compressMenuImage, MenuImageSet } from '../utils/imageCompression';
 import { getMenuImageCache, saveMenuImageCache } from './menuImageCache';
 
 export interface MenuImageUploadResult {
   imageUrl?: string;
-  imageThumbUrl?: string;
   imageStoragePath?: string;
-  imageThumbStoragePath?: string;
   imageUpdatedAt: number;
   imageUploadPending?: boolean;
   thumbSize: number;
@@ -27,37 +24,43 @@ const getCurrentStoreId = (): string => {
   return 'default';
 };
 
-const uploadImageSet = async (
+const getSafeImageExtension = (fileName?: string, type?: string): string => {
+  const extension = fileName?.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (extension) return extension;
+  if (type === 'image/png') return 'png';
+  if (type === 'image/webp') return 'webp';
+  if (type === 'image/gif') return 'gif';
+  return 'jpg';
+};
+
+const fileToDataUrl = (file: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('图片缓存失败'));
+    reader.readAsDataURL(file);
+  });
+};
+
+const uploadOriginalMenuImage = async (
   storeId: string,
   menuId: string,
-  images: MenuImageSet,
+  file: Blob,
+  fileName: string | undefined,
+  contentType: string | undefined,
   imageUpdatedAt: number
 ) => {
   const basePath = `stores/${storeId}/menu-images/${menuId}`;
-  const thumbPath = `${basePath}/thumb-${imageUpdatedAt}.webp`;
-  const mediumPath = `${basePath}/medium-${imageUpdatedAt}.webp`;
-
-  const [thumbSnapshot, mediumSnapshot] = await Promise.all([
-    uploadBytes(ref(storage, thumbPath), images.thumb.blob, {
-      contentType: 'image/webp',
-      cacheControl: 'public,max-age=31536000,immutable'
-    }),
-    uploadBytes(ref(storage, mediumPath), images.medium.blob, {
-      contentType: 'image/webp',
-      cacheControl: 'public,max-age=31536000,immutable'
-    })
-  ]);
-
-  const [imageThumbUrl, imageUrl] = await Promise.all([
-    getDownloadURL(thumbSnapshot.ref),
-    getDownloadURL(mediumSnapshot.ref)
-  ]);
+  const imagePath = `${basePath}/original-${imageUpdatedAt}.${getSafeImageExtension(fileName, contentType)}`;
+  const snapshot = await uploadBytes(ref(storage, imagePath), file, {
+    contentType: contentType || 'image/jpeg',
+    cacheControl: 'public,max-age=31536000,immutable'
+  });
+  const imageUrl = await getDownloadURL(snapshot.ref);
 
   return {
     imageUrl,
-    imageThumbUrl,
-    imageStoragePath: mediumPath,
-    imageThumbStoragePath: thumbPath
+    imageStoragePath: imagePath
   };
 };
 
@@ -75,27 +78,20 @@ export const uploadCachedMenuImage = async (
   imageUpdatedAt?: number
 ): Promise<Omit<MenuImageUploadResult, 'thumbSize' | 'mediumSize'>> => {
   const cache = await getMenuImageCache(menuId);
-  if (!cache?.thumbBlob || !cache?.mediumBlob) {
+  const cachedBlob = cache?.originalBlob || cache?.mediumBlob || cache?.thumbBlob;
+  if (!cachedBlob) {
     throw new Error('没有找到本地缓存图片');
   }
 
   const uploadTime = imageUpdatedAt || cache.imageUpdatedAt || Date.now();
-  const uploaded = await withUploadTimeout(uploadImageSet(getCurrentStoreId(), menuId, {
-    thumb: {
-      blob: cache.thumbBlob,
-      dataUrl: cache.thumbDataUrl || '',
-      width: 0,
-      height: 0,
-      size: cache.thumbBlob.size
-    },
-    medium: {
-      blob: cache.mediumBlob,
-      dataUrl: cache.mediumDataUrl || '',
-      width: 0,
-      height: 0,
-      size: cache.mediumBlob.size
-    }
-  }, uploadTime));
+  const uploaded = await withUploadTimeout(uploadOriginalMenuImage(
+    getCurrentStoreId(),
+    menuId,
+    cachedBlob,
+    cache.originalName,
+    cache.originalType || cachedBlob.type,
+    uploadTime
+  ));
 
   return {
     ...uploaded,
@@ -108,28 +104,43 @@ export const processAndUploadMenuImage = async (
   menuId: string,
   file: File
 ): Promise<MenuImageUploadResult> => {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('请选择图片文件');
+  }
+
   const imageUpdatedAt = Date.now();
-  const images = await compressMenuImage(file);
-  await saveMenuImageCache(menuId, images, imageUpdatedAt);
+  await saveMenuImageCache(menuId, {
+    blob: file,
+    dataUrl: await fileToDataUrl(file),
+    type: file.type,
+    name: file.name
+  }, imageUpdatedAt);
 
   if (!navigator.onLine) {
     return {
       imageUpdatedAt,
       imageUploadPending: true,
-      thumbSize: images.thumb.size,
-      mediumSize: images.medium.size
+      thumbSize: file.size,
+      mediumSize: file.size
     };
   }
 
   try {
-    const uploaded = await withUploadTimeout(uploadImageSet(getCurrentStoreId(), menuId, images, imageUpdatedAt));
+    const uploaded = await withUploadTimeout(uploadOriginalMenuImage(
+      getCurrentStoreId(),
+      menuId,
+      file,
+      file.name,
+      file.type,
+      imageUpdatedAt
+    ));
 
     return {
       ...uploaded,
       imageUpdatedAt,
       imageUploadPending: false,
-      thumbSize: images.thumb.size,
-      mediumSize: images.medium.size
+      thumbSize: file.size,
+      mediumSize: file.size
     };
   } catch (error) {
     console.error('菜单图片上传失败:', error);

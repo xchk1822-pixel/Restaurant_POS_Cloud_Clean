@@ -1,11 +1,13 @@
-import { CompressedImage } from '../utils/imageCompression';
-
 const DB_NAME = 'restaurant_menu_image_cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
 
 export interface CachedMenuImage {
   menuId: string;
+  originalBlob?: Blob;
+  originalDataUrl?: string;
+  originalType?: string;
+  originalName?: string;
   thumbBlob?: Blob;
   mediumBlob?: Blob;
   thumbDataUrl?: string;
@@ -47,15 +49,15 @@ const runStore = async <T>(
 
 export const saveMenuImageCache = async (
   menuId: string,
-  images: { thumb: CompressedImage; medium: CompressedImage },
+  image: { blob: Blob; dataUrl: string; type?: string; name?: string },
   imageUpdatedAt: number
 ): Promise<void> => {
   await runStore('readwrite', store => store.put({
     menuId,
-    thumbBlob: images.thumb.blob,
-    mediumBlob: images.medium.blob,
-    thumbDataUrl: images.thumb.dataUrl,
-    mediumDataUrl: images.medium.dataUrl,
+    originalBlob: image.blob,
+    originalDataUrl: image.dataUrl,
+    originalType: image.type,
+    originalName: image.name,
     imageUpdatedAt
   }));
 };

@@ -539,7 +539,7 @@ const MenuManagement: React.FC = () => {
                     <>
                       <div style={{ fontSize: '2rem' }}>🖼️</div>
                       <div style={{ fontSize: '0.75rem', color: '#2563eb', marginTop: '0.4rem', textAlign: 'center' }}>
-                        保存时压缩上传
+                        保存时原图上传
                       </div>
                     </>
                   ) : (editingMenu.imageThumbUrl || editingMenu.imageUrl || editingMenu.image || editingMenu.imageUpdatedAt || editingMenu.imageUploadPending) ? (
@@ -853,7 +853,7 @@ const MenuManagement: React.FC = () => {
                     if (selectedImageFile) {
                       imageFields = await processAndUploadMenuImage(menuIdForSave, selectedImageFile);
                       if (imageFields.imageUploadPending) {
-                        alert('图片已压缩并保存在本机，但还没有上传到云端。当前终端可显示，其他终端需要等网络/权限恢复后自动同步。');
+                        alert('图片原图已保存在本机，但还没有上传到云端。当前终端可显示，其他终端需要等网络/权限恢复后自动同步。');
                       }
                     }
 
@@ -863,6 +863,8 @@ const MenuManagement: React.FC = () => {
                         ...editingMenu,
                         ...imageFields,
                         image: selectedImageFile ? undefined : editingMenu.image,
+                        imageThumbUrl: selectedImageFile ? undefined : editingMenu.imageThumbUrl,
+                        imageThumbStoragePath: selectedImageFile ? undefined : editingMenu.imageThumbStoragePath,
                         lastModified: Date.now()
                       } as MenuItem;
                       setMenuItems(menuItems.map(m =>
@@ -915,7 +917,7 @@ const MenuManagement: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                {isProcessingImage ? '图片处理中...' : '确认保存'}
+                {isProcessingImage ? '图片上传中...' : '确认保存'}
               </button>
             </div>
           </div>
