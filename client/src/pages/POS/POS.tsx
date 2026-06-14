@@ -1051,23 +1051,26 @@ const POS: React.FC = () => {
   React.useEffect(() => {
     if (!appOrders || appOrders.length === 0) return;
     const incomingOrders = appOrders as Order[];
-    if (!hasNewerCloudOrders(incomingOrders, orders)) {
-      return;
-    }
+    setOrders(prevOrders => {
+      if (!hasNewerCloudOrders(incomingOrders, prevOrders)) {
+        return prevOrders;
+      }
 
-    const appOrdersSignature = getOrdersSignature(incomingOrders);
-    if (appOrdersSignature === localOrdersSignatureRef.current) return;
-    if (appOrdersSignature === getOrdersSignature(orders)) return;
+      const mergedOrders = mergeOrdersByVersion(prevOrders, incomingOrders);
+      const mergedOrdersSignature = getOrdersSignature(mergedOrders);
+      if (mergedOrdersSignature === localOrdersSignatureRef.current) return prevOrders;
+      if (mergedOrdersSignature === getOrdersSignature(prevOrders)) return prevOrders;
 
-    console.log('POS received global order update:', appOrders.length);
-    localOrdersSignatureRef.current = appOrdersSignature;
-    publishedOrdersSignatureRef.current = appOrdersSignature;
-    incomingOrders.forEach(order => {
-      publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
-      pendingOrderSyncIdsRef.current.delete(order.id);
+      console.log('POS received global order update:', appOrders.length);
+      localOrdersSignatureRef.current = mergedOrdersSignature;
+      publishedOrdersSignatureRef.current = mergedOrdersSignature;
+      mergedOrders.forEach(order => {
+        publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
+        pendingOrderSyncIdsRef.current.delete(order.id);
+      });
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      return mergedOrders;
     });
-    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-    setOrders(incomingOrders);
     // 鍙湪鍏ㄥ眬璁㈠崟娴佸彉鍖栨椂鎺ユ敹锛岄伩鍏嶆湰鏈哄垰淇敼璁㈠崟鏃惰鏃х殑鍏ㄥ眬鐘舵€佽鐩栥€?    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appOrders]);
 
@@ -2464,7 +2467,7 @@ const POS: React.FC = () => {
     return getLocalDateString(orderDate) === today;
   });
 
-  const filteredOrders = allOrders.sort((a, b) => {
+  const filteredOrders = [...allOrders].sort((a, b) => {
     const dateA = toDisplayDate(a.createdAt || a.preparingAt || a.completedAt || a.lastModified)?.getTime() || 0;
     const dateB = toDisplayDate(b.createdAt || b.preparingAt || b.completedAt || b.lastModified)?.getTime() || 0;
     return dateB - dateA;

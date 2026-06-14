@@ -405,6 +405,33 @@ describe('production data safety guards', () => {
     expect(discountBlock).not.toContain("password === 'admin123'");
   });
 
+  test('POS order list sorting does not mutate the orders state array during render', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const orderListBlock = source.slice(
+      source.indexOf('const today = getLocalDateString();'),
+      source.indexOf('const handleAddTable = () => {')
+    );
+
+    expect(orderListBlock).toContain('const filteredOrders = [...allOrders].sort');
+    expect(orderListBlock).not.toContain('const filteredOrders = allOrders.sort');
+  });
+
+  test('POS global order updates merge by version instead of replacing the whole list', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const globalOrderStart = source.indexOf('if (!appOrders || appOrders.length === 0) return;');
+    expect(globalOrderStart).toBeGreaterThan(-1);
+    const globalOrderBlock = source.slice(
+      source.lastIndexOf('React.useEffect(() => {', globalOrderStart),
+      source.indexOf('useEffect(() => {', source.indexOf('if (orders.length > 0) return;'))
+    );
+
+    expect(globalOrderBlock).toContain('setOrders(prevOrders => {');
+    expect(globalOrderBlock).toContain('mergeOrdersByVersion(prevOrders, incomingOrders)');
+    expect(globalOrderBlock).not.toContain('setOrders(incomingOrders)');
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');
