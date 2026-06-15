@@ -76,10 +76,6 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/migrate" element={<Navigate to="/settings/backup" replace />} />
-            <Route path="/migrate-users" element={<Navigate to="/settings/backup" replace />} />
-            <Route path="/emergency-fix" element={<Navigate to="/settings/backup" replace />} />
-            <Route path="/data-recovery" element={<Navigate to="/settings/backup" replace />} />
             {/* 🔥 老板全局仪表板 - 使用真实 Firestore 数据 */}
             <Route path="/dashboard" element={<ProtectedRoute permissionId="dashboard"><OwnerDashboard /></ProtectedRoute>} />
             <Route path="/pos" element={<ProtectedRoute permissionId="pos"><POS /></ProtectedRoute>} />
@@ -109,9 +105,6 @@ function App() {
             <Route path="/stores" element={<Navigate to="/settings/stores" replace />} />
             <Route path="/exchange-rate" element={<Navigate to="/settings/exchange-rate" replace />} />
             <Route path="/reports" element={<Navigate to="/manager" replace />} />
-            <Route path="/firebase-test" element={<Navigate to="/settings/backup" replace />} />
-            <Route path="/offline-test" element={<Navigate to="/settings/backup" replace />} />
-            <Route path="/data-init" element={<Navigate to="/settings/backup" replace />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>

@@ -28,6 +28,23 @@ describe('production data safety guards', () => {
     });
   });
 
+  test('production app does not expose obsolete migration or test routes', () => {
+    const appPath = path.join(process.cwd(), 'src/App.tsx');
+    const source = fs.readFileSync(appPath, 'utf8');
+
+    [
+      '/migrate',
+      '/migrate-users',
+      '/emergency-fix',
+      '/data-recovery',
+      '/firebase-test',
+      '/offline-test',
+      '/data-init',
+    ].forEach(routePath => {
+      expect(source).not.toContain(`path="${routePath}"`);
+    });
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
