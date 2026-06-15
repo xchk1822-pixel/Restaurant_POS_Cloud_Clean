@@ -57,4 +57,4 @@ Data isolation rule:
 - Credit purchase supplier debt is recalculated from purchase orders instead of incrementing stale local supplier balance.
 - Operational local caches were scoped by store and deployed in commit `deabd48`.
 - Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.
-- Login store sync is cloud-authoritative and clears stale local store caches; code deployed, commit id to be recorded after push.
+- Login store sync is cloud-authoritative and clears stale local store caches, deployed in commit `d010b81`.
