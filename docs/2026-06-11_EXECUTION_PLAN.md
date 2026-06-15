@@ -35,17 +35,14 @@ Data isolation rule:
 - Login store sync now treats Firestore as the source of truth and clears stale local store caches when a cloud collection is empty.
 - POS table layout cloud persistence is hardened: empty cloud tables clear stale local caches, table edit updates existing records, waiter/tablet devices remain read-only for `pos_tables`, and split merged tables restore the original table positions.
 - Legacy global sync entry points `services/dataSync.ts` and `hooks/useFirestoreData.ts` were unused and have been deleted so root collection CRUD and non-store-scoped realtime hooks cannot be accidentally reconnected.
+- Confirmed-unused legacy UI leftovers were deleted after import and route checks: `components/OrderDetails.tsx`, `components/OrderList.tsx`, `components/Payment.tsx`, old `pages/Dashboard/Dashboard.tsx`, old `pages/Reports/Reports.tsx`, `pages/Manager/ManagerDashboard.tsx`, `pages/Manager/ShiftHandoverEmbedded.tsx`, and `utils/storeDataIsolation.ts`.
 
 ## Remaining Queue
 
-1. Residual unused source cleanup
-   - Search for old migration, test, emergency, duplicate service, and orphan page files.
-   - Delete only after confirming there are no production imports, no route entries, no required data migration role, and a regression guard can prevent reintroduction.
-
-2. Backup/export safety
+1. Backup/export safety
    - Confirm backup export is read-only and does not include stale global business localStorage keys as authoritative data.
 
-3. Remaining UI/data verification
+2. Remaining UI/data verification
    - Recheck owner mobile branch cards after the data layer is fully quarantined.
    - Continue module-by-module smoke tests without repeating archived completed work.
 
@@ -58,3 +55,4 @@ Data isolation rule:
 - Login store sync is cloud-authoritative and clears stale local store caches, deployed in commit `d010b81`.
 - POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting in commit `d8be493`.
 - Legacy global sync service and hook were removed after import verification; deployed to Firebase Hosting in commit `e4ef353`.
+- Confirmed-unused legacy UI, duplicate page, and old store-isolation leftovers were removed after RED/GREEN data-safety verification; deployed to Firebase Hosting, commit pending.

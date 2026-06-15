@@ -101,6 +101,54 @@ describe('production data safety guards', () => {
     expect(combinedSource).not.toContain("from '../../hooks/useFirestoreData'");
   });
 
+  test('confirmed unused legacy UI and store isolation leftovers are removed', () => {
+    const removedPaths = [
+      'src/components/OrderDetails.tsx',
+      'src/components/OrderList.tsx',
+      'src/components/Payment.tsx',
+      'src/pages/Dashboard/Dashboard.tsx',
+      'src/pages/Reports/Reports.tsx',
+      'src/pages/Manager/ManagerDashboard.tsx',
+      'src/pages/Manager/ShiftHandoverEmbedded.tsx',
+      'src/utils/storeDataIsolation.ts',
+    ];
+    const removedImportFragments = [
+      'components/OrderDetails',
+      'components/OrderList',
+      'components/Payment',
+      'pages/Dashboard/Dashboard',
+      'pages/Reports/Reports',
+      'pages/Manager/ManagerDashboard',
+      'pages/Manager/ShiftHandoverEmbedded',
+      'utils/storeDataIsolation',
+    ];
+    const srcRoot = path.join(process.cwd(), 'src');
+    const sourceFiles: string[] = [];
+
+    const collectSource = (directory: string) => {
+      fs.readdirSync(directory, { withFileTypes: true }).forEach(entry => {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          collectSource(entryPath);
+          return;
+        }
+        if (entry.name !== 'dataSafety.test.ts' && /\.(ts|tsx)$/.test(entry.name)) {
+          sourceFiles.push(fs.readFileSync(entryPath, 'utf8'));
+        }
+      });
+    };
+
+    removedPaths.forEach(relativePath => {
+      expect(fs.existsSync(path.join(process.cwd(), relativePath))).toBe(false);
+    });
+
+    collectSource(srcRoot);
+    const combinedSource = sourceFiles.join('\n');
+    removedImportFragments.forEach(importFragment => {
+      expect(combinedSource).not.toContain(importFragment);
+    });
+  });
+
   test('app context does not auto-save shared module data through legacy DataService', () => {
     const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
     const source = fs.readFileSync(appContextPath, 'utf8');
