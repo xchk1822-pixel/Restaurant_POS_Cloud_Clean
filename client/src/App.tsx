@@ -101,10 +101,6 @@ function App() {
             <Route path="/settings/exchange-rate" element={<ProtectedRoute permissionId="settings:exchange"><ExchangeRateSettings /></ProtectedRoute>} />
             <Route path="/settings/permissions" element={<ProtectedRoute permissionId="settings:permissions"><PermissionsModule /></ProtectedRoute>} />
             <Route path="/settings/backup" element={<ProtectedRoute permissionId="settings:backup"><DataBackup /></ProtectedRoute>} />
-            {/* 旧路径重定向 */}
-            <Route path="/stores" element={<Navigate to="/settings/stores" replace />} />
-            <Route path="/exchange-rate" element={<Navigate to="/settings/exchange-rate" replace />} />
-            <Route path="/reports" element={<Navigate to="/manager" replace />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>

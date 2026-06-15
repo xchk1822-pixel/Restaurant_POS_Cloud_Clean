@@ -45,6 +45,27 @@ describe('production data safety guards', () => {
     });
   });
 
+  test('production app uses canonical settings and manager routes only', () => {
+    const appPath = path.join(process.cwd(), 'src/App.tsx');
+    const source = fs.readFileSync(appPath, 'utf8');
+
+    [
+      '/settings/stores',
+      '/settings/exchange-rate',
+      '/manager',
+    ].forEach(routePath => {
+      expect(source).toContain(`path="${routePath}"`);
+    });
+
+    [
+      '/stores',
+      '/exchange-rate',
+      '/reports',
+    ].forEach(routePath => {
+      expect(source).not.toContain(`path="${routePath}"`);
+    });
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
