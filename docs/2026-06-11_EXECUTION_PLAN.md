@@ -39,6 +39,7 @@ Data isolation rule:
 - Backup export is Firestore-only and read-only; it no longer scans browser `localStorage` or includes `localCache` in the backup JSON.
 - Owner dashboard branch cards were rechecked online after the data-layer cleanup: branch totals render, card click expands in-page detail instead of navigating blank, and 390px mobile width remains readable.
 - Cleanup pass 1 removed confirmed-unreferenced technical leftovers after route/import/package checks: unused `client/src/types/index.ts`, old one-off `client/scripts/*.cjs`, stale `client/test-results`, undeployed reserved `server/` and `shared/`, and the mojibake legacy module overview document. Deployed and archived in commit `c989981`.
+- Cleanup pass 2 removed obsolete root-level historical Markdown documents that were mojibake, stale, or contradicted the current Firestore/Firebase Hosting architecture. The root now keeps only a current `README.md` that points to active docs under `docs/`.
 
 ## Remaining Queue
 
@@ -85,4 +86,4 @@ Data isolation rule:
 
 - Read `docs/2026-06-15_PROGRESS.md` first.
 - Ordered module verification queue is complete. Continue with cleanup only after import, route, test, build, deploy, and online checks, or handle newly reported production issues first.
-- Next cleanup pass, if no production bug is reported first: review root-level historical markdown files and keep only current operating documentation.
+- Next cleanup pass, if no production bug is reported first: review remaining docs under `docs/` and keep current planning/data-model documents only.
