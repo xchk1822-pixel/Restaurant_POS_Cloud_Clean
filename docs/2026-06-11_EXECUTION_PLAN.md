@@ -45,7 +45,7 @@ Data isolation rule:
    - Rule: check in this order only, mark each item complete once, and do not repeat completed checks unless a new bug is reported.
    - [x] POS cashier: table/order list render, menu images, payment buttons, order status colors, complete-order stock deduction path.
    - [x] Waiter ordering: shared table layout, order submit to POS/kitchen, no independent table state.
-   - [ ] Kitchen display: reads shared POS orders, status changes write back to `pos_orders`.
+   - [x] Kitchen display: reads shared POS orders, status changes write back to `pos_orders`.
    - [ ] Inventory management: item management, menu management, warehouse stocktake, fridge stocktake, supplier management cloud/manual-refresh behavior.
    - [ ] Employee management: profiles, attendance, loans, salary settlement persistence and store isolation.
    - [ ] Manager management: expense records, shift handover, order history, financial reports, customers.
@@ -67,3 +67,4 @@ Data isolation rule:
 - Owner dashboard branch cards and mobile branch detail were verified online with no code change in commit `e40e2f8`.
 - POS cashier was verified in order: table layout and right-side order list render online, payment/confirm copy no longer claims early stock deduction, and tests lock stock deduction to complete-order paths only. Deployed to Firebase Hosting in commit `47eb5fb`.
 - Waiter ordering was verified in order: waiter orders write to shared `pos_orders`, table display derives occupied state from shared orders, and the waiter table layout is read-only so it cannot create local-only table layouts. Deployed to Firebase Hosting in commit `dd7512e`.
+- Kitchen display was verified in order: `pos_orders` is subscribed by AppContext, mirrored into the local order stream for the kitchen display, and kitchen item/order status writes back to shared `pos_orders`. Re-deployed to Firebase Hosting in commit `pending`.
