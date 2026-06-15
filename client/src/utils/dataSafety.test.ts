@@ -250,7 +250,8 @@ describe('production data safety guards', () => {
 
     expect(source).toContain("smartUpdateDocument('pos_orders', newOrder.id");
     expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
-    expect(source).toContain('currentOrderId: newOrder.id');
+    expect(source).toContain('currentOrderId: activeOrder.id');
+    expect(source).not.toContain('currentOrderId: newOrder.id');
   });
 
   test('waiter table cache uses the current store scope', () => {
@@ -259,6 +260,35 @@ describe('production data safety guards', () => {
 
     expect(source).not.toContain("localStorage.getItem('pos_tables')");
     expect(source).toContain("localStorage.getItem(dataService.getStoreKey('pos_tables'))");
+  });
+
+  test('waiter table display derives occupied state from shared POS orders', () => {
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const source = fs.readFileSync(waiterPath, 'utf8');
+
+    expect(source).toContain('const displayedTables = tables.map');
+    expect(source).toContain('orders.find(order =>');
+    expect(source).toContain("order.tableId === table.id");
+    expect(source).toContain("order.status !== 'completed'");
+    expect(source).toContain("order.status !== 'cancelled'");
+    expect(source).toContain('tables={displayedTables}');
+    expect(source).not.toContain('updateTable(selectedTableId');
+    expect(source).toContain('点击桌台开始点餐，桌台布局由 POS 同步');
+    expect(source).not.toContain('右键可合并/拆分桌台');
+  });
+
+  test('waiter shared table layout is read-only and cannot create local-only layouts', () => {
+    const tableLayoutPath = path.join(process.cwd(), 'src/components/TableLayout.tsx');
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const tableLayoutSource = fs.readFileSync(tableLayoutPath, 'utf8');
+    const waiterSource = fs.readFileSync(waiterPath, 'utf8');
+
+    expect(tableLayoutSource).toContain('editable?: boolean');
+    expect(tableLayoutSource).toContain('editable = false');
+    expect(tableLayoutSource).toContain('if (!editable) return;');
+    expect(tableLayoutSource).toContain("cursor: editable ? 'move' : 'pointer'");
+    expect(waiterSource).toContain('editable={false}');
+    expect(waiterSource).not.toContain('onTablesUpdate={(updatedTables)');
   });
 
   test('POS table realtime subscription is cloud-authoritative', () => {

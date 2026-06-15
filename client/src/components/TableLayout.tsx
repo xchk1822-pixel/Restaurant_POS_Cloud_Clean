@@ -15,24 +15,28 @@ interface TableLayoutProps {
   tables: Table[];
   selectedTableId: string | null;
   onTableSelect: (tableId: string) => void;
-  onTablesUpdate: (tables: Table[]) => void;
+  onTablesUpdate?: (tables: Table[]) => void;
+  editable?: boolean;
 }
 
 const TableLayout: React.FC<TableLayoutProps> = ({
   tables,
   selectedTableId,
   onTableSelect,
-  onTablesUpdate
+  onTablesUpdate,
+  editable = false
 }) => {
   const [draggedTable, setDraggedTable] = useState<string | null>(null);
   const [showContextMenu, setShowContextMenu] = useState<{ x: number; y: number; tableId: string } | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent, tableId: string) => {
+    if (!editable) return;
     if (e.button === 2) return; // 右键不拖动
     setDraggedTable(tableId);
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (!editable) return;
     if (!draggedTable) return;
 
     const container = e.currentTarget as HTMLElement;
@@ -46,7 +50,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
         : table
     );
 
-    onTablesUpdate(updatedTables);
+    onTablesUpdate?.(updatedTables);
   };
 
   const handleMouseUp = () => {
@@ -54,6 +58,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
   };
 
   const handleContextMenu = (e: React.MouseEvent, tableId: string) => {
+    if (!editable) return;
     e.preventDefault();
     setShowContextMenu({
       x: e.clientX,
@@ -105,7 +110,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
               height: table.height,
               backgroundColor: selectedTableId === table.id ? '#3b82f6' : getStatusColor(table.status),
               borderRadius: '0.5rem',
-              cursor: 'move',
+              cursor: editable ? 'move' : 'pointer',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -124,7 +129,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
       </div>
 
       {/* 右键菜单 */}
-      {showContextMenu && (
+      {editable && showContextMenu && (
         <div
           style={{
             position: 'fixed',

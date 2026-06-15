@@ -135,6 +135,21 @@ const WaiterInterface: React.FC = () => {
   // 使用 AppContext 中的订单数据（实时同步）
   const orders = appOrders;
   const menuItems = contextMenuItems;
+  const displayedTables = tables.map(table => {
+    const activeOrder = orders.find(order =>
+      order.tableId === table.id &&
+      order.status !== 'completed' &&
+      order.status !== 'cancelled'
+    );
+
+    return activeOrder
+      ? {
+          ...table,
+          status: 'occupied' as const,
+          currentOrderId: activeOrder.id,
+        }
+      : table;
+  });
   
   // 状态管理
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
@@ -180,11 +195,6 @@ const WaiterInterface: React.FC = () => {
     }
     publishedTablesSignatureRef.current = signature;
   }, [tables]);
-  
-  // 更新桌台状态
-  const updateTable = (tableId: string, updates: Partial<Table>) => {
-    setTables(prev => prev.map(t => t.id === tableId ? { ...t, ...updates, lastModified: Date.now() } : t));
-  };
   
   // 创建订单
   const createOrder = (orderData: Partial<Order>) => {
@@ -358,18 +368,13 @@ const WaiterInterface: React.FC = () => {
     } else {
       // 创建新订单
       const table = tables.find(t => t.id === selectedTableId);
-      const newOrder = createOrder({
+      createOrder({
         tableId: selectedTableId,
         tableNumber: table?.number || '',
         items: updatedItems,
         status: 'confirmed',
         orderType: 'dine_in'
       });
-      
-      // 更新桌台状态为占用
-      if (table) {
-        updateTable(selectedTableId, { status: 'occupied', currentOrderId: newOrder.id });
-      }
       
       showNotification(`✅ 订单已发送到厨房`);
     }
@@ -391,18 +396,16 @@ const WaiterInterface: React.FC = () => {
       <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', backgroundColor: 'white' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0 }}>🍽️ 服务生 - 桌台管理</h2>
         <p style={{ color: '#6b7280', marginTop: '0.5rem', fontSize: '0.875rem' }}>
-          点击桌台开始点餐，右键可合并/拆分桌台
+          点击桌台开始点餐，桌台布局由 POS 同步
         </p>
       </div>
       
       <div style={{ flex: 1, padding: '1rem', overflow: 'hidden' }}>
         <TableLayout
-          tables={tables}
+          tables={displayedTables}
           selectedTableId={selectedTableId}
           onTableSelect={handleTableSelect}
-          onTablesUpdate={(updatedTables) => {
-            setTables(updatedTables);
-          }}
+          editable={false}
         />
       </div>
     </div>
