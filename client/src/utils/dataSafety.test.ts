@@ -43,6 +43,25 @@ describe('production data safety guards', () => {
     expect(source).toContain("dataManager.saveData('orders', uniqueOrders, { syncFirestore: false");
   });
 
+  test('POS confirm order copy does not claim stock deduction before completion', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const sendBlock = source.slice(
+      source.indexOf('const handleSendToKitchen = async () => {'),
+      source.indexOf('const deductStockForOrder')
+    );
+    const completeBlock = source.slice(
+      source.indexOf('const completeOrderWithStockDeduction'),
+      source.indexOf('const handleCompletePayment = async')
+    );
+
+    expect(source).toContain("title={hasUnsentItems ? '确认下单（发送到厨房）' : '所有商品已确认'}");
+    expect(source).not.toContain('确认下单（发送到厨房并扣减库存）');
+    expect(sendBlock).not.toContain('deductStockForOrder');
+    expect(sendBlock).not.toContain('deductStock(');
+    expect(completeBlock).toContain('deductStockForOrder');
+  });
+
   test('smart update uses Firestore upsert instead of update-only writes', () => {
     const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

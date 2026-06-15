@@ -3501,7 +3501,7 @@ const POS: React.FC = () => {
                           fontSize: '0.8rem',
                           opacity: hasUnsentItems ? 1 : 0.6
                         }}
-                        title={hasUnsentItems ? '确认下单（发送到厨房并扣减库存）' : '所有商品已确认'}
+                        title={hasUnsentItems ? '确认下单（发送到厨房）' : '所有商品已确认'}
                       >
                         ✅ 确认下单
                       </button>
