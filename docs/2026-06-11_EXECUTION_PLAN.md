@@ -40,7 +40,7 @@ Data isolation rule:
 - Owner dashboard branch cards were rechecked online after the data-layer cleanup: branch totals render, card click expands in-page detail instead of navigating blank, and 390px mobile width remains readable.
 - Cleanup pass 1 removed confirmed-unreferenced technical leftovers after route/import/package checks: unused `client/src/types/index.ts`, old one-off `client/scripts/*.cjs`, stale `client/test-results`, undeployed reserved `server/` and `shared/`, and the mojibake legacy module overview document. Deployed and archived in commit `c989981`.
 - Cleanup pass 2 removed obsolete root-level historical Markdown documents that were mojibake, stale, or contradicted the current Firestore/Firebase Hosting architecture. The root now keeps only a current `README.md` that points to active docs under `docs/`. Deployed and archived in commit `33ede41`.
-- Cleanup pass 3 removed superseded docs history files from `docs/`: the 2026-06-09 handoff, 2026-06-10 progress stream, and 2026-06-14 daily wrap-up. Active documentation is now limited to the execution plan, latest progress, commercial V3 requirements, and V3 data model draft.
+- Cleanup pass 3 removed superseded docs history files from `docs/`: the 2026-06-09 handoff, 2026-06-10 progress stream, and 2026-06-14 daily wrap-up. Active documentation is now limited to the execution plan, latest progress, commercial V3 requirements, and V3 data model draft. Deployed and archived in commit `280f935`.
 
 ## Remaining Queue
 
