@@ -47,7 +47,7 @@ Data isolation rule:
    - [x] Waiter ordering: shared table layout, order submit to POS/kitchen, no independent table state.
    - [x] Kitchen display: reads shared POS orders, status changes write back to `pos_orders`.
    - [x] Inventory management: item management, menu management, warehouse stocktake, fridge stocktake, supplier management cloud/manual-refresh behavior.
-   - [ ] Employee management: profiles, attendance, loans, salary settlement persistence and store isolation.
+   - [x] Employee management: profiles, attendance, loans, salary settlement persistence and store isolation.
    - [ ] Manager management: expense records, shift handover, order history, financial reports, customers.
    - [x] Manager data overview: totals, payment split, order type analysis, sales ranking, trend table, customer profile.
    - [x] Owner dashboard: branch cards, branch detail, mobile layout.
@@ -69,3 +69,4 @@ Data isolation rule:
 - Waiter ordering was verified in order: waiter orders write to shared `pos_orders`, table display derives occupied state from shared orders, and the waiter table layout is read-only so it cannot create local-only table layouts. Deployed to Firebase Hosting in commit `dd7512e`.
 - Kitchen display was verified in order: `pos_orders` is subscribed by AppContext, mirrored into the local order stream for the kitchen display, and kitchen item/order status writes back to shared `pos_orders`. Re-deployed to Firebase Hosting in commit `4440b7b`.
 - Inventory management was verified in order: item management, menu management, warehouse stocktake, fridge stocktake, and supplier management screens render online with cloud refresh entry points. Fridge stocktake now performs a one-time cloud refresh on entry and auto-selects a valid fridge so stale local cache cannot show empty or unknown fridge items on first load. Deployed to Firebase Hosting in commit `965eb8c`.
+- Employee management was verified in order: employee profiles, attendance, loans, and salary settlement screens render online, use manual cloud refresh with visible sync time, and existing data-safety guards confirm store-scoped refresh, deletion tombstones, and awaited cloud writes for attendance, loans, salary, expenses, and cash flow. Re-deployed to Firebase Hosting in commit `pending`.
