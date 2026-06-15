@@ -7,8 +7,6 @@ import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTim
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
 import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
-// 鉂?涓存椂绂佺敤 Firestore 鍚屾
-// import { smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
 
 interface Table {
   id: string;
@@ -662,31 +660,12 @@ const POS: React.FC = () => {
       }
       seenIds.add(order.id);
 
-      // 鉂?绉婚櫎妗屽彴杩囨护閫昏緫锛堥伩鍏嶈鍗曞垪琛ㄦ秷澶憋級
-      // 鉁?淇濈暀鎵€鏈夎鍗曪紝鍗充娇妗屽彴涓嶅瓨鍦紙鏄剧ず鏃跺彲浠ユ爣璁颁负鈥滄湭鐭ユ鍙扳€濓級
-      /*
-      // 绉婚櫎灞炰簬涓嶅瓨鍦ㄦ鍙扮殑璁㈠崟锛堚€滅墰鐨櫍鈥濊鍗曪級
-      if (order.tableId && !validTableIds.has(order.tableId)) {
-        if (order.orderType === 'dine_in') {
-          console.warn(`馃棏锔?绉婚櫎闈炲瓨鍦ㄦ鍙扮殑鍫傞璁㈠崟: ${order.id} (妗屽彴: ${order.tableId})`);
-          return false;
-        } else {
-          // 澶栧崠/鎵撳寘璁㈠崟锛屼繚鐣欎絾鏍囪涓烘湭鐭ユ鍙?
-          console.log(`馃捑 淇濈暀澶栧崠璁㈠崟锛堟鍙颁笉瀛樺湪锛? ${order.id} (妗屽彴: ${order.tableId})`);
-        }
-      }
-      */
+      // 保留所有订单，避免桌台布局变动导致当前订单列表消失。
 
       // 淇 createdAt 涓?null 鐨勯棶棰?
       if (!order.createdAt) {
         (order as any).createdAt = order.preparingAt || getLocalDateTimeString();
         console.log(`馃敡 淇璁㈠崟 ${order.id} 鐨?createdAt`);
-      }
-
-      // 淇宸插叏棰濇敮浠樹絾鐘舵€佷粛涓?served 鐨勮鍗?
-      if (false && order.status === 'served' && order.paymentStatus === 'paid') {
-        (order as any).status = 'completed';
-        console.log(`馃敡 淇璁㈠崟 ${order.id} 鐨勭姸鎬? served -> completed`);
       }
 
       // 淇缂哄け鐨勬椂闂村瓧娈?
@@ -938,25 +917,6 @@ const POS: React.FC = () => {
 
   useEffect(() => {
     saveToStorage('pos_held_orders', heldOrders);
-
-    // 鉂?绂佺敤 Firestore 鍚屾锛堝厛涓撴敞鏈湴鍔熻兘锛?
-    /*
-    setTimeout(() => {
-      Promise.all(
-        heldOrders.map(async (order) => {
-          try {
-            const orderData = {
-              ...order,
-              createdAt: order.createdAt.toISOString()
-            };
-            await smartUpdateDocument('pos_held_orders', order.id, orderData);
-          } catch (error) {
-            // 闈欓粯澶辫触
-          }
-        })
-      );
-    }, 1500);
-    */
   }, [heldOrders]);
 
   useEffect(() => {
@@ -1648,16 +1608,6 @@ const POS: React.FC = () => {
         return;
       }
 
-      // 鉂?绂佺敤 Firestore 鍚屾锛堝厛涓撴敞鏈湴鍔熻兘锛?
-      /*
-      try {
-        await smartUpdateDocument('pos_orders', tableActionData.orderId, updatedOrder);
-        console.log('鉁?娓呭彴璁㈠崟宸插悓姝ュ埌 Firestore');
-      } catch (error) {
-        console.error('鉂?鍚屾娓呭彴璁㈠崟澶辫触:', error);
-      }
-      */
-
       // 濡傛灉鏈夋鍙帮紝鏇存柊妗屽彴鐘舵€?
       if (tableActionData.tableId) {
         const updatedTable = tables.find(t => t.id === tableActionData.tableId);
@@ -1671,15 +1621,6 @@ const POS: React.FC = () => {
             t.id === tableActionData.tableId ? tableWithTimestamp : t
           ));
 
-          // 鉂?绂佺敤 Firestore 鍚屾锛堝厛涓撴敞鏈湴鍔熻兘锛?
-          /*
-          try {
-            await smartUpdateDocument('pos_tables', tableActionData.tableId, tableWithTimestamp);
-            console.log('鉁?妗屽彴鐘舵€佸凡鍚屾鍒?Firestore');
-          } catch (error) {
-            console.error('鉂?鍚屾妗屽彴鐘舵€佸け璐?', error);
-          }
-          */
         }
         alert('\u684c\u53f0\u5df2\u6e05\u7406\uff0c\u53ef\u4ee5\u63a5\u5f85\u65b0\u987e\u5ba2');
       } else {

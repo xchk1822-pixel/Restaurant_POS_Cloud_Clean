@@ -81,6 +81,20 @@ describe('production data safety guards', () => {
     expect(source).toContain("dataManager.saveData('orders', uniqueOrders, { syncFirestore: false");
   });
 
+  test('POS does not keep disabled legacy sync blocks or dead order migration branches', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    [
+      "smartUpdateDocument('pos_held_orders', order.id, orderData)",
+      "smartUpdateDocument('pos_orders', tableActionData.orderId, updatedOrder)",
+      "smartUpdateDocument('pos_tables', tableActionData.tableId, tableWithTimestamp)",
+      "if (false && order.status === 'served' && order.paymentStatus === 'paid')",
+    ].forEach(staleSource => {
+      expect(source).not.toContain(staleSource);
+    });
+  });
+
   test('POS cancel and complete actions publish terminal order state immediately', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
