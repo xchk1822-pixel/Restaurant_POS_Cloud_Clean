@@ -15,8 +15,14 @@ Execution rule for every task:
 5. Verify the changed screen with Playwright locally or online.
 6. Deploy with `firebase.cmd deploy --only hosting --non-interactive`.
 7. Verify online.
-8. Update progress notes.
+8. Update progress notes with changed files, completed items, verification, deploy URL, and commit id.
 9. Commit and push to GitHub.
+
+Data isolation rule:
+- Store business data must always use the current store scope.
+- Store-scoped data includes POS orders, tables, inventory, menu items, stocktake history, suppliers, purchases, employees, attendance, loans, salary, expenses, handovers, customers, points, and store settings.
+- Only owner/admin metadata such as `stores`, `users`, and `system_roles` may remain global.
+- If a business module cannot resolve `storeId`, it must not write to a bare global business key.
 
 ## Task Queue
 
@@ -48,3 +54,4 @@ Execution rule for every task:
 
 - Supplier manual refresh is cloud-authoritative.
 - Credit purchase supplier debt is recalculated from purchase orders instead of incrementing stale local supplier balance.
+- Operational local caches were scoped by store and deployed in commit `deabd48`.
