@@ -87,6 +87,33 @@ describe('production data safety guards', () => {
     expect(source).toContain("case 'cancelled': return '\\u5df2\\u53d6\\u6d88';");
   });
 
+  test('POS cancelled orders are frozen and cannot be reused for new table orders', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const tableStatusBlock = source.slice(
+      source.indexOf('// 根据订单状态自动更新桌台状态。'),
+      source.indexOf('// 馃攧 鏁版嵁浜掗€氭祴璇曪細')
+    );
+    const sendBlock = source.slice(
+      source.indexOf('const handleSendToKitchen = async () => {'),
+      source.indexOf('const deductStockForOrder')
+    );
+    const orderClickBlock = source.slice(
+      source.indexOf('const handleOrderClick = (order: any) => {'),
+      source.indexOf('const handleTableDragStart')
+    );
+
+    expect(source).toContain('const isEditableActiveOrder = (order?: Partial<Order> | null): boolean => {');
+    expect(tableStatusBlock).toContain('currentOrderId: newStatus === \'available\' ? undefined : table.currentOrderId');
+    expect(sendBlock).toContain('const selectedEditableOrder = selectedOrderId');
+    expect(sendBlock).toContain('isEditableActiveOrder(o)');
+    expect(sendBlock).toContain('if (!selectedEditableOrder) {');
+    expect(sendBlock).toContain('setSelectedOrderId(newOrder.id)');
+    expect(sendBlock).toContain('const editableOrderId = selectedEditableOrder.id;');
+    expect(sendBlock).toContain('o.id === editableOrderId');
+    expect(orderClickBlock).toContain("if (order.status === 'cancelled' || (order.status === 'completed' && order.clearedAt))");
+  });
+
   test('POS confirm order copy does not claim stock deduction before completion', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');

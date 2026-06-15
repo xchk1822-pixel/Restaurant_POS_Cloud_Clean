@@ -420,10 +420,15 @@ const isPaidAwaitingClear = (order: Partial<Order>): boolean => {
 };
 
 const isUnpaidActiveOrder = (order: Partial<Order>): boolean => {
-  return order.status !== 'completed' &&
-    order.status !== 'cancelled' &&
-    order.status !== 'draft' &&
+  return isEditableActiveOrder(order) &&
     order.paymentStatus !== 'paid';
+};
+
+const isEditableActiveOrder = (order?: Partial<Order> | null): boolean => {
+  return !!order &&
+    order.status !== 'completed' &&
+    order.status !== 'cancelled' &&
+    order.status !== 'draft';
 };
 
 const hasNewerCloudOrders = (cloudOrders: Order[], localOrders: Order[]): boolean => {
@@ -893,11 +898,14 @@ const POS: React.FC = () => {
         }
       }
 
-      if (newStatus !== table.status) {
+      const nextCurrentOrderId = newStatus === 'available' ? undefined : table.currentOrderId;
+
+      if (newStatus !== table.status || nextCurrentOrderId !== table.currentOrderId) {
         hasChanges = true;
         return {
           ...table,
           status: newStatus,
+          currentOrderId: newStatus === 'available' ? undefined : table.currentOrderId,
           lastModified: Date.now() // 娣诲姞鏃堕棿鎴?
         };
       }
@@ -1736,7 +1744,10 @@ const POS: React.FC = () => {
       return;
     }
 
-    const activeOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
+    const selectedEditableOrder = selectedOrderId
+      ? orders.find(o => o.id === selectedOrderId && isEditableActiveOrder(o)) || null
+      : null;
+    const activeOrder = selectedEditableOrder;
     const activeOrderType = activeOrder?.orderType || orderType;
 
     if (activeOrderType === 'dine_in' && !selectedTableId) {
@@ -1770,12 +1781,11 @@ const POS: React.FC = () => {
 
     setCurrentItems(updatedItems);
 
-    if (!selectedOrderId) {
+    if (!selectedEditableOrder) {
       const existingActiveOrder = orders.find(o =>
         orderType === 'dine_in' &&
         o.tableId === selectedTableId &&
-        o.status !== 'completed' &&
-        o.status !== 'cancelled'
+        isEditableActiveOrder(o)
       );
 
       if (existingActiveOrder) {
@@ -1824,8 +1834,9 @@ const POS: React.FC = () => {
           : t
       ));
     } else {
+      const editableOrderId = selectedEditableOrder.id;
       setOrders(prevOrders => prevOrders.map(o =>
-        o.id === selectedOrderId ? (() => {
+        o.id === editableOrderId ? (() => {
           const nextSettledAmount = Number(o.settledAmount || o.paidAmount || 0);
           const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
             nextSettledAmount >= finalTotal - 0.001
@@ -1846,7 +1857,7 @@ const POS: React.FC = () => {
           };
         })() : o
       ));
-      pendingOrderSyncIdsRef.current.add(selectedOrderId);
+      pendingOrderSyncIdsRef.current.add(editableOrderId);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
     }
 
@@ -2602,7 +2613,7 @@ const POS: React.FC = () => {
 
   const handleOrderClick = (order: any) => {
     // 鉁?濡傛灉璁㈠崟宸叉竻鍙帮紝杩涘叆鍙璇︽儏妯″紡锛堝彲浠ユ墦鍗板皬绁級
-    if (order.status === 'completed' && order.clearedAt) {
+    if (order.status === 'cancelled' || (order.status === 'completed' && order.clearedAt)) {
       const table = tables.find(t => t.number === order.tableNumber);
       setSelectedTableId(table ? table.id : null);
       setSelectedOrderId(order.id);
@@ -3215,7 +3226,7 @@ const POS: React.FC = () => {
     // 鉁?妫€娴嬫槸鍚︿负宸叉竻鍙拌鍗曪紙鍙妯″紡锛?
     const currentOrder = orders.find(o => o.id === selectedOrderId);
     // 鉁?鍔犺彍妯″紡锛氬嵆浣胯鍗曟槸completed锛屽彧瑕佹病鏈塩learedAt锛屽氨涓嶈繘鍏ュ彧璇绘ā寮?
-    const isReadOnly = currentOrder?.status === 'completed' && !!currentOrder?.clearedAt;
+    const isReadOnly = currentOrder?.status === 'cancelled' || (currentOrder?.status === 'completed' && !!currentOrder?.clearedAt);
 
     return (
       <>
