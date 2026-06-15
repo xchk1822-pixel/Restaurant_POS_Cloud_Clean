@@ -41,8 +41,17 @@ Data isolation rule:
 
 ## Remaining Queue
 
-1. Remaining UI/data verification
-   - Continue module-by-module smoke tests without repeating archived completed work.
+1. Ordered module verification queue
+   - Rule: check in this order only, mark each item complete once, and do not repeat completed checks unless a new bug is reported.
+   - [ ] POS cashier: table/order list render, menu images, payment buttons, order status colors, complete-order stock deduction path.
+   - [ ] Waiter ordering: shared table layout, order submit to POS/kitchen, no independent table state.
+   - [ ] Kitchen display: reads shared POS orders, status changes write back to `pos_orders`.
+   - [ ] Inventory management: item management, menu management, warehouse stocktake, fridge stocktake, supplier management cloud/manual-refresh behavior.
+   - [ ] Employee management: profiles, attendance, loans, salary settlement persistence and store isolation.
+   - [ ] Manager management: expense records, shift handover, order history, financial reports, customers.
+   - [x] Manager data overview: totals, payment split, order type analysis, sales ranking, trend table, customer profile.
+   - [x] Owner dashboard: branch cards, branch detail, mobile layout.
+   - [ ] System settings: stores, exchange rate, permissions, backup export.
 
 ## Current Completed Today
 
