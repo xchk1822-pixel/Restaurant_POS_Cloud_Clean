@@ -632,6 +632,17 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('processSyncQueue(');
   });
 
+  test('DataService login store sync is cloud-authoritative and clears stale local cache', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).toContain('localStorage.setItem(localKey, JSON.stringify(cloudData));');
+    expect(source).toContain('Cloud empty; cleared local cache');
+    expect(source).not.toContain('finalData = localData');
+    expect(source).not.toContain('localTime > cloudTime');
+    expect(source).not.toContain('if (cloudData && cloudData.length > 0)');
+  });
+
   test('inventory category cloud loads do not merge stale local categories', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');

@@ -24,31 +24,32 @@ Data isolation rule:
 - Only owner/admin metadata such as `stores`, `users`, and `system_roles` may remain global.
 - If a business module cannot resolve `storeId`, it must not write to a bare global business key.
 
-## Task Queue
+## Archived Completed
 
-1. Inventory item/category manual refresh
-   - Make refresh pull from Firestore server and update local store cache.
-   - Prevent deleted or old local inventory/category data from surviving manual refresh.
+- Inventory item/category manual refresh is cloud-authoritative and uses store-scoped local cache.
+- Warehouse and fridge stocktake active refresh and history use cloud refresh with store-scoped cache.
+- Employee records, attendance, loans, and salary settlement use awaited single-document writes and deletion tombstones.
+- Manager modules for expenses, handover drafts/history, financial reports, overview metrics, customers, points, and exchange-rate settings have store-scoped cache guards.
+- Owner dashboard removed the obsolete data-sync entry and uses collected revenue/date helpers.
+- Smart sync blocks global Firestore/localStorage fallback for store business collections when `storeId` is missing.
+- Login store sync now treats Firestore as the source of truth and clears stale local store caches when a cloud collection is empty.
 
-2. Warehouse and fridge stocktake refresh
-   - Check whether refresh merges stale local records.
-   - Preserve stocktake history safely while making active stock data cloud-authoritative when manually refreshed.
+## Remaining Queue
 
-3. Employee management
-   - Recheck employee, attendance, loan, salary, and cash-flow writes.
-   - Confirm deleted employees do not return on another terminal after manual refresh.
+1. POS table layout cloud persistence
+   - Verify table create/edit/delete/drag writes every layout change to `stores/{storeId}/pos_tables`.
+   - Confirm a clean browser login restores the same table layout from cloud, not from old local cache.
 
-4. Manager management
-   - Recheck expense records, shift handover, historical orders, financial reports, overview, and customer points.
-   - Confirm low-frequency refresh updates local cache and does not revive old records.
+2. Legacy service quarantine
+   - Review `client/src/services/dataSync.ts` and `client/src/hooks/useFirestoreData.ts`.
+   - Remove or guard any production imports that can read/write root business collections.
 
-5. Owner dashboard
-   - Recheck mobile layout, branch cards, data summary, and global collection reads.
-   - Remove or hide obsolete sync/admin tools that can confuse production use.
+3. Backup/export safety
+   - Confirm backup export is read-only and does not include stale global business localStorage keys as authoritative data.
 
-6. Data safety pass
-   - Review backup export coverage.
-   - Identify any remaining old DataService/localStorage paths that can write stale data back.
+4. Remaining UI/data verification
+   - Recheck owner mobile branch cards after the data layer is fully quarantined.
+   - Continue module-by-module smoke tests without repeating archived completed work.
 
 ## Current Completed Today
 
@@ -56,3 +57,4 @@ Data isolation rule:
 - Credit purchase supplier debt is recalculated from purchase orders instead of incrementing stale local supplier balance.
 - Operational local caches were scoped by store and deployed in commit `deabd48`.
 - Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.
+- Login store sync is cloud-authoritative and clears stale local store caches; code deployed, commit id to be recorded after push.

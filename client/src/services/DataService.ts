@@ -262,43 +262,14 @@ class DataService {
           ...doc.data(),
         }));
 
-        if (cloudData && cloudData.length > 0) {
-          // 🔥 比较本地数据和云端数据，保留最新的
-          const localKey = `store_${storeId}_${collection}`;
-          const localDataStr = localStorage.getItem(localKey);
-          let finalData = cloudData;
-
-          if (localDataStr) {
-            try {
-              const localData = JSON.parse(localDataStr);
-
-              // 如果本地数据有 updatedAt，且比云端新，则保留本地数据
-              if (localData.length > 0 && (localData[0] as any).updatedAt && (cloudData[0] as any).updatedAt) {
-                const localTime = new Date((localData[0] as any).updatedAt).getTime();
-                const cloudTime = new Date((cloudData[0] as any).updatedAt).getTime();
-
-                if (localTime > cloudTime) {
-                  console.log(`⚠️ 本地 ${collection} 数据更新，保留本地数据`);
-                  finalData = localData;
-                } else {
-                  console.log(`✅ 云端 ${collection} 数据更新，使用云端数据`);
-                }
-              } else {
-                // 没有时间戳，直接使用云端数据
-                console.log(`✅ 已同步 ${collection}: ${cloudData.length} 条`);
-              }
-            } catch (e) {
-              console.warn(`⚠️ 解析本地 ${collection} 数据失败，使用云端数据`, e);
-            }
-          }
-
-          // 保存到分店专属 localStorage key，避免多分店数据互相污染。
-          localStorage.setItem(localKey, JSON.stringify(finalData));
-          console.log(`✅ 最终保存 ${collection}: ${finalData.length} 条`);
-          syncedCount++;
+        const localKey = `store_${storeId}_${collection}`;
+        localStorage.setItem(localKey, JSON.stringify(cloudData));
+        if (cloudData.length > 0) {
+          console.log(`✅ 已同步 ${collection}: ${cloudData.length} 条`);
         } else {
-          console.log(`⚠️ ${collection} 在云端为空`);
+          console.log(`⚠️ ${collection} Cloud empty; cleared local cache`);
         }
+        syncedCount++;
       } catch (error) {
         console.error(`❌ 同步 ${collection} 失败:`, error);
       }
@@ -330,7 +301,7 @@ class DataService {
           ...doc.data(),
         }));
 
-        if (cloudData && cloudData.length > 0) {
+        if (cloudData.length > 0) {
           // 保存到 localStorage
           localStorage.setItem(collectionName, JSON.stringify(cloudData));
           console.log(`✅ 已同步全局 ${collectionName}: ${cloudData.length} 条`);
