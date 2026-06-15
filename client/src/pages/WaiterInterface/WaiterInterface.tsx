@@ -144,7 +144,14 @@ const WaiterInterface: React.FC = () => {
 
   useEffect(() => {
     const unsubscribe = smartSubscribeToCollection('pos_tables', (cloudTables) => {
-      if (!cloudTables || cloudTables.length === 0) return;
+      if (!cloudTables || cloudTables.length === 0) {
+        localStorage.setItem(dataService.getStoreKey('pos_tables'), JSON.stringify([]));
+        const emptySignature = getTablesSignature([]);
+        localTablesSignatureRef.current = emptySignature;
+        publishedTablesSignatureRef.current = emptySignature;
+        setTables([]);
+        return;
+      }
       const nextTables = dedupeTables(cloudTables as Table[]);
       const nextSignature = getTablesSignature(nextTables);
       localStorage.setItem(dataService.getStoreKey('pos_tables'), JSON.stringify(nextTables));

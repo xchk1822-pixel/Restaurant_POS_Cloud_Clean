@@ -456,6 +456,57 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("localStorage.getItem('inventory_items')");
   });
 
+  test('POS and waiter table subscriptions clear stale local tables when cloud is empty', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const waiterSource = fs.readFileSync(waiterPath, 'utf8');
+
+    expect(posSource).toContain("saveToStorage('pos_tables', []);");
+    expect(posSource).toContain('setTables([]);');
+    expect(waiterSource).toContain("localStorage.setItem(dataService.getStoreKey('pos_tables'), JSON.stringify([]));");
+    expect(waiterSource).toContain('setTables([]);');
+    expect(posSource).not.toContain('if (!cloudTables || cloudTables.length === 0) {\n        return;\n      }');
+    expect(waiterSource).not.toContain('if (!cloudTables || cloudTables.length === 0) return;');
+  });
+
+  test('POS table edit updates the existing table instead of creating a duplicate', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const handlerStart = source.indexOf('const handleAddTable = () => {');
+    const handlerEnd = source.indexOf('const handleDeleteTable', handlerStart);
+    const handlerBlock = source.slice(handlerStart, handlerEnd);
+
+    expect(handlerBlock).toContain('if (editingTable) {');
+    expect(handlerBlock).toContain('t.id === editingTable.id');
+    expect(handlerBlock).toContain('number: newTableName.trim()');
+    expect(handlerBlock).toContain('setEditingTable(null);');
+  });
+
+  test('POS table split restores original table positions after merge', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const mergeBlock = source.slice(
+      source.indexOf('const handleMergeTables = () => {'),
+      source.indexOf('const handleSplitTable = (tableId: string) => {')
+    );
+    const splitBlock = source.slice(
+      source.indexOf('const handleSplitTable = (tableId: string) => {'),
+      source.indexOf('const getStatusColor', source.indexOf('const handleSplitTable = (tableId: string) => {'))
+    );
+
+    expect(source).toContain('mergedFromTables?: Array<{');
+    expect(source).toContain('mergedFromTables: table.mergedFromTables || null');
+    expect(mergeBlock).toContain('const mergedFromTables = selectedTables');
+    expect(mergeBlock).toContain('x: t.x');
+    expect(mergeBlock).toContain('y: t.y');
+    expect(mergeBlock).toContain('mergedFromTables');
+    expect(splitBlock).toContain('const restoredTables = table.mergedFromTables');
+    expect(splitBlock).toContain('x: original.x');
+    expect(splitBlock).toContain('y: original.y');
+    expect(splitBlock).toContain('deletedTableIdsRef.current.delete(restoredTable.id)');
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');

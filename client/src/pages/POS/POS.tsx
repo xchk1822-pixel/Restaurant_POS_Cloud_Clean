@@ -20,6 +20,17 @@ interface Table {
   status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
   capacity: number;
   currentOrderId?: string;
+  mergedFromTables?: Array<{
+    id: string;
+    number: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    capacity: number;
+    status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
+    currentOrderId?: string;
+  }>;
   lastModified?: number; // 馃敟 鏈€鍚庝慨鏀规椂闂存埑锛堟绉掞級锛岀敤浜庡璁惧鍚屾鐗堟湰鎺у埗
 }
 
@@ -277,6 +288,7 @@ const getTablesSignature = (tables: Array<Partial<Table>> = []): string => {
         status: table.status,
         capacity: table.capacity,
         currentOrderId: table.currentOrderId || null,
+        mergedFromTables: table.mergedFromTables || null,
         lastModified: table.lastModified || null
       }))
       .sort((a, b) => String(a.id).localeCompare(String(b.id)))
@@ -788,6 +800,11 @@ const POS: React.FC = () => {
   useEffect(() => {
     const unsubscribe = smartSubscribeToCollection('pos_tables', (cloudTables) => {
       if (!cloudTables || cloudTables.length === 0) {
+        saveToStorage('pos_tables', []);
+        tableCloudHydratedRef.current = true;
+        localTablesSignatureRef.current = getTablesSignature([]);
+        publishedTablesSignatureRef.current = getTablesSignature([]);
+        setTables([]);
         return;
       }
 
@@ -2476,6 +2493,21 @@ const POS: React.FC = () => {
   const handleAddTable = () => {
     if (newTableName.trim()) {
       markTableUserEdit();
+      if (editingTable) {
+        setTables(prevTables => normalizeTables(
+          prevTables.map(t => (
+            t.id === editingTable.id
+              ? { ...t, number: newTableName.trim(), lastModified: Date.now() }
+              : t
+          )),
+          activeOrderTableIdsRef.current
+        ).tables);
+        setNewTableName('');
+        setEditingTable(null);
+        setShowAddTableModal(false);
+        return;
+      }
+
       const newTable: Table = {
         id: `table-${Date.now()}`,
         number: newTableName.trim(),
@@ -2489,6 +2521,7 @@ const POS: React.FC = () => {
       };
       setTables(prevTables => normalizeTables([...prevTables, newTable], activeOrderTableIdsRef.current).tables);
       setNewTableName('');
+      setEditingTable(null);
       setShowAddTableModal(false);
     }
   };
@@ -2739,17 +2772,30 @@ const POS: React.FC = () => {
     if (!firstTable) return;
 
     markTableUserEdit();
+    const mergedFromTables = selectedTables
+      .map(id => tables.find(t => t.id === id))
+      .filter((t): t is Table => Boolean(t))
+      .map(t => ({
+        id: t.id,
+        number: t.number,
+        x: t.x,
+        y: t.y,
+        width: t.width,
+        height: t.height,
+        capacity: t.capacity,
+        status: t.status,
+        currentOrderId: t.currentOrderId
+      }));
+
     const mergedTable: Table = {
       ...firstTable,
       id: `merged-${Date.now()}`,
-      number: `${selectedTables.map(id => tables.find(t => t.id === id)?.number).join('+')}`,
+      number: `${mergedFromTables.map(t => t.number).join('+')}`,
       width: 110,
       height: 90,
+      mergedFromTables,
       lastModified: Date.now(),
-      capacity: selectedTables.reduce((sum, id) => {
-        const t = tables.find(tab => tab.id === id);
-        return sum + (t?.capacity || 0);
-      }, 0)
+      capacity: mergedFromTables.reduce((sum, t) => sum + (t.capacity || 0), 0)
     };
 
     selectedTables.forEach(id => {
@@ -2774,7 +2820,18 @@ const POS: React.FC = () => {
     markTableUserEdit();
     const numbers = table.number.split('+');
     const now = Date.now();
-    const newTables = numbers.map((num, idx) => ({
+    const restoredTables = table.mergedFromTables
+      ? table.mergedFromTables.map(original => ({
+        ...original,
+        x: original.x,
+        y: original.y,
+        width: original.width || 110,
+        height: original.height || 90,
+        status: original.status || ('available' as const),
+        capacity: original.capacity || Math.floor(table.capacity / numbers.length),
+        lastModified: now
+      }))
+      : numbers.map((num, idx) => ({
       id: `split-${tableId}-${idx}`,
       number: num,
       x: table.x + idx * 130,
@@ -2787,10 +2844,13 @@ const POS: React.FC = () => {
     }));
 
     deletedTableIdsRef.current.add(tableId);
+    restoredTables.forEach(restoredTable => {
+      deletedTableIdsRef.current.delete(restoredTable.id);
+    });
     smartDeleteDocument('pos_tables', tableId).catch(error => {
       console.error('鍒犻櫎鎷嗗垎鍓嶆鍙板け璐?', tableId, error);
     });
-    setTables(normalizeTables([...tables.filter(t => t.id !== tableId), ...newTables], activeOrderTableIdsRef.current).tables);
+    setTables(normalizeTables([...tables.filter(t => t.id !== tableId), ...restoredTables], activeOrderTableIdsRef.current).tables);
   };
 
   const getStatusColor = (status: string, paymentStatus?: string, clearedAt?: Date) => {

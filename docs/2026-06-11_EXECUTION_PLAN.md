@@ -33,21 +33,18 @@ Data isolation rule:
 - Owner dashboard removed the obsolete data-sync entry and uses collected revenue/date helpers.
 - Smart sync blocks global Firestore/localStorage fallback for store business collections when `storeId` is missing.
 - Login store sync now treats Firestore as the source of truth and clears stale local store caches when a cloud collection is empty.
+- POS table layout cloud persistence is hardened: empty cloud tables clear stale local caches, table edit updates existing records, waiter/tablet devices remain read-only for `pos_tables`, and split merged tables restore the original table positions.
 
 ## Remaining Queue
 
-1. POS table layout cloud persistence
-   - Verify table create/edit/delete/drag writes every layout change to `stores/{storeId}/pos_tables`.
-   - Confirm a clean browser login restores the same table layout from cloud, not from old local cache.
-
-2. Legacy service quarantine
+1. Legacy service quarantine
    - Review `client/src/services/dataSync.ts` and `client/src/hooks/useFirestoreData.ts`.
    - Remove or guard any production imports that can read/write root business collections.
 
-3. Backup/export safety
+2. Backup/export safety
    - Confirm backup export is read-only and does not include stale global business localStorage keys as authoritative data.
 
-4. Remaining UI/data verification
+3. Remaining UI/data verification
    - Recheck owner mobile branch cards after the data layer is fully quarantined.
    - Continue module-by-module smoke tests without repeating archived completed work.
 
@@ -58,3 +55,4 @@ Data isolation rule:
 - Operational local caches were scoped by store and deployed in commit `deabd48`.
 - Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.
 - Login store sync is cloud-authoritative and clears stale local store caches, deployed in commit `d010b81`.
+- POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting, GitHub commit pending.
