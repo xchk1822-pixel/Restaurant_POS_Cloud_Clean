@@ -315,6 +315,112 @@ export const getOrderFinancialDateKey = (order: any): string => {
   return timestamp ? getLocalDateString(new Date(timestamp)) : '';
 };
 
+export interface OrderStatusSummary {
+  completedOrders: number;
+  cancelledOrders: number;
+  cancelledItems: number;
+}
+
+const getDateKeyFromValues = (...values: any[]): string => {
+  for (const value of values) {
+    const timestamp = toTimestampMillis(value);
+    if (timestamp) return getLocalDateString(new Date(timestamp));
+  }
+  return '';
+};
+
+export const getOrderCancellationDateKey = (order: any): string => {
+  if (!order || order.status !== 'cancelled') return '';
+  return getDateKeyFromValues(
+    order?.cancelledAt,
+    order?.cancelAt,
+    order?.voidedAt,
+    order?.updatedAt,
+    order?.createdAt,
+    order?.date,
+    order?.orderDate
+  );
+};
+
+const getCancelRecordDateKey = (record: any, order: any): string => getDateKeyFromValues(
+  record?.cancelledAt,
+  record?.cancelAt,
+  record?.voidedAt,
+  record?.createdAt,
+  record?.updatedAt,
+  order?.updatedAt,
+  order?.createdAt,
+  order?.date,
+  order?.orderDate
+);
+
+const getCancelRecordQuantity = (record: any): number => {
+  const explicitQuantity = toMoneyNumber(
+    record?.quantity ??
+    record?.cancelledQuantity ??
+    record?.cancelQuantity ??
+    record?.voidedQuantity
+  );
+  return explicitQuantity > 0 ? explicitQuantity : 1;
+};
+
+export const getCancelledItemCountForDate = (order: any, date: string): number => {
+  if (!order || !date) return 0;
+
+  const orderCancelRecords = Array.isArray(order?.cancelRecords)
+    ? order.cancelRecords.filter((record: any) => record?.orderType !== 'order' && record?.type !== 'order')
+    : [];
+
+  if (orderCancelRecords.length > 0) {
+    return orderCancelRecords.reduce((sum: number, record: any) => (
+      getCancelRecordDateKey(record, order) === date ? sum + getCancelRecordQuantity(record) : sum
+    ), 0);
+  }
+
+  const items = Array.isArray(order?.items) ? order.items : [];
+  let cancelledItems = 0;
+  let hasDatedItemRecords = false;
+
+  items.forEach((item: any) => {
+    const itemCancelRecords = Array.isArray(item?.cancelRecords) ? item.cancelRecords : [];
+    if (itemCancelRecords.length > 0) {
+      hasDatedItemRecords = true;
+      itemCancelRecords.forEach((record: any) => {
+        if (getCancelRecordDateKey(record, order) === date) {
+          cancelledItems += getCancelRecordQuantity(record);
+        }
+      });
+    }
+  });
+
+  if (hasDatedItemRecords) return cancelledItems;
+
+  const fallbackDate = getOrderFinancialDateKey(order) || getOrderCancellationDateKey(order) || getDateKeyFromValues(order?.createdAt, order?.date, order?.orderDate);
+  if (fallbackDate !== date) return 0;
+
+  return items.reduce((sum: number, item: any) => {
+    const cancelledQuantity = toMoneyNumber(
+      item?.cancelledQuantity ??
+      item?.cancelQuantity ??
+      item?.voidedQuantity
+    );
+    return sum + Math.max(cancelledQuantity, 0);
+  }, 0);
+};
+
+export const calculateOrderStatusSummary = (orders: any[], date: string): OrderStatusSummary => {
+  return (Array.isArray(orders) ? orders : []).reduce((summary: OrderStatusSummary, order: any) => {
+    if (getOrderFinancialDateKey(order) === date && getOrderCollectedAmount(order) > 0) {
+      summary.completedOrders += 1;
+    }
+    if (getOrderCancellationDateKey(order) === date) {
+      summary.cancelledOrders += 1;
+    }
+    summary.cancelledItems += getCancelledItemCountForDate(order, date);
+    return summary;
+  }, { completedOrders: 0, cancelledOrders: 0, cancelledItems: 0 });
+};
+
 export const getExpenseDateKey = (expense: any): string => {
   if (expense?.date && /^\d{4}-\d{2}-\d{2}$/.test(String(expense.date))) {
     return String(expense.date);

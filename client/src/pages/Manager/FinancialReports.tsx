@@ -3,12 +3,15 @@ import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 
 interface DailyReport {
   date: string;
   totalSales: number;
   orderCount: number;
+  completedOrders: number;
+  cancelledOrders: number;
+  cancelledItems: number;
   cashPayment: number;
   cardPayment: number;
   purchaseAmount: number;
@@ -35,6 +38,9 @@ const signedMoney = (value: number | undefined | null): string => {
   const amount = Number(value) || 0;
   return `${amount > 0 ? '+' : ''}${money(amount)}`;
 };
+
+const formatTodayOrders = (report: Pick<DailyReport, 'completedOrders' | 'cancelledOrders' | 'cancelledItems'>): string =>
+  `\u5b8c\u6210 ${report.completedOrders} \u5355 / \u53d6\u6d88\u6574\u5355 ${report.cancelledOrders} \u5355 / \u53d6\u6d88\u83dc\u54c1 ${report.cancelledItems} \u9053`;
 
 const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -115,6 +121,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     const collectedSales = dayOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
     const orderCount = dayOrders.filter((order: any) => getOrderCollectedAmount(order) > 0).length;
+    const orderStatusSummary = calculateOrderStatusSummary(orders, date);
 
     // Calculate cash and card income from settled orders.
     let cashPayment = 0;
@@ -177,6 +184,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       date,
       totalSales,
       orderCount,
+      completedOrders: orderStatusSummary.completedOrders,
+      cancelledOrders: orderStatusSummary.cancelledOrders,
+      cancelledItems: orderStatusSummary.cancelledItems,
       cashPayment,
       cardPayment,
       purchaseAmount,
@@ -225,6 +235,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const summary = dailyReports.reduce((acc, report) => ({
     totalSales: acc.totalSales + report.totalSales,
     orderCount: acc.orderCount + report.orderCount,
+    completedOrders: acc.completedOrders + report.completedOrders,
+    cancelledOrders: acc.cancelledOrders + report.cancelledOrders,
+    cancelledItems: acc.cancelledItems + report.cancelledItems,
     cashPayment: acc.cashPayment + report.cashPayment,
     cardPayment: acc.cardPayment + report.cardPayment,
     purchaseAmount: acc.purchaseAmount + report.purchaseAmount,
@@ -234,7 +247,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     handoverAmount: acc.handoverAmount + (report.handoverAmount || 0),
     hasHandover: acc.hasHandover || report.handoverAmount !== undefined,
     supplierDebt: supplierDebtTotal
-  }), { totalSales: 0, orderCount: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
+  }), { totalSales: 0, orderCount: 0, completedOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
     ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate, expenseCategories, dataManager.getData('purchases'))
     : { summaries: [], details: [], groups: [] };
@@ -377,7 +390,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       <tr>
         <td>${htmlEscape(report.date)}</td>
         <td class="num">${money(report.totalSales)}</td>
-        <td class="num">${report.orderCount}</td>
+        <td>${htmlEscape(formatTodayOrders(report))}</td>
         <td class="num">${money(report.cashPayment)}</td>
         <td class="num">${money(report.cardPayment)}</td>
         <td class="num">${money(report.purchaseAmount)}</td>
@@ -455,7 +468,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u8425\u4e1a\u989d</div><div class="value">${money(summary.totalSales)}</div></div>
           <div class="box"><div class="label">\u73b0\u91d1</div><div class="value">${money(summary.cashPayment)}</div></div>
           <div class="box"><div class="label">\u5237\u5361</div><div class="value">${money(summary.cardPayment)}</div></div>
-          <div class="box"><div class="label">\u8ba2\u5355\u6570</div><div class="value">${summary.orderCount}</div></div>
+          <div class="box"><div class="label">\u4eca\u65e5\u8ba2\u5355</div><div class="value">${htmlEscape(formatTodayOrders(summary))}</div></div>
           <div class="box"><div class="label">\u91c7\u8d2d\u4ed8\u6b3e</div><div class="value">${money(summary.purchaseAmount)}</div></div>
           <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
           <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e\uff08\u5f53\u524d\u5269\u4f59\u6b20\u6b3e\uff09</div><div class="value">${money(summary.supplierDebt)}</div></div>
@@ -465,7 +478,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
-          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u8ba2\u5355\u6570</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u76c8\u4e8f</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
+          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u4eca\u65e5\u8ba2\u5355</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u76c8\u4e8f</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
@@ -525,7 +538,8 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={styles.statsGrid}>
-            <div style={styles.statCard('#3b82f6', '#3b82f6')}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue('#3b82f6')}>{money(summary.totalSales)}</div><div style={styles.statSub}>{summary.orderCount} {'\u7b14\u8ba2\u5355'}</div></div>
+            <div style={styles.statCard('#3b82f6', '#3b82f6')}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue('#3b82f6')}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
+            <div style={styles.statCard('#0f766e', '#0f766e')}><div style={styles.statLabel}>{'\u4eca\u65e5\u8ba2\u5355'}</div><div style={{ ...styles.statValue('#0f766e'), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
             <div style={styles.statCard('#10b981', '#10b981')}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue('#10b981')}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#8b5cf6', '#8b5cf6')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#8b5cf6')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#f59e0b', '#f59e0b')}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue('#f59e0b')}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
@@ -547,7 +561,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                     <tr>
                       <th style={styles.th}>{'\u65e5\u671f'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8425\u4e1a\u989d'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8ba2\u5355\u6570'}</th>
+                      <th style={styles.th}>{'\u4eca\u65e5\u8ba2\u5355'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u73b0\u91d1'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5237\u5361'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</th>
@@ -562,7 +576,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                       <tr key={index}>
                         <td style={styles.td}>{report.date}</td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600' }}>{money(report.totalSales)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>{report.orderCount}</td>
+                        <td style={styles.td}>{formatTodayOrders(report)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: '#10b981' }}>{money(report.cashPayment)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: '#8b5cf6' }}>{money(report.cardPayment)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: '#f59e0b' }}>{money(report.purchaseAmount)}</td>

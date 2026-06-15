@@ -1,5 +1,6 @@
 import {
   buildDailyExpenseBreakdown,
+  calculateOrderStatusSummary,
   calculateFinancialReportTotals,
   getExpenseDateKey,
   getLatestHandoverAmountForDate,
@@ -77,6 +78,60 @@ describe('finance metrics helpers', () => {
 
     expect(getOrderFinancialDateKey(order)).toBe('2026-06-11');
     expect(getOrderFinancialDateKey({ ...order, paymentStatus: 'unpaid' })).toBe('');
+  });
+
+  test('summarizes daily completed orders cancelled orders and cancelled dishes separately', () => {
+    const orders = [
+      {
+        id: 'paid-table-order',
+        status: 'completed',
+        paymentStatus: 'paid',
+        totalAmount: 100,
+        lastPaidAt: '2026-06-12T10:00:00.000-06:00',
+      },
+      {
+        id: 'cancelled-whole-order',
+        status: 'cancelled',
+        totalAmount: 80,
+        cancelledAt: '2026-06-12T11:00:00.000-06:00',
+        items: [{ name: 'Dish A', quantity: 2 }],
+      },
+      {
+        id: 'cancelled-items-order-record',
+        status: 'confirmed',
+        paymentStatus: 'unpaid',
+        createdAt: '2026-06-12T12:00:00.000-06:00',
+        cancelRecords: [
+          { orderType: 'item', quantity: 2, cancelledAt: '2026-06-12T12:05:00.000-06:00' },
+          { orderType: 'order', quantity: 9, cancelledAt: '2026-06-12T12:10:00.000-06:00' },
+        ],
+      },
+      {
+        id: 'paid-order-with-item-record',
+        status: 'served',
+        paymentStatus: 'paid',
+        totalAmount: 50,
+        lastPaidAt: '2026-06-12T13:00:00.000-06:00',
+        items: [
+          {
+            name: 'Dish B',
+            cancelRecords: [{ quantity: 1, cancelledAt: '2026-06-12T13:05:00.000-06:00' }],
+          },
+        ],
+      },
+      {
+        id: 'other-day-cancelled',
+        status: 'cancelled',
+        cancelledAt: '2026-06-11T11:00:00.000-06:00',
+        cancelRecords: [{ orderType: 'item', quantity: 99, cancelledAt: '2026-06-11T11:05:00.000-06:00' }],
+      },
+    ];
+
+    expect(calculateOrderStatusSummary(orders, '2026-06-12')).toEqual({
+      completedOrders: 2,
+      cancelledOrders: 1,
+      cancelledItems: 3,
+    });
   });
 
   test('calculates financial report totals with cash-based handover difference included in profit loss', () => {

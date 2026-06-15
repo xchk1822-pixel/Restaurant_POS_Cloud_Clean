@@ -596,6 +596,25 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('\\u5f53\\u5929\\u5f00\\u652f\\u5206\\u7c7b\\u6c47\\u603b');
   });
 
+  test('financial reports use one today orders column for completed and cancelled activity', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+    const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
+    const metricsSource = fs.readFileSync(metricsPath, 'utf8');
+
+    expect(metricsSource).toContain('export const calculateOrderStatusSummary');
+    expect(metricsSource).toContain('completedOrders');
+    expect(metricsSource).toContain('cancelledOrders');
+    expect(metricsSource).toContain('cancelledItems');
+    expect(source).toContain('calculateOrderStatusSummary(orders, date)');
+    expect(source).toContain('\\u4eca\\u65e5\\u8ba2\\u5355');
+    expect(source).toContain('\\u5b8c\\u6210');
+    expect(source).toContain('\\u53d6\\u6d88\\u6574\\u5355');
+    expect(source).toContain('\\u53d6\\u6d88\\u83dc\\u54c1');
+    expect(source).toContain('formatTodayOrders(report)');
+    expect(source).not.toContain('\\u53d6\\u6d88\\u539f\\u56e0');
+  });
+
   test('POS saves settled cash amounts instead of tendered cash including change', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
