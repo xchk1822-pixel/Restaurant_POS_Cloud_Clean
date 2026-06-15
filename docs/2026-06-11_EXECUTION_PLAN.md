@@ -65,4 +65,4 @@ Data isolation rule:
 - Confirmed-unused legacy UI, duplicate page, and old store-isolation leftovers were removed after RED/GREEN data-safety verification; deployed to Firebase Hosting in commit `c416c71`.
 - Backup export now reads Firestore only and excludes browser local cache; deployed to Firebase Hosting in commit `d33b0d4`.
 - Owner dashboard branch cards and mobile branch detail were verified online with no code change in commit `e40e2f8`.
-- POS cashier was verified in order: table layout and right-side order list render online, payment/confirm copy no longer claims early stock deduction, and tests lock stock deduction to complete-order paths only. Deployed to Firebase Hosting in commit `pending`.
+- POS cashier was verified in order: table layout and right-side order list render online, payment/confirm copy no longer claims early stock deduction, and tests lock stock deduction to complete-order paths only. Deployed to Firebase Hosting in commit `47eb5fb`.
