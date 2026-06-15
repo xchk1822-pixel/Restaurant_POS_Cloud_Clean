@@ -2265,6 +2265,8 @@ const POS: React.FC = () => {
       setCancelReason('');
       setCancelAction('delete');
     } else {
+      let tableIdToRelease = selectedTableId;
+
       if (selectedOrderId) {
         const order = orders.find(o => o.id === selectedOrderId);
 
@@ -2290,14 +2292,10 @@ const POS: React.FC = () => {
           return;
         }
 
+        tableIdToRelease = cancelledOrder.tableId || selectedTableId;
+
         setOrders(prevOrders => prevOrders.map(o =>
-          o.id === selectedOrderId ? {
-            ...o,
-            status: 'cancelled',
-            cancelledBy: '搴楅暱',
-            cancelReason: cancelReason,
-            cancelledAt: new Date()
-          } : o
+          o.id === selectedOrderId ? cancelledOrder : o
         ));
 
         if (order) {
@@ -2318,9 +2316,11 @@ const POS: React.FC = () => {
         }
       }
 
-      if (selectedTableId) {
-        setTables(tables.map(t =>
-          t.id === selectedTableId ? {...t, status: 'available'} : t
+      if (tableIdToRelease) {
+        setTables(prevTables => prevTables.map(t =>
+          t.id === tableIdToRelease
+            ? { ...t, status: 'available' as const, currentOrderId: undefined, lastModified: Date.now() }
+            : t
         ));
       }
 
@@ -2330,6 +2330,7 @@ const POS: React.FC = () => {
       setViewMode('overview');
       setCurrentItems([]);
       setSelectedOrderId(null);
+      setSelectedTableId(null);
 
       alert('✅ 订单已取消');
     }

@@ -64,6 +64,29 @@ describe('production data safety guards', () => {
     );
   });
 
+  test('POS full order cancel keeps cancelled status locally and releases the order table', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const cancelBlock = source.slice(
+      source.indexOf('const confirmCancelOrder = async'),
+      source.indexOf('const handleSplitBillConfirm')
+    );
+    const orderListBlock = source.slice(
+      source.indexOf('const today = getLocalDateString();'),
+      source.indexOf('const handleAddTable = () => {')
+    );
+
+    expect(cancelBlock).toContain('let tableIdToRelease = selectedTableId;');
+    expect(cancelBlock).toContain('tableIdToRelease = cancelledOrder.tableId || selectedTableId;');
+    expect(cancelBlock).toContain('o.id === selectedOrderId ? cancelledOrder : o');
+    expect(cancelBlock).toContain('if (tableIdToRelease) {');
+    expect(cancelBlock).toContain('t.id === tableIdToRelease');
+    expect(cancelBlock).toContain('currentOrderId: undefined');
+    expect(cancelBlock).toContain("status: 'available' as const");
+    expect(orderListBlock).not.toContain("o.status === 'cancelled'");
+    expect(source).toContain("case 'cancelled': return '\\u5df2\\u53d6\\u6d88';");
+  });
+
   test('POS confirm order copy does not claim stock deduction before completion', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
