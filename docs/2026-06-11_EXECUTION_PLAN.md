@@ -48,7 +48,7 @@ Data isolation rule:
    - [x] Kitchen display: reads shared POS orders, status changes write back to `pos_orders`.
    - [x] Inventory management: item management, menu management, warehouse stocktake, fridge stocktake, supplier management cloud/manual-refresh behavior.
    - [x] Employee management: profiles, attendance, loans, salary settlement persistence and store isolation.
-   - [ ] Manager management: expense records, shift handover, order history, financial reports, customers.
+   - [x] Manager management: expense records, shift handover, order history, financial reports, customers.
    - [x] Manager data overview: totals, payment split, order type analysis, sales ranking, trend table, customer profile.
    - [x] Owner dashboard: branch cards, branch detail, mobile layout.
    - [ ] System settings: stores, exchange rate, permissions, backup export.
@@ -77,8 +77,9 @@ Data isolation rule:
 - Financial reports now show `今日订单` as one combined business field: completed orders, whole-order cancellations, and cancelled dish quantity. The same field is used in the screen report and A4 print report, with cancellation reasons intentionally omitted from print.
 - Financial report summary cards now follow the fixed two-row order requested for real operation: top row revenue/cash/card/order/profit-loss, bottom row handover/difference/daily expenses/purchase payments/supplier debt. The label was changed from `今日订单` to `订单` for date filters beyond today.
 
+- Manager management was verified in order: expense records, shift handover, order history, financial reports, data overview, and customer management render online with 0 console errors. Expense receipt removal and shift handover submit now wait for cloud writes before local state updates. Order history detail now shows available cancellation summary and item-level cancellation records. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
+
 ## Next Session Start
 
-- Read `docs/2026-06-14_DAILY_WRAPUP.md` first.
-- Continue the remaining ordered queue from `Manager management`: expense records, shift handover, order history, financial reports, and customers.
-- After manager management, continue `System settings`: stores, exchange rate, permissions, and backup/export.
+- Read `docs/2026-06-15_PROGRESS.md` first.
+- Continue the remaining ordered queue from `System settings`: stores, exchange rate, permissions, and backup/export.

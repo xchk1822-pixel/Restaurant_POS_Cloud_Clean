@@ -10,6 +10,8 @@ import {
 import { getLocalDateString } from '../../utils/exchangeRate';
 import {
   filterAndSortOrders,
+  getOrderCancellationRecords,
+  getOrderCancellationSummary,
   getOrderTimestamp,
   groupOrdersByDate,
   normalizeOrderType,
@@ -172,6 +174,24 @@ const OrderHistoryPage: React.FC = () => {
   const filteredTotal = sortedOrders.reduce(
     (sum: number, order: any) => sum + (Number(order.totalAmount) || 0),
     0
+  );
+
+  const selectedCancellationSummary = useMemo(
+    () => selectedOrder ? getOrderCancellationSummary(selectedOrder) : null,
+    [selectedOrder]
+  );
+  const selectedCancellationRecords = useMemo(
+    () => selectedOrder ? getOrderCancellationRecords(selectedOrder) : [],
+    [selectedOrder]
+  );
+  const hasSelectedCancellationInfo = Boolean(
+    selectedOrder && (
+      selectedOrder.status === 'cancelled' ||
+      selectedCancellationSummary?.reason ||
+      selectedCancellationSummary?.cancelledBy ||
+      selectedCancellationSummary?.cancelledAt ||
+      selectedCancellationRecords.length > 0
+    )
   );
 
   const handleExportOrders = () => {
@@ -583,6 +603,51 @@ const OrderHistoryPage: React.FC = () => {
                 <div><strong>完成</strong><div>{formatOrderTime(selectedOrder.completedAt)}</div></div>
                 <div><strong>总耗时</strong><div>{formatDuration(calculateStageDurations(selectedOrder).totalTime)}</div></div>
               </div>
+              {hasSelectedCancellationInfo && (
+                <div style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '0.5rem',
+                  padding: '1rem',
+                  marginBottom: '1.5rem',
+                }}>
+                  <h4 style={{ margin: '0 0 0.75rem', color: '#991b1b' }}>{'\u53d6\u6d88\u8bb0\u5f55'}</h4>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                    gap: '0.75rem',
+                    marginBottom: selectedCancellationRecords.length > 0 ? '1rem' : 0,
+                  }}>
+                    <div><strong>{'\u53d6\u6d88\u539f\u56e0'}</strong><div>{selectedCancellationSummary?.reason || '-'}</div></div>
+                    <div><strong>{'\u64cd\u4f5c\u4eba'}</strong><div>{selectedCancellationSummary?.cancelledBy || '-'}</div></div>
+                    <div><strong>{'\u53d6\u6d88\u65f6\u95f4'}</strong><div>{selectedCancellationSummary?.cancelledAt ? formatNicaraguaDateTime(toTimestampMillis(selectedCancellationSummary.cancelledAt)) : '-'}</div></div>
+                  </div>
+                  {selectedCancellationRecords.length > 0 && (
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>{'\u53d6\u6d88\u83dc\u54c1\u8bb0\u5f55'}</th>
+                          <th style={{ ...styles.th, textAlign: 'center' }}>{'\u6570\u91cf'}</th>
+                          <th style={styles.th}>{'\u539f\u56e0'}</th>
+                          <th style={styles.th}>{'\u64cd\u4f5c\u4eba'}</th>
+                          <th style={styles.th}>{'\u65f6\u95f4'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedCancellationRecords.map((record: any, index: number) => (
+                          <tr key={record.id || `${record.itemName || 'cancel'}-${index}`}>
+                            <td style={styles.td}>{record.itemName || '-'}</td>
+                            <td style={{ ...styles.td, textAlign: 'center' }}>{Number(record.quantity || 0)}</td>
+                            <td style={styles.td}>{record.reason || '-'}</td>
+                            <td style={styles.td}>{record.cancelledBy || '-'}</td>
+                            <td style={styles.td}>{record.cancelledAt ? formatNicaraguaDateTime(toTimestampMillis(record.cancelledAt)) : '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
               <table style={styles.table}>
                 <thead>
                   <tr>

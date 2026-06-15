@@ -1,4 +1,9 @@
-import { filterAndSortOrders, getOrderDateKey } from './orderHistory';
+import {
+  filterAndSortOrders,
+  getOrderCancellationRecords,
+  getOrderCancellationSummary,
+  getOrderDateKey,
+} from './orderHistory';
 
 describe('order history helpers', () => {
   test('sorts filtered orders newest first', () => {
@@ -33,5 +38,49 @@ describe('order history helpers', () => {
     });
 
     expect(result.map(order => order.id)).toEqual(['a']);
+  });
+
+  test('collects full-order and item-level cancellation records', () => {
+    const order = {
+      id: 'order-1',
+      cancelReason: 'customer left',
+      cancelledBy: 'manager',
+      cancelledAt: '2026-06-15T12:00:00.000Z',
+      cancelRecords: [
+        {
+          id: 'record-1',
+          itemName: 'Chicken',
+          quantity: 2,
+          reason: 'customer left',
+          cancelledBy: 'manager',
+          cancelledAt: '2026-06-15T12:00:00.000Z',
+        },
+      ],
+      items: [
+        {
+          id: 'item-1',
+          name: 'Soup',
+          cancelRecords: [
+            {
+              id: 'record-2',
+              quantity: 1,
+              reason: 'wrong item',
+              cancelledBy: 'cashier',
+              cancelledAt: '2026-06-15T12:05:00.000Z',
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(getOrderCancellationSummary(order)).toMatchObject({
+      reason: 'customer left',
+      cancelledBy: 'manager',
+      cancelledAt: '2026-06-15T12:00:00.000Z',
+    });
+    expect(getOrderCancellationRecords(order)).toEqual([
+      expect.objectContaining({ itemName: 'Chicken', quantity: 2 }),
+      expect.objectContaining({ itemName: 'Soup', quantity: 1 }),
+    ]);
   });
 });

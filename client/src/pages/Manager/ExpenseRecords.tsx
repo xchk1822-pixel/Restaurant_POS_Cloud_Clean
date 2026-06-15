@@ -246,6 +246,23 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     reader.readAsDataURL(file);
   };
 
+  const handleClearReceipt = async (expenseId: string) => {
+    const updatedExpenses = expenses.map(exp =>
+      exp.id === expenseId ? { ...exp, receipt: undefined } : exp
+    );
+    const updatedExpense = updatedExpenses.find(exp => exp.id === expenseId);
+    if (!updatedExpense) return;
+    try {
+      await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
+    } catch (error) {
+      console.error('\u5220\u9664\u7968\u636e\u5931\u8d25:', error);
+      alert('\u5220\u9664\u7968\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      return;
+    }
+    setExpenses(updatedExpenses);
+    await dataManager.saveData('expenses', updatedExpenses, { syncFirestore: false, notify: false });
+  };
+
   const getExpenseDateTime = (expense: any): number => {
     const dateTime = Date.parse(expense.date || '');
     return Number.isFinite(dateTime) ? dateTime : 0;
@@ -698,11 +715,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                               onClick={() => window.open(exp.receipt, '_blank')}
                             />
                             <button
-                              onClick={() => {
-                                setExpenses(expenses.map(e =>
-                                  e.id === exp.id ? { ...e, receipt: undefined } : e
-                                ));
-                              }}
+                              onClick={() => handleClearReceipt(exp.id)}
                               style={{
                                 position: 'absolute',
                                 top: '-5px',

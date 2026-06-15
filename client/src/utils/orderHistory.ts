@@ -1,6 +1,34 @@
 import { getLocalDateString } from './exchangeRate';
 import { toTimestampMillis } from './localTime';
 
+export const getOrderCancellationRecords = (order: any): any[] => {
+  const orderLevelRecords = Array.isArray(order?.cancelRecords) ? order.cancelRecords : [];
+  const itemLevelRecords = Array.isArray(order?.items)
+    ? order.items.flatMap((item: any) => (
+        Array.isArray(item?.cancelRecords)
+          ? item.cancelRecords.map((record: any) => ({
+              ...record,
+              itemId: record.itemId || item.id,
+              itemName: record.itemName || item.name,
+            }))
+          : []
+      ))
+    : [];
+
+  return [...orderLevelRecords, ...itemLevelRecords].filter((record: any) => {
+    return record && (record.itemName || record.reason || Number(record.quantity) > 0);
+  });
+};
+
+export const getOrderCancellationSummary = (order: any) => {
+  return {
+    reason: order?.cancelReason || order?.cancellationReason || '',
+    cancelledBy: order?.cancelledBy || order?.voidedBy || '',
+    cancelledAt: order?.cancelledAt || order?.cancelAt || order?.voidedAt || '',
+    records: getOrderCancellationRecords(order),
+  };
+};
+
 export interface OrderHistoryFilters {
   searchKeyword: string;
   status: string;

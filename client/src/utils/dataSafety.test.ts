@@ -315,6 +315,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("localStorage.setItem('expense_categories'");
   });
 
+  test('expense receipt removal waits for cloud write before local state update', () => {
+    const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
+    const source = fs.readFileSync(expensePath, 'utf8');
+    const clearReceiptBlock = source.slice(
+      source.indexOf('const handleClearReceipt = async'),
+      source.indexOf('const getExpenseDateTime')
+    );
+
+    expect(clearReceiptBlock).toContain("await smartSetDocument('expenses', updatedExpense.id, updatedExpense)");
+    expect(clearReceiptBlock.indexOf("await smartSetDocument('expenses', updatedExpense.id, updatedExpense)")).toBeLessThan(
+      clearReceiptBlock.indexOf('setExpenses(updatedExpenses)')
+    );
+    expect(clearReceiptBlock).toContain("await dataManager.saveData('expenses', updatedExpenses, { syncFirestore: false");
+  });
+
   test('waiter orders publish directly to shared POS orders', () => {
     const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
     const source = fs.readFileSync(waiterPath, 'utf8');
@@ -615,6 +630,20 @@ describe('production data safety guards', () => {
     expect(source).toContain('\\u53d6\\u6d88\\u83dc\\u54c1');
     expect(source).toContain('formatTodayOrders(report)');
     expect(source).not.toContain('\\u53d6\\u6d88\\u539f\\u56e0');
+  });
+
+  test('order history detail modal shows cancellation summary and item records when present', () => {
+    const historyPath = path.join(process.cwd(), 'src/pages/Manager/OrderHistoryPage.tsx');
+    const source = fs.readFileSync(historyPath, 'utf8');
+    const helperPath = path.join(process.cwd(), 'src/utils/orderHistory.ts');
+    const helperSource = fs.readFileSync(helperPath, 'utf8');
+
+    expect(helperSource).toContain('export const getOrderCancellationRecords');
+    expect(helperSource).toContain('export const getOrderCancellationSummary');
+    expect(source).toContain('getOrderCancellationRecords');
+    expect(source).toContain('getOrderCancellationSummary');
+    expect(source).toContain('\\u53d6\\u6d88\\u8bb0\\u5f55');
+    expect(source).toContain('\\u53d6\\u6d88\\u83dc\\u54c1\\u8bb0\\u5f55');
   });
 
   test('financial report stat cards follow the requested business order', () => {
@@ -1446,5 +1475,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("localStorage.setItem('current_inputs'");
     expect(source).not.toContain("localStorage.getItem('rest_v6_final')");
     expect(source).not.toContain("localStorage.removeItem('rest_v6_final')");
+  });
+
+  test('shift handover submit waits for cloud write before local history update', () => {
+    const handoverPath = path.join(process.cwd(), 'src/pages/Manager/ShiftHandover.tsx');
+    const source = fs.readFileSync(handoverPath, 'utf8');
+    const submitBlock = source.slice(
+      source.indexOf('const handleSubmitHandover = async () => {'),
+      source.indexOf('const resetInputs = () => {')
+    );
+
+    expect(submitBlock.indexOf("await smartAddDocument('handovers', record)")).toBeLessThan(
+      submitBlock.indexOf('setHistory(newHistory)')
+    );
+    expect(submitBlock.indexOf("await smartAddDocument('handovers', record)")).toBeLessThan(
+      submitBlock.indexOf("await dataManager.saveData('handovers', newHistory")
+    );
   });
 });

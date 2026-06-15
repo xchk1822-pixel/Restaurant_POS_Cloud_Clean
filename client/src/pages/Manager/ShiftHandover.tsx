@@ -201,9 +201,9 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       } as HistoryRecord & { createdAt: string; updatedAt: string };
 
       const newHistory = normalizeHandoverRecords([record, ...history]) as HistoryRecord[];
+      await smartAddDocument('handovers', record);
       setHistory(newHistory);
       await dataManager.saveData('handovers', newHistory, { syncFirestore: false, notify: false });
-      await smartAddDocument('handovers', record);
       setLastSyncedAt(new Date());
 
       setSaveStatus('saved');
