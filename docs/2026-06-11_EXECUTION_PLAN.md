@@ -55,4 +55,4 @@ Data isolation rule:
 - Legacy global sync service and hook were removed after import verification; deployed to Firebase Hosting in commit `e4ef353`.
 - Confirmed-unused legacy UI, duplicate page, and old store-isolation leftovers were removed after RED/GREEN data-safety verification; deployed to Firebase Hosting in commit `c416c71`.
 - Backup export now reads Firestore only and excludes browser local cache; deployed to Firebase Hosting in commit `d33b0d4`.
-- Owner dashboard branch cards and mobile branch detail were verified online with no code change, commit pending.
+- Owner dashboard branch cards and mobile branch detail were verified online with no code change in commit `e40e2f8`.
