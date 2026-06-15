@@ -55,3 +55,4 @@ Data isolation rule:
 - Supplier manual refresh is cloud-authoritative.
 - Credit purchase supplier debt is recalculated from purchase orders instead of incrementing stale local supplier balance.
 - Operational local caches were scoped by store and deployed in commit `deabd48`.
+- Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.

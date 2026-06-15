@@ -51,6 +51,17 @@ describe('production data safety guards', () => {
     expect(source).toContain('await setDoc(docRef, firestoreUpdateData, { merge: true })');
   });
 
+  test('smart sync refuses global fallback paths for store business collections', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).toContain('const requiresStoreScope = (collectionName: string): boolean');
+    expect(source).toContain('blocked store-scoped Firestore access');
+    expect(source).toContain('blocked store-scoped local cache access');
+    expect(source).not.toContain('return collectionName;\n};\n\nconst getLocalStorageKey');
+    expect(source).not.toContain('return storeId ? `store_${storeId}_${collectionKey}` : collectionKey;');
+  });
+
   test('smart sync service does not expose legacy bulk migration writers', () => {
     const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

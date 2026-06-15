@@ -70,8 +70,13 @@ const getCollectionKey = (collectionName: string): string => {
   return parts[parts.length - 1] || collectionName;
 };
 
+const requiresStoreScope = (collectionName: string): boolean => {
+  const collectionKey = getCollectionKey(collectionName);
+  return !GLOBAL_COLLECTIONS.includes(collectionKey) && !collectionName.includes('/');
+};
+
 // 🔥 构建带 storeId 的集合路径
-const getStoreCollectionPath = (collectionName: string): string => {
+const getStoreCollectionPath = (collectionName: string): string | null => {
   if (collectionName.includes('/')) {
     return collectionName;
   }
@@ -85,17 +90,31 @@ const getStoreCollectionPath = (collectionName: string): string => {
     return `stores/${storeId}/${collectionName}`;
   }
 
+  if (requiresStoreScope(collectionName)) {
+    console.warn(`Missing storeId; blocked store-scoped Firestore access: ${collectionName}`);
+    return null;
+  }
+
   return collectionName;
 };
 
-const getLocalStorageKey = (collectionName: string): string => {
+const getLocalStorageKey = (collectionName: string): string | null => {
   const collectionKey = getCollectionKey(collectionName);
   if (GLOBAL_COLLECTIONS.includes(collectionKey)) {
     return collectionKey;
   }
 
   const storeId = getCurrentStoreId();
-  return storeId ? `store_${storeId}_${collectionKey}` : collectionKey;
+  if (storeId) {
+    return `store_${storeId}_${collectionKey}`;
+  }
+
+  if (requiresStoreScope(collectionName)) {
+    console.warn(`Missing storeId; blocked store-scoped local cache access: ${collectionName}`);
+    return null;
+  }
+
+  return collectionKey;
 };
 
 const shouldAttachStoreId = (collectionName: string): boolean => {
@@ -294,7 +313,10 @@ const clearPendingChanges = () => {
  */
 export const smartAddDocument = async (collectionName: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
-  const docId = data.id || doc(collection(db, storeCollectionPath)).id;
+  const docId = data.id || (storeCollectionPath ? doc(collection(db, storeCollectionPath)).id : `blocked_${Date.now()}`);
+  if (!storeCollectionPath) {
+    return { id: docId, success: false, error: 'missing-store-id' };
+  }
   const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
   const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
 
@@ -337,6 +359,9 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
  */
 export const smartSetDocument = async (collectionName: string, docId: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return { id: docId, success: false, error: 'missing-store-id' };
+  }
   const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
   const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
   const docData = {
@@ -396,6 +421,9 @@ export const smartUpdateDocument = async (collectionName: string, docId: string,
   }
 
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return { success: false, error: 'missing-store-id' };
+  }
   const firestoreUpdateData = {
     ...toFirestoreData(normalizedData),
     id: docId,
@@ -430,6 +458,9 @@ export const smartDeleteDocument = async (collectionName: string, docId: string)
   }
 
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return { success: false, error: 'missing-store-id' };
+  }
 
   if (isOnline) {
     try {
@@ -457,6 +488,9 @@ export const smartIncrementField = async (
   extraData: Record<string, any> = {}
 ) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return { success: false, error: 'missing-store-id' };
+  }
   const updateData = {
     ...toFirestoreData(extraData),
     id: docId,
@@ -482,7 +516,11 @@ export const smartIncrementField = async (
       [fieldName]: (Number(item[fieldName]) || 0) + amount,
     };
   });
-  localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(updated));
+  const localStorageKey = getLocalStorageKey(collectionName);
+  if (!localStorageKey) {
+    return { success: false, error: 'missing-store-id' };
+  }
+  localStorage.setItem(localStorageKey, JSON.stringify(updated));
 
   savePendingChange({
     id: docId,
@@ -504,6 +542,9 @@ export const smartIncrementField = async (
  */
 export const smartGetDocuments = async (collectionName: string, forceServer = false) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return [];
+  }
 
   if (isOnline) {
     try {
@@ -590,7 +631,10 @@ export const smartSubscribeToCollection = (
         // 🔥 同步到 localStorage（分店专属key），但不能让旧云端快照覆盖本地新编辑
         if (isCloudAuthoritativeSubscription(collectionName)) {
           const activeData = excludeDeletedRecords(data);
-          localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(activeData));
+          const localStorageKey = getLocalStorageKey(collectionName);
+          if (localStorageKey) {
+            localStorage.setItem(localStorageKey, JSON.stringify(activeData));
+          }
           callback(activeData);
           return;
         }
@@ -615,7 +659,10 @@ export const smartSubscribeToCollection = (
           });
 
           const mergedData = Array.from(merged.values());
-          localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(mergedData));
+          const localStorageKey = getLocalStorageKey(collectionName);
+          if (localStorageKey) {
+            localStorage.setItem(localStorageKey, JSON.stringify(mergedData));
+          }
           callback(mergedData);
           return;
         } catch (error) {
@@ -653,7 +700,9 @@ const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
       return;
     }
     const updated = [...existing.filter(item => item.id !== id), incomingItem];
-    localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(updated));
+    const localStorageKey = getLocalStorageKey(collectionName);
+    if (!localStorageKey) return;
+    localStorage.setItem(localStorageKey, JSON.stringify(updated));
   } catch (error) {
     console.error('❌ localStorage保存失败', error);
   }
@@ -668,7 +717,9 @@ const updateInLocalStorage = (collectionName: string, id: string, data: any) => 
       item.id === id && shouldReplaceLocalRecord(item, incomingItem) ? incomingItem : item
     );
     const next = existing.some(item => item.id === id) ? updated : [...updated, incomingItem];
-    localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(next));
+    const localStorageKey = getLocalStorageKey(collectionName);
+    if (!localStorageKey) return;
+    localStorage.setItem(localStorageKey, JSON.stringify(next));
   } catch (error) {
     console.error('❌ localStorage更新失败', error);
   }
@@ -678,7 +729,9 @@ const deleteFromLocalStorage = (collectionName: string, id: string) => {
   try {
     const existing = getFromLocalStorage(collectionName);
     const updated = existing.filter(item => item.id !== id);
-    localStorage.setItem(getLocalStorageKey(collectionName), JSON.stringify(updated));
+    const localStorageKey = getLocalStorageKey(collectionName);
+    if (!localStorageKey) return;
+    localStorage.setItem(localStorageKey, JSON.stringify(updated));
   } catch (error) {
     console.error('❌ localStorage删除失败', error);
   }
@@ -687,7 +740,8 @@ const deleteFromLocalStorage = (collectionName: string, id: string) => {
 const getFromLocalStorage = (collectionName: string): any[] => {
   try {
     const storageKey = getLocalStorageKey(collectionName);
-    const data = localStorage.getItem(storageKey) || localStorage.getItem(getCollectionKey(collectionName));
+    if (!storageKey) return [];
+    const data = localStorage.getItem(storageKey);
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
@@ -752,9 +806,13 @@ export const syncPendingChanges = async () => {
   let failCount = 0;
 
   for (const change of changes) {
-    try {
-      const collectionPath = getStoreCollectionPath(change.collection);
-      switch (change.operation) {
+      try {
+        const collectionPath = getStoreCollectionPath(change.collection);
+        if (!collectionPath) {
+          failCount++;
+          continue;
+        }
+        switch (change.operation) {
         case 'add':
           await setDoc(doc(db, collectionPath, change.id), toFirestoreData({ ...change.data, id: change.id }, true), { merge: true });
           break;
