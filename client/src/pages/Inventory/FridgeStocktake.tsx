@@ -121,14 +121,6 @@ const FridgeStocktake: React.FC = () => {
       );
   }, [fridgeInventory, inventoryItems, selectedFridge, searchTerm]);
 
-  // ✅ 获取所有其他冰箱已占用的商品ID（互斥逻辑）
-  const getOtherFridgeItemIds = (): Set<string> => {
-    const otherItems = fridgeInventory.filter(inv => inv.fridgeId !== selectedFridge);
-    return new Set(otherItems.map(inv => inv.itemId));
-  };
-
-  void getOtherFridgeItemIds;
-
   const fridgeItems = useMemo(() => getFridgeItems(), [getFridgeItems]);
   const fridgeItemOrderSignature = fridgeItems
     .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)

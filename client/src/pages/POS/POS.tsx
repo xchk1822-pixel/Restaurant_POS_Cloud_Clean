@@ -2781,45 +2781,6 @@ const POS: React.FC = () => {
     setDraggedTable(null);
   };
 
-  const handleTableDragOver = (e: React.DragEvent) => {
-    if (!isEditMode) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleTableDrop = (e: React.DragEvent) => {
-    console.log('馃搷 妗屽彴鏀剧疆浜嬩欢瑙﹀彂', 'draggedTable:', draggedTable);
-    if (!isEditMode || !draggedTable) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    markTableUserEdit();
-    const container = e.currentTarget as HTMLElement;
-    const rect = container.getBoundingClientRect();
-
-    const newX = e.clientX - rect.left + container.scrollLeft - 50;
-    const newY = e.clientY - rect.top + container.scrollTop - 60;
-
-    console.log('馃搷 鏂颁綅缃?', { x: newX, y: newY });
-
-    setTables(prevTables => prevTables.map(t => {
-      if (t.id === draggedTable) {
-        return {
-          ...t,
-          x: Math.max(0, newX),
-          y: Math.max(0, newY)
-        };
-      }
-      return t;
-    }));
-
-    setDraggedTable(null);
-    console.log('鉁?妗屽彴绉诲姩瀹屾垚');
-  };
-
-  void handleTableDragOver;
-  void handleTableDrop;
 
   const handleTableSelectForMerge = (tableId: string) => {
     if (!isEditMode) return;
@@ -2953,21 +2914,6 @@ const POS: React.FC = () => {
     }
   };
 
-  // 璁＄畻绛夊緟鏃堕棿
-  const getWaitTime = (createdAt: Date) => {
-    const now = new Date();
-    const created = new Date(createdAt);
-    const diffMs = now.getTime() - created.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return '刚刚';
-    if (diffMins < 60) return `${diffMins}分钟前`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}小时${diffMins % 60}分钟`;
-    return `${Math.floor(diffHours / 24)}天`;
-  };
-
-  void getWaitTime;
 
   // Cancel Modal Component
   const renderCancelModal = () => (
