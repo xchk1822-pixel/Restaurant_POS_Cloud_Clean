@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getExchangeRateStorageKey } from '../../utils/exchangeRate';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ExchangeRateConfig {
   id: string;
@@ -9,6 +10,24 @@ interface ExchangeRateConfig {
   lastUpdated: string;
   updatedBy?: string;
 }
+
+interface StoreOption {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+const dedupeStoreOptions = (stores: StoreOption[]): StoreOption[] => {
+  const map = new Map<string, StoreOption>();
+  stores.forEach(store => {
+    const code = String(store.code || '').trim().toLowerCase();
+    const key = code ? `code:${code}` : `id:${store.id}`;
+    if (!map.has(key)) {
+      map.set(key, store);
+    }
+  });
+  return Array.from(map.values());
+};
 
 const COLLECTION = 'exchange_rate';
 const DOC_ID = 'global';
@@ -20,9 +39,9 @@ const defaultConfig = (): ExchangeRateConfig => ({
   lastUpdated: new Date().toISOString(),
 });
 
-const readLocalConfig = (): ExchangeRateConfig => {
+const readLocalConfig = (storeId?: string): ExchangeRateConfig => {
   try {
-    const saved = localStorage.getItem(getExchangeRateStorageKey());
+    const saved = localStorage.getItem(getExchangeRateStorageKey(storeId));
     if (saved) {
       return { ...defaultConfig(), ...JSON.parse(saved), id: DOC_ID };
     }
@@ -32,21 +51,54 @@ const readLocalConfig = (): ExchangeRateConfig => {
   return defaultConfig();
 };
 
-const saveLocalConfig = (config: ExchangeRateConfig) => {
-  localStorage.setItem(getExchangeRateStorageKey(), JSON.stringify(config));
+const saveLocalConfig = (config: ExchangeRateConfig, storeId?: string) => {
+  localStorage.setItem(getExchangeRateStorageKey(storeId), JSON.stringify(config));
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
 };
 
 const ExchangeRateSettings: React.FC = () => {
+  const { user } = useAuth();
   const [config, setConfig] = useState<ExchangeRateConfig>(() => readLocalConfig());
   const [tempConfig, setTempConfig] = useState<ExchangeRateConfig>(() => readLocalConfig());
+  const [stores, setStores] = useState<StoreOption[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const targetStoreId = user?.storeId || selectedStoreId;
+
+  const loadStores = useCallback(async () => {
+    if (user?.role !== 'super_admin') return;
+    try {
+      const cloudStores = await smartGetDocuments('stores', true);
+      const activeStores = dedupeStoreOptions(cloudStores
+        .filter((store: any) => store?.id && store?.status !== 'inactive')
+        .map((store: any) => ({
+          id: String(store.id),
+          name: String(store.name || store.id),
+          code: store.code,
+        })));
+      setStores(activeStores);
+      if (!selectedStoreId && activeStores[0]?.id) {
+        setSelectedStoreId(activeStores[0].id);
+      }
+    } catch (error) {
+      console.error('读取分店列表失败:', error);
+    }
+  }, [selectedStoreId, user?.role]);
 
   const refreshConfig = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const cloudConfigs = await smartGetDocuments(COLLECTION, true);
+      if (!targetStoreId) {
+        const localConfig = readLocalConfig();
+        setConfig(localConfig);
+        setTempConfig(localConfig);
+        setLastSyncedAt(new Date());
+        return;
+      }
+
+      const collectionPath = `stores/${targetStoreId}/${COLLECTION}`;
+      const cloudConfigs = await smartGetDocuments(collectionPath, true);
       const cloudConfig = cloudConfigs.find((item: any) => item.id === DOC_ID) || cloudConfigs[0];
       if (cloudConfig) {
         const nextConfig: ExchangeRateConfig = {
@@ -58,31 +110,42 @@ const ExchangeRateSettings: React.FC = () => {
         };
         setConfig(nextConfig);
         setTempConfig(nextConfig);
-        saveLocalConfig(nextConfig);
+        saveLocalConfig(nextConfig, targetStoreId);
       } else {
-        const localConfig = readLocalConfig();
+        const localConfig = readLocalConfig(targetStoreId);
         setConfig(localConfig);
         setTempConfig(localConfig);
       }
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新云端汇率失败:', error);
-      const localConfig = readLocalConfig();
+      const localConfig = readLocalConfig(targetStoreId);
       setConfig(localConfig);
       setTempConfig(localConfig);
       alert('刷新云端汇率失败，请检查网络后重试');
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [targetStoreId]);
 
   useEffect(() => {
-    refreshConfig();
-  }, [refreshConfig]);
+    loadStores();
+  }, [loadStores]);
+
+  useEffect(() => {
+    if (user?.role !== 'super_admin' || targetStoreId) {
+      refreshConfig();
+    }
+  }, [refreshConfig, targetStoreId, user?.role]);
 
   const saveConfig = async () => {
     if (tempConfig.usdToNio <= 0 || tempConfig.pointsToCurrency <= 0) {
       alert('汇率和积分兑换比例必须大于 0');
+      return;
+    }
+
+    if (!targetStoreId) {
+      alert('请先选择分店后再保存汇率配置');
       return;
     }
 
@@ -95,9 +158,9 @@ const ExchangeRateSettings: React.FC = () => {
         lastUpdated: new Date().toISOString(),
       };
 
-      saveLocalConfig(updatedConfig);
+      await smartSetDocument(`stores/${targetStoreId}/${COLLECTION}`, DOC_ID, updatedConfig);
+      saveLocalConfig(updatedConfig, targetStoreId);
       setConfig(updatedConfig);
-      await smartSetDocument(COLLECTION, DOC_ID, updatedConfig);
       setLastSyncedAt(new Date());
 
       alert('汇率配置已保存，并同步到云端');
@@ -234,8 +297,8 @@ const ExchangeRateSettings: React.FC = () => {
     <div style={styles.container}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>全局汇率设置</h1>
-          <p style={styles.subtitle}>配置全系统通用汇率，保存后写入本地和云端。</p>
+          <h1 style={styles.title}>分店汇率设置</h1>
+          <p style={styles.subtitle}>每个分店独立保存汇率和积分兑换规则。</p>
         </div>
         <div style={styles.actions}>
           {lastSyncedAt && (
@@ -264,6 +327,26 @@ const ExchangeRateSettings: React.FC = () => {
       </div>
 
       <div style={styles.card}>
+        {user?.role === 'super_admin' && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>选择分店</label>
+            <select
+              value={selectedStoreId}
+              onChange={(event) => setSelectedStoreId(event.target.value)}
+              style={styles.input}
+            >
+              <option value="">请选择分店</option>
+              {stores.map(store => (
+                <option key={store.id} value={store.id}>
+                  {store.name}{store.code ? ` (${store.code})` : ''}
+                </option>
+              ))}
+            </select>
+            <div style={styles.helpText}>
+              老板账号需要先选择分店，再查看或保存该分店的汇率配置。
+            </div>
+          </div>
+        )}
         <div style={styles.formGroup}>
           <label style={styles.label}>美元兑换尼加拉瓜科多巴 (USD 到 NIO)</label>
           <input

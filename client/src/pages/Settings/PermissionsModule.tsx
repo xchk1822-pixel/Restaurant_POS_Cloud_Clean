@@ -322,9 +322,9 @@ const PermissionsModule: React.FC = () => {
 
     try {
       const newRoles = roles.map(r => r.id === editingRoleId ? roleData : r);
+      await smartUpdateDocument('system_roles', editingRoleId, roleData);
       localStorage.setItem('system_roles', JSON.stringify(newRoles));
       setRoles(newRoles);
-      await smartUpdateDocument('system_roles', editingRoleId, roleData);
       setLastSyncedAt(new Date());
       setShowForm(false);
       setEditingRoleId(null);

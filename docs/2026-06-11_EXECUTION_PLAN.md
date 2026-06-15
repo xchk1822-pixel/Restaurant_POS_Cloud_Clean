@@ -51,7 +51,7 @@ Data isolation rule:
    - [x] Manager management: expense records, shift handover, order history, financial reports, customers.
    - [x] Manager data overview: totals, payment split, order type analysis, sales ranking, trend table, customer profile.
    - [x] Owner dashboard: branch cards, branch detail, mobile layout.
-   - [ ] System settings: stores, exchange rate, permissions, backup export.
+   - [x] System settings: stores, exchange rate, permissions, backup export.
 
 ## Current Completed Today
 
@@ -78,8 +78,9 @@ Data isolation rule:
 - Financial report summary cards now follow the fixed two-row order requested for real operation: top row revenue/cash/card/order/profit-loss, bottom row handover/difference/daily expenses/purchase payments/supplier debt. The label was changed from `今日订单` to `订单` for date filters beyond today.
 
 - Manager management was verified in order: expense records, shift handover, order history, financial reports, data overview, and customer management render online with 0 console errors. Expense receipt removal and shift handover submit now wait for cloud writes before local state updates. Order history detail now shows available cancellation summary and item-level cancellation records. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
+- System settings were verified in order: store management, exchange-rate settings, permission management, and backup export. Store/account/role/exchange saves now write through cloud paths before local UI/cache mutation. Exchange-rate settings are store-scoped with an admin store selector, and backup export keeps `exchange_rate` under store business data only. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
 
 ## Next Session Start
 
 - Read `docs/2026-06-15_PROGRESS.md` first.
-- Continue the remaining ordered queue from `System settings`: stores, exchange rate, permissions, and backup/export.
+- Ordered module verification queue is complete. Continue with cleanup only after import, route, test, build, deploy, and online checks, or handle newly reported production issues first.

@@ -152,6 +152,15 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('return storeId ? `store_${storeId}_${collectionKey}` : collectionKey;');
   });
 
+  test('smart sync explicit store paths still use store-scoped local cache keys', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).toContain('const getStoreIdFromExplicitPath = (collectionName: string): string | null');
+    expect(source).toContain("parts[0] === 'stores'");
+    expect(source).toContain('return `store_${explicitStoreId}_${collectionKey}`;');
+  });
+
   test('smart sync service does not expose legacy bulk migration writers', () => {
     const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
@@ -475,6 +484,77 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('normalizedUsers.map(user => smartSetDocument');
     expect(source).toContain("smartSetDocument('stores', store.id, store)");
     expect(source).toContain("smartSetDocument('users', user.id, toCloudUser(user))");
+  });
+
+  test('system settings save cloud writes before mutating local UI cache', () => {
+    const storesPath = path.join(process.cwd(), 'src/pages/Manager/Stores.tsx');
+    const exchangePath = path.join(process.cwd(), 'src/pages/Manager/ExchangeRateSettings.tsx');
+    const permissionsPath = path.join(process.cwd(), 'src/pages/Settings/PermissionsModule.tsx');
+    const storesSource = fs.readFileSync(storesPath, 'utf8');
+    const exchangeSource = fs.readFileSync(exchangePath, 'utf8');
+    const permissionsSource = fs.readFileSync(permissionsPath, 'utf8');
+
+    const saveStoreBlock = storesSource.slice(
+      storesSource.indexOf('const handleSaveStore = async () => {'),
+      storesSource.indexOf('const handleAddUser = () => {')
+    );
+    const editUserBlock = storesSource.slice(
+      storesSource.indexOf('if (editingUser) {'),
+      storesSource.indexOf('} else {', storesSource.indexOf('if (editingUser) {'))
+    );
+    const addUserBlock = storesSource.slice(
+      storesSource.indexOf('// 添加新用户'),
+      storesSource.indexOf('setShowUserModal(false);')
+    );
+    const saveExchangeBlock = exchangeSource.slice(
+      exchangeSource.indexOf('const saveConfig = async () => {'),
+      exchangeSource.indexOf('const resetToDefault = () => {')
+    );
+    const savePermissionBlock = permissionsSource.slice(
+      permissionsSource.indexOf('const handleSave = async () => {'),
+      permissionsSource.indexOf('const toggleExpand = (nodeId: string) => {')
+    );
+
+    expect(saveStoreBlock.indexOf("smartSetDocument('stores', editingStore.id, editingStore)")).toBeLessThan(
+      saveStoreBlock.indexOf('setStores(updated)')
+    );
+    expect(editUserBlock.indexOf("await smartSetDocument('users', updatedUser.id, toCloudUser(updatedUser))")).toBeLessThan(
+      editUserBlock.indexOf('setUsers(updated)')
+    );
+    expect(addUserBlock.indexOf("await smartSetDocument('users', authUser.id, toCloudUser(authUser))")).toBeLessThan(
+      addUserBlock.indexOf('setUsers(updated)')
+    );
+    expect(saveExchangeBlock.indexOf('await smartSetDocument(`stores/${targetStoreId}/${COLLECTION}`, DOC_ID, updatedConfig)')).toBeLessThan(
+      saveExchangeBlock.indexOf('saveLocalConfig(updatedConfig, targetStoreId)')
+    );
+    expect(savePermissionBlock.indexOf("await smartUpdateDocument('system_roles', editingRoleId, roleData)")).toBeLessThan(
+      savePermissionBlock.indexOf("localStorage.setItem('system_roles', JSON.stringify(newRoles))")
+    );
+  });
+
+  test('exchange-rate settings are saved under the selected store path', () => {
+    const exchangePath = path.join(process.cwd(), 'src/pages/Manager/ExchangeRateSettings.tsx');
+    const exchangeRatePath = path.join(process.cwd(), 'src/utils/exchangeRate.ts');
+    const source = fs.readFileSync(exchangePath, 'utf8');
+    const utilitySource = fs.readFileSync(exchangeRatePath, 'utf8');
+
+    expect(utilitySource).toContain('getExchangeRateStorageKey = (storeIdOverride?: string)');
+    expect(source).toContain('const targetStoreId = user?.storeId || selectedStoreId');
+    expect(source).toContain('const dedupeStoreOptions = (stores: StoreOption[]): StoreOption[]');
+    expect(source).toContain('const key = code ? `code:${code}` : `id:${store.id}`');
+    expect(source).toContain('smartGetDocuments(collectionPath, true)');
+    expect(source).toContain('`stores/${targetStoreId}/${COLLECTION}`');
+    expect(source).toContain("alert('请先选择分店后再保存汇率配置')");
+    expect(source).toContain('saveLocalConfig(updatedConfig, targetStoreId)');
+  });
+
+  test('backup export keeps exchange-rate settings store-scoped only', () => {
+    const backupServicePath = path.join(process.cwd(), 'src/services/backupExportService.ts');
+    const serviceSource = fs.readFileSync(backupServicePath, 'utf8');
+
+    expect(serviceSource).toContain("const GLOBAL_COLLECTIONS = ['stores', 'users', 'system_roles']");
+    expect(serviceSource).toContain("'exchange_rate',");
+    expect(serviceSource).not.toContain("const GLOBAL_COLLECTIONS = ['stores', 'users', 'system_roles', 'exchange_rate']");
   });
 
   test('supplier payment records are store-scoped and refreshed from cloud', () => {
@@ -930,8 +1010,8 @@ describe('production data safety guards', () => {
     expect(exchangeRateSource).toContain('getExchangeRateStorageKey');
     expect(exchangeRateSource).toContain('store_${storeId}_${EXCHANGE_RATE_KEY}');
     expect(customersSource).toContain('localStorage.setItem(getExchangeRateStorageKey()');
-    expect(settingsSource).toContain('localStorage.getItem(getExchangeRateStorageKey())');
-    expect(settingsSource).toContain('localStorage.setItem(getExchangeRateStorageKey()');
+    expect(settingsSource).toContain('localStorage.getItem(getExchangeRateStorageKey(storeId))');
+    expect(settingsSource).toContain('localStorage.setItem(getExchangeRateStorageKey(storeId)');
     expect(customersSource).not.toContain("localStorage.setItem('global_exchange_rate'");
     expect(settingsSource).not.toContain("localStorage.getItem('global_exchange_rate'");
     expect(settingsSource).not.toContain("localStorage.setItem('global_exchange_rate'");

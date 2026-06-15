@@ -70,6 +70,11 @@ const getCollectionKey = (collectionName: string): string => {
   return parts[parts.length - 1] || collectionName;
 };
 
+const getStoreIdFromExplicitPath = (collectionName: string): string | null => {
+  const parts = collectionName.split('/').filter(Boolean);
+  return parts[0] === 'stores' && parts[1] && parts.length >= 3 ? parts[1] : null;
+};
+
 const requiresStoreScope = (collectionName: string): boolean => {
   const collectionKey = getCollectionKey(collectionName);
   return !GLOBAL_COLLECTIONS.includes(collectionKey) && !collectionName.includes('/');
@@ -100,6 +105,11 @@ const getStoreCollectionPath = (collectionName: string): string | null => {
 
 const getLocalStorageKey = (collectionName: string): string | null => {
   const collectionKey = getCollectionKey(collectionName);
+  const explicitStoreId = getStoreIdFromExplicitPath(collectionName);
+  if (explicitStoreId) {
+    return `store_${explicitStoreId}_${collectionKey}`;
+  }
+
   if (GLOBAL_COLLECTIONS.includes(collectionKey)) {
     return collectionKey;
   }

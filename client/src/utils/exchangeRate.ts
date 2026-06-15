@@ -17,7 +17,11 @@ export interface ExchangeRateConfig {
 
 const EXCHANGE_RATE_KEY = 'global_exchange_rate';
 
-export const getExchangeRateStorageKey = (): string => {
+export const getExchangeRateStorageKey = (storeIdOverride?: string): string => {
+  if (storeIdOverride) {
+    return `store_${storeIdOverride}_${EXCHANGE_RATE_KEY}`;
+  }
+
   try {
     const currentUser = localStorage.getItem('current_user');
     const storeId = currentUser ? JSON.parse(currentUser).storeId : null;

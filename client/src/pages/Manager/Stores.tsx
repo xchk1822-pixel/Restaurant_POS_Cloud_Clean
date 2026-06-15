@@ -394,12 +394,12 @@ const StoresModule: React.FC = () => {
     const previousStore = stores.find(store => store.id === editingStore.id);
     const duplicateStoreIds = findDuplicateStoreDocumentIds(cloudStoreRecords, editingStore, previousStore);
     const updated = dedupeStores(stores.map(s => s.id === editingStore.id ? editingStore : s));
-    setStores(updated);
-    saveLocalRecords('stores', updated);
     await Promise.all([
       smartSetDocument('stores', editingStore.id, editingStore),
       ...duplicateStoreIds.map(id => smartDeleteDocument('stores', id)),
     ]);
+    setStores(updated);
+    saveLocalRecords('stores', updated);
     setCloudStoreRecords(prev => dedupeStores([
       ...prev.filter(record => !duplicateStoreIds.includes(String(record.id))),
       editingStore,
@@ -456,8 +456,8 @@ const StoresModule: React.FC = () => {
         role: userForm.role,
       };
       const updated = users.map(u => u.id === editingUser.id ? updatedUser : u);
-      setUsers(updated);
       await smartSetDocument('users', updatedUser.id, toCloudUser(updatedUser));
+      setUsers(updated);
       await persistUsers(updated);
       alert('✅ 账号已更新');
     } else {
@@ -482,8 +482,8 @@ const StoresModule: React.FC = () => {
         return;
       }
       const updated = [...users, authUser];
-      setUsers(updated);
       await smartSetDocument('users', authUser.id, toCloudUser(authUser));
+      setUsers(updated);
       await persistUsers(updated);
       alert('✅ 账号已创建');
     }

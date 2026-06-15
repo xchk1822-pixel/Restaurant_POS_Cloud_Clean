@@ -2,7 +2,7 @@ import { collection, getDocs, getDocsFromServer, QuerySnapshot, DocumentData } f
 import { db } from '../firebase';
 import { User } from '../contexts/AuthContext';
 
-const GLOBAL_COLLECTIONS = ['stores', 'users', 'system_roles', 'exchange_rate'];
+const GLOBAL_COLLECTIONS = ['stores', 'users', 'system_roles'];
 
 const STORE_COLLECTIONS = [
   'employees',
