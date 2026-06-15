@@ -536,6 +536,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const isTerminalOrderStatus = (status?: string): boolean => {
+    return status === 'completed' || status === 'cancelled';
+  };
+
+  const isCloudTerminalAdvance = (localItem: any, cloudItem: any): boolean => {
+    return isTerminalOrderStatus(cloudItem.status) && !isTerminalOrderStatus(localItem.status);
+  };
+
   const isOrderStateRegression = (localItem: any, cloudItem: any): boolean => {
     const localLooksLikeOrder = 'paymentStatus' in localItem || 'status' in localItem || 'items' in localItem;
     const cloudLooksLikeOrder = 'paymentStatus' in cloudItem || 'status' in cloudItem || 'items' in cloudItem;
@@ -560,6 +568,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const shouldUseCloudItem = <T extends { id?: string }>(localItem: T, cloudItem: T): boolean => {
+    if (isCloudTerminalAdvance(localItem, cloudItem)) {
+      return true;
+    }
+
     if (isOrderStateRegression(localItem, cloudItem)) {
       return false;
     }

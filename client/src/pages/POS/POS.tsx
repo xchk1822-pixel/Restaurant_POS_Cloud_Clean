@@ -382,6 +382,14 @@ const getOrderStatusRank = (status?: string): number => {
   }
 };
 
+const isTerminalOrderStatus = (status?: string): boolean => {
+  return status === 'completed' || status === 'cancelled';
+};
+
+const isCloudTerminalAdvance = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {
+  return isTerminalOrderStatus(incomingOrder.status) && !isTerminalOrderStatus(localOrder.status);
+};
+
 const isOrderStateRegression = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {
   if (localOrder.stockDeducted && !incomingOrder.stockDeducted) return true;
   if (localOrder.clearedAt && !incomingOrder.clearedAt) return true;
@@ -424,6 +432,7 @@ const hasNewerCloudOrders = (cloudOrders: Order[], localOrders: Order[]): boolea
   return cloudOrders.some(cloudOrder => {
     const localOrder = localById.get(cloudOrder.id);
     if (!localOrder) return true;
+    if (isCloudTerminalAdvance(localOrder, cloudOrder)) return true;
     if (isOrderStateRegression(localOrder, cloudOrder)) return false;
     return getOrderVersion(cloudOrder) > getOrderVersion(localOrder);
   });
@@ -439,7 +448,7 @@ const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Or
   incomingOrders.forEach(incomingOrder => {
     if (!incomingOrder.id) return;
     const localOrder = merged.get(incomingOrder.id);
-    if (!localOrder || (!isOrderStateRegression(localOrder, incomingOrder) && getOrderVersion(incomingOrder) >= getOrderVersion(localOrder))) {
+    if (!localOrder || isCloudTerminalAdvance(localOrder, incomingOrder) || (!isOrderStateRegression(localOrder, incomingOrder) && getOrderVersion(incomingOrder) >= getOrderVersion(localOrder))) {
       merged.set(incomingOrder.id, incomingOrder);
     }
   });

@@ -597,6 +597,19 @@ describe('production data safety guards', () => {
     expect(globalOrderBlock).not.toContain('setOrders(incomingOrders)');
   });
 
+  test('POS cloud terminal order state overrides newer local non-terminal cache', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const appContextSource = fs.readFileSync(appContextPath, 'utf8');
+
+    expect(posSource).toContain('const isCloudTerminalAdvance = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {');
+    expect(posSource).toContain('if (isCloudTerminalAdvance(localOrder, cloudOrder)) return true;');
+    expect(posSource).toContain('if (!localOrder || isCloudTerminalAdvance(localOrder, incomingOrder) || (!isOrderStateRegression(localOrder, incomingOrder)');
+    expect(appContextSource).toContain('const isCloudTerminalAdvance = (localItem: any, cloudItem: any): boolean => {');
+    expect(appContextSource).toContain('if (isCloudTerminalAdvance(localItem, cloudItem)) {');
+  });
+
   test('POS local business caches use scoped storage keys only', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
