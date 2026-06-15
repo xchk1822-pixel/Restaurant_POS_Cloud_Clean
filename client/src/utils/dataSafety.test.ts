@@ -1189,6 +1189,19 @@ describe('production data safety guards', () => {
     );
   });
 
+  test('fridge stocktake enters with a valid fridge and one cloud refresh without realtime subscription', () => {
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const source = fs.readFileSync(fridgePath, 'utf8');
+
+    expect(source).toContain('const hasAutoRefreshed = useRef(false)');
+    expect(source).toContain('const refreshFridgeData = async (showFailureAlert = true)');
+    expect(source).toContain('if (showFailureAlert)');
+    expect(source).toContain('refreshFridgeData(false)');
+    expect(source).toContain('if (fridges.length > 0 && !fridges.some((fridge: any) => fridge.id === selectedFridge))');
+    expect(source).toContain('setSelectedFridge(fridges[0].id)');
+    expect(source).not.toContain("smartSubscribeToCollection('fridge_inventory'");
+  });
+
   test('inventory category order is saved as cloud sortOrder', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
@@ -59,6 +59,7 @@ const FridgeStocktake: React.FC = () => {
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const hasAutoRefreshed = useRef(false);
   const inventoryCategoryStorageKey = dataService.getStoreKey('inventory_categories');
   
   // 库存分类（从 localStorage 加载）
@@ -158,7 +159,7 @@ const FridgeStocktake: React.FC = () => {
     }
   };
 
-  const refreshFridgeData = async () => {
+  const refreshFridgeData = async (showFailureAlert = true) => {
     setIsRefreshing(true);
     try {
       const [cloudFridges, cloudFridgeInventory, cloudItems, cloudHistory] = await Promise.all([
@@ -188,11 +189,27 @@ const FridgeStocktake: React.FC = () => {
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新冰箱盘点数据失败:', error);
-      alert('刷新冰箱盘点数据失败，请检查网络后重试');
+      if (showFailureAlert) {
+        alert('刷新冰箱盘点数据失败，请检查网络后重试');
+      }
     } finally {
       setIsRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (hasAutoRefreshed.current) return;
+    hasAutoRefreshed.current = true;
+    refreshFridgeData(false);
+    // This is an intentional one-time cloud refresh, not a realtime subscription.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (fridges.length > 0 && !fridges.some((fridge: any) => fridge.id === selectedFridge)) {
+      setSelectedFridge(fridges[0].id);
+    }
+  }, [fridges, selectedFridge]);
 
   // 初始化：加载实际数量和排序
   useEffect(() => {
@@ -769,7 +786,7 @@ const FridgeStocktake: React.FC = () => {
             </span>
           )}
           <button
-            onClick={refreshFridgeData}
+            onClick={() => refreshFridgeData()}
             disabled={isRefreshing}
             style={{
               padding: '0.6rem 1.2rem',
