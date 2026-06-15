@@ -465,6 +465,22 @@ const POS: React.FC = () => {
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
   const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
 
+  const publishOrderImmediately = async (order: Order) => {
+    pendingOrderSyncIdsRef.current.add(order.id);
+    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+
+    try {
+      await smartUpdateDocument('pos_orders', order.id, serializeOrderForFirestore(order));
+      publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
+      pendingOrderSyncIdsRef.current.delete(order.id);
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+    } catch (error) {
+      pendingOrderSyncIdsRef.current.add(order.id);
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      throw error;
+    }
+  };
+
   // 绂佹椤甸潰鏁翠綋婊氬姩
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -1607,7 +1623,13 @@ const POS: React.FC = () => {
         return;
       }
 
-      completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
+      try {
+        await completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
+      } catch (error) {
+        console.error('complete order sync failed:', orderToClear.id, error);
+        alert('完成订单同步失败，请检查网络后重试');
+        return;
+      }
 
       // 鉂?绂佺敤 Firestore 鍚屾锛堝厛涓撴敞鏈湴鍔熻兘锛?
       /*
@@ -1914,7 +1936,7 @@ const POS: React.FC = () => {
     };
   };
 
-  const completeOrderWithStockDeduction = (order: Order, options: { releaseTable?: boolean } = {}) => {
+  const completeOrderWithStockDeduction = async (order: Order, options: { releaseTable?: boolean } = {}) => {
     const now = new Date();
     const completedOrder = deductStockForOrder({
       ...order,
@@ -1924,11 +1946,11 @@ const POS: React.FC = () => {
       lastModified: Date.now()
     });
 
+    await publishOrderImmediately(completedOrder);
+
     setOrders(prevOrders => prevOrders.map(o =>
       o.id === order.id ? completedOrder : o
     ));
-    pendingOrderSyncIdsRef.current.add(order.id);
-    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
 
     processCustomerPointsForCompletedOrder(completedOrder)
       .then(pointsProcessedOrder => {
@@ -2143,7 +2165,7 @@ const POS: React.FC = () => {
     }
   };
 
-  const confirmCancelOrder = () => {
+  const confirmCancelOrder = async () => {
     if (!managerAuthorizationPasswords.includes(cancelPassword.trim())) {
       alert('密码错误：请输入老板密码 admin123 或店长密码 123456 授权');
       return;
@@ -2237,7 +2259,29 @@ const POS: React.FC = () => {
       if (selectedOrderId) {
         const order = orders.find(o => o.id === selectedOrderId);
 
-        setOrders(orders.map(o =>
+        if (!order) {
+          alert('未找到当前订单，请刷新后重试');
+          return;
+        }
+
+        const cancelledOrder: Order = {
+          ...order,
+          status: 'cancelled',
+          cancelledBy: '店长',
+          cancelReason: cancelReason,
+          cancelledAt: new Date(),
+          lastModified: Date.now()
+        };
+
+        try {
+          await publishOrderImmediately(cancelledOrder);
+        } catch (error) {
+          console.error('cancel order sync failed:', cancelledOrder.id, error);
+          alert('取消订单同步失败，请检查网络后重试');
+          return;
+        }
+
+        setOrders(prevOrders => prevOrders.map(o =>
           o.id === selectedOrderId ? {
             ...o,
             status: 'cancelled',
@@ -4565,7 +4609,7 @@ const POS: React.FC = () => {
 
                     {order.orderType !== 'dine_in' && order.status !== 'completed' && order.status !== 'cancelled' && (
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
                           const canComplete = order.paymentStatus === 'paid' || order.status === 'served';
 
@@ -4576,8 +4620,13 @@ const POS: React.FC = () => {
                           }
 
                           if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '外卖订单已完成'}？\n\n点击确定后订单完成，并扣减库存。`)) {
-                            completeOrderWithStockDeduction(order);
-                            alert('✅ 订单已完成，库存已扣减');
+                            try {
+                              await completeOrderWithStockDeduction(order);
+                              alert('✅ 订单已完成，库存已扣减');
+                            } catch (error) {
+                              console.error('complete order sync failed:', order.id, error);
+                              alert('完成订单同步失败，请检查网络后重试');
+                            }
                           }
                         }}
                         style={{

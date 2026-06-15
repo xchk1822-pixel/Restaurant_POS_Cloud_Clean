@@ -43,6 +43,27 @@ describe('production data safety guards', () => {
     expect(source).toContain("dataManager.saveData('orders', uniqueOrders, { syncFirestore: false");
   });
 
+  test('POS cancel and complete actions publish terminal order state immediately', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const completeBlock = source.slice(
+      source.indexOf('const completeOrderWithStockDeduction'),
+      source.indexOf('const handleCompletePayment = async')
+    );
+    const cancelBlock = source.slice(
+      source.indexOf('const confirmCancelOrder = async'),
+      source.indexOf('const handleSplitBillConfirm')
+    );
+
+    expect(source).toContain('const publishOrderImmediately = async (order: Order) => {');
+    expect(source).toContain("await smartUpdateDocument('pos_orders', order.id, serializeOrderForFirestore(order))");
+    expect(completeBlock).toContain('await publishOrderImmediately(completedOrder)');
+    expect(cancelBlock).toContain('await publishOrderImmediately(cancelledOrder)');
+    expect(cancelBlock.indexOf('await publishOrderImmediately(cancelledOrder)')).toBeLessThan(
+      cancelBlock.indexOf('setOrders(prevOrders => prevOrders.map(o =>')
+    );
+  });
+
   test('POS confirm order copy does not claim stock deduction before completion', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
