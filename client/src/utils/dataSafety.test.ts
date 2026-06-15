@@ -71,6 +71,36 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('export const smartBatchAddDocuments');
   });
 
+  test('legacy global sync service and hook are removed from production source', () => {
+    const legacyServicePath = path.join(process.cwd(), 'src/services/dataSync.ts');
+    const legacyHookPath = path.join(process.cwd(), 'src/hooks/useFirestoreData.ts');
+    const srcRoot = path.join(process.cwd(), 'src');
+    const sourceFiles: string[] = [];
+
+    const collectSource = (directory: string) => {
+      fs.readdirSync(directory, { withFileTypes: true }).forEach(entry => {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          collectSource(entryPath);
+          return;
+        }
+        if (entry.name !== 'dataSafety.test.ts' && /\.(ts|tsx)$/.test(entry.name)) {
+          sourceFiles.push(fs.readFileSync(entryPath, 'utf8'));
+        }
+      });
+    };
+
+    expect(fs.existsSync(legacyServicePath)).toBe(false);
+    expect(fs.existsSync(legacyHookPath)).toBe(false);
+
+    collectSource(srcRoot);
+    const combinedSource = sourceFiles.join('\n');
+    expect(combinedSource).not.toContain("from '../services/dataSync'");
+    expect(combinedSource).not.toContain("from '../../services/dataSync'");
+    expect(combinedSource).not.toContain("from '../hooks/useFirestoreData'");
+    expect(combinedSource).not.toContain("from '../../hooks/useFirestoreData'");
+  });
+
   test('app context does not auto-save shared module data through legacy DataService', () => {
     const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
     const source = fs.readFileSync(appContextPath, 'utf8');

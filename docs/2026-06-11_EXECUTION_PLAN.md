@@ -34,12 +34,13 @@ Data isolation rule:
 - Smart sync blocks global Firestore/localStorage fallback for store business collections when `storeId` is missing.
 - Login store sync now treats Firestore as the source of truth and clears stale local store caches when a cloud collection is empty.
 - POS table layout cloud persistence is hardened: empty cloud tables clear stale local caches, table edit updates existing records, waiter/tablet devices remain read-only for `pos_tables`, and split merged tables restore the original table positions.
+- Legacy global sync entry points `services/dataSync.ts` and `hooks/useFirestoreData.ts` were unused and have been deleted so root collection CRUD and non-store-scoped realtime hooks cannot be accidentally reconnected.
 
 ## Remaining Queue
 
-1. Legacy service quarantine
-   - Review `client/src/services/dataSync.ts` and `client/src/hooks/useFirestoreData.ts`.
-   - Remove or guard any production imports that can read/write root business collections.
+1. Residual unused source cleanup
+   - Search for old migration, test, emergency, duplicate service, and orphan page files.
+   - Delete only after confirming there are no production imports, no route entries, no required data migration role, and a regression guard can prevent reintroduction.
 
 2. Backup/export safety
    - Confirm backup export is read-only and does not include stale global business localStorage keys as authoritative data.
@@ -56,3 +57,4 @@ Data isolation rule:
 - Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.
 - Login store sync is cloud-authoritative and clears stale local store caches, deployed in commit `d010b81`.
 - POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting in commit `d8be493`.
+- Legacy global sync service and hook were removed after import verification; deployed to Firebase Hosting, GitHub commit pending.
