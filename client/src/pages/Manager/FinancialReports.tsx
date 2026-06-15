@@ -468,17 +468,17 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">\u8425\u4e1a\u989d</div><div class="value">${money(summary.totalSales)}</div></div>
           <div class="box"><div class="label">\u73b0\u91d1</div><div class="value">${money(summary.cashPayment)}</div></div>
           <div class="box"><div class="label">\u5237\u5361</div><div class="value">${money(summary.cardPayment)}</div></div>
-          <div class="box"><div class="label">\u4eca\u65e5\u8ba2\u5355</div><div class="value">${htmlEscape(formatTodayOrders(summary))}</div></div>
-          <div class="box"><div class="label">\u91c7\u8d2d\u4ed8\u6b3e</div><div class="value">${money(summary.purchaseAmount)}</div></div>
-          <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
-          <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e\uff08\u5f53\u524d\u5269\u4f59\u6b20\u6b3e\uff09</div><div class="value">${money(summary.supplierDebt)}</div></div>
+          <div class="box"><div class="label">\u8ba2\u5355</div><div class="value">${htmlEscape(formatTodayOrders(summary))}</div></div>
           <div class="box"><div class="label">\u76c8\u4e8f\uff08\u542b\u8bef\u5dee\uff09</div><div class="value">${money(summary.profit)}</div></div>
           <div class="box"><div class="label">\u5b9e\u4ea4\u73b0\u91d1</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
           <div class="box difference-box"><div class="label">\u4ea4\u73ed\u8bef\u5dee\uff08\u5b9e\u4ea4-\u5e94\u4ea4\u73b0\u91d1\uff09</div><div class="value difference-value">${summary.hasHandover ? signedMoney(summary.difference) : '\u672a\u4ea4\u73ed'}</div></div>
+          <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
+          <div class="box"><div class="label">\u91c7\u8d2d\u4ed8\u6b3e</div><div class="value">${money(summary.purchaseAmount)}</div></div>
+          <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e\uff08\u5f53\u524d\u5269\u4f59\u6b20\u6b3e\uff09</div><div class="value">${money(summary.supplierDebt)}</div></div>
         </div>
         <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
         <table>
-          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u4eca\u65e5\u8ba2\u5355</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u76c8\u4e8f</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
+          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u8ba2\u5355</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u76c8\u4e8f</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
@@ -539,15 +539,15 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={styles.statsGrid}>
             <div style={styles.statCard('#3b82f6', '#3b82f6')}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue('#3b82f6')}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
-            <div style={styles.statCard('#0f766e', '#0f766e')}><div style={styles.statLabel}>{'\u4eca\u65e5\u8ba2\u5355'}</div><div style={{ ...styles.statValue('#0f766e'), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
             <div style={styles.statCard('#10b981', '#10b981')}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue('#10b981')}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#8b5cf6', '#8b5cf6')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#8b5cf6')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard('#f59e0b', '#f59e0b')}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue('#f59e0b')}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
-            <div style={styles.statCard('#d97706', '#d97706')}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue('#d97706')}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
-            <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
+            <div style={styles.statCard('#0f766e', '#0f766e')}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue('#0f766e'), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
             <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u76c8\u4e8f'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f + \u8bef\u5dee'} | {'\u76c8\u4e8f\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#64748b', '#64748b')}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue('#64748b')}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
             <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981', summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5b9e\u4ea4 - \u5e94\u4ea4\u73b0\u91d1'}</div></div>
+            <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
+            <div style={styles.statCard('#f59e0b', '#f59e0b')}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue('#f59e0b')}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
+            <div style={styles.statCard('#d97706', '#d97706')}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue('#d97706')}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
           </div>
 
           <div style={styles.card}>
@@ -561,7 +561,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                     <tr>
                       <th style={styles.th}>{'\u65e5\u671f'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8425\u4e1a\u989d'}</th>
-                      <th style={styles.th}>{'\u4eca\u65e5\u8ba2\u5355'}</th>
+                      <th style={styles.th}>{'\u8ba2\u5355'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u73b0\u91d1'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5237\u5361'}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</th>

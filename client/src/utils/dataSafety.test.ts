@@ -596,7 +596,7 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('\\u5f53\\u5929\\u5f00\\u652f\\u5206\\u7c7b\\u6c47\\u603b');
   });
 
-  test('financial reports use one today orders column for completed and cancelled activity', () => {
+  test('financial reports use one generic orders column for completed and cancelled activity', () => {
     const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
     const source = fs.readFileSync(reportsPath, 'utf8');
     const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
@@ -607,12 +607,38 @@ describe('production data safety guards', () => {
     expect(metricsSource).toContain('cancelledOrders');
     expect(metricsSource).toContain('cancelledItems');
     expect(source).toContain('calculateOrderStatusSummary(orders, date)');
-    expect(source).toContain('\\u4eca\\u65e5\\u8ba2\\u5355');
+    expect(source).toContain("{'\\u8ba2\\u5355'}");
+    expect(source).toContain('<th>\\u8ba2\\u5355</th>');
+    expect(source).not.toContain('\\u4eca\\u65e5\\u8ba2\\u5355');
     expect(source).toContain('\\u5b8c\\u6210');
     expect(source).toContain('\\u53d6\\u6d88\\u6574\\u5355');
     expect(source).toContain('\\u53d6\\u6d88\\u83dc\\u54c1');
     expect(source).toContain('formatTodayOrders(report)');
     expect(source).not.toContain('\\u53d6\\u6d88\\u539f\\u56e0');
+  });
+
+  test('financial report stat cards follow the requested business order', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+    const statsBlock = source.slice(source.indexOf('<div style={styles.statsGrid}>'), source.indexOf('<div style={styles.card}>'));
+    const labels = [
+      "'\\u8425\\u4e1a\\u989d'",
+      "'\\u73b0\\u91d1\\u6536\\u5165'",
+      "'\\u5237\\u5361\\u6536\\u5165'",
+      "'\\u8ba2\\u5355'",
+      "'\\u76c8\\u4e8f'",
+      "'\\u5b9e\\u4ea4\\u73b0\\u91d1'",
+      "'\\u4ea4\\u73ed\\u8bef\\u5dee'",
+      "'\\u65e5\\u5e38\\u5f00\\u652f'",
+      "'\\u91c7\\u8d2d\\u4ed8\\u6b3e'",
+      "'\\u4f9b\\u5e94\\u5546\\u8d27\\u6b3e'",
+    ];
+
+    labels.reduce((previousIndex, label) => {
+      const currentIndex = statsBlock.indexOf(label);
+      expect(currentIndex).toBeGreaterThan(previousIndex);
+      return currentIndex;
+    }, -1);
   });
 
   test('POS saves settled cash amounts instead of tendered cash including change', () => {
