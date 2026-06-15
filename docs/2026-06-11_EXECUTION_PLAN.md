@@ -66,4 +66,4 @@ Data isolation rule:
 - Backup export now reads Firestore only and excludes browser local cache; deployed to Firebase Hosting in commit `d33b0d4`.
 - Owner dashboard branch cards and mobile branch detail were verified online with no code change in commit `e40e2f8`.
 - POS cashier was verified in order: table layout and right-side order list render online, payment/confirm copy no longer claims early stock deduction, and tests lock stock deduction to complete-order paths only. Deployed to Firebase Hosting in commit `47eb5fb`.
-- Waiter ordering was verified in order: waiter orders write to shared `pos_orders`, table display derives occupied state from shared orders, and the waiter table layout is read-only so it cannot create local-only table layouts. Deployed to Firebase Hosting in commit `pending`.
+- Waiter ordering was verified in order: waiter orders write to shared `pos_orders`, table display derives occupied state from shared orders, and the waiter table layout is read-only so it cannot create local-only table layouts. Deployed to Firebase Hosting in commit `dd7512e`.
