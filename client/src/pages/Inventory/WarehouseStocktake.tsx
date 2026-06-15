@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
@@ -60,16 +60,14 @@ const WarehouseStocktake: React.FC = () => {
   });
 
   // 获取过滤后的库存物品列表
-  const getFilteredItems = () => {
+  const filteredItems = useMemo(() => {
     return inventoryItems.filter(item => 
       (categoryFilter === 'all' || item.category === categoryFilter) &&
       (!searchTerm || 
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.barcode?.includes(searchTerm))
     );
-  };
-
-  const filteredItems = getFilteredItems();
+  }, [inventoryItems, categoryFilter, searchTerm]);
   const cacheStocktakeHistory = (records: any[]) => {
     const sortedHistory = sortStocktakeHistoryRecords(records).slice(0, 50);
     setStocktakeHistory(sortedHistory);
@@ -123,12 +121,14 @@ const WarehouseStocktake: React.FC = () => {
 
   // 初始化实际数量
   useEffect(() => {
-    const initial: Record<string, number> = {};
-    filteredItems.forEach(item => {
-      initial[item.id] = actualQuantities[item.id] ?? item.currentStock;
+    setActualQuantities(previousQuantities => {
+      const initial: Record<string, number> = {};
+      filteredItems.forEach(item => {
+        initial[item.id] = previousQuantities[item.id] ?? item.currentStock;
+      });
+      return initial;
     });
-    setActualQuantities(initial);
-  }, [filteredItems.length]);
+  }, [filteredItems]);
 
   // 扫码处理
   const handleScan = (barcode: string) => {

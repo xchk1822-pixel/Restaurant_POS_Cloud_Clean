@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
@@ -102,7 +102,7 @@ const FridgeStocktake: React.FC = () => {
   });
 
   // 获取当前冰箱的商品列表
-  const getFridgeItems = (): FridgeItem[] => {
+  const getFridgeItems = useCallback((): FridgeItem[] => {
     return fridgeInventory
       .filter(inv => inv.fridgeId === selectedFridge)
       .map(inv => {
@@ -119,7 +119,7 @@ const FridgeStocktake: React.FC = () => {
         item.itemName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.barcode?.includes(searchTerm)
       );
-  };
+  }, [fridgeInventory, inventoryItems, selectedFridge, searchTerm]);
 
   // ✅ 获取所有其他冰箱已占用的商品ID（互斥逻辑）
   const getOtherFridgeItemIds = (): Set<string> => {
@@ -129,7 +129,7 @@ const FridgeStocktake: React.FC = () => {
 
   void getOtherFridgeItemIds;
 
-  const fridgeItems = getFridgeItems();
+  const fridgeItems = useMemo(() => getFridgeItems(), [getFridgeItems]);
   const fridgeItemOrderSignature = fridgeItems
     .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)
     .join('|');
@@ -249,7 +249,7 @@ const FridgeStocktake: React.FC = () => {
     };
     
     loadOrder();
-  }, [selectedFridge, fridgeItemOrderSignature]);
+  }, [selectedFridge, fridgeItemOrderSignature, fridgeItems]);
 
   // 自动保存排序
   useEffect(() => {

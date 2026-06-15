@@ -810,7 +810,7 @@ describe('production data safety guards', () => {
     expect(posSource).toContain('const isCloudTerminalAdvance = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {');
     expect(posSource).toContain('if (isCloudTerminalAdvance(localOrder, cloudOrder)) return true;');
     expect(posSource).toContain('if (!localOrder || isCloudTerminalAdvance(localOrder, incomingOrder) || (!isOrderStateRegression(localOrder, incomingOrder)');
-    expect(appContextSource).toContain('const isCloudTerminalAdvance = (localItem: any, cloudItem: any): boolean => {');
+    expect(appContextSource).toContain('const isCloudTerminalAdvance = useCallback((localItem: any, cloudItem: any): boolean => {');
     expect(appContextSource).toContain('if (isCloudTerminalAdvance(localItem, cloudItem)) {');
   });
 

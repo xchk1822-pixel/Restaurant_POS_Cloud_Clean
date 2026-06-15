@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { dataService } from '../services/DataService';
 import { dataManager } from '../services/dataManager';
 import { smartGetDocuments, smartIncrementField, smartSubscribeToCollection, smartUpdateDocument } from '../services/smartSyncService';
@@ -469,7 +469,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return [];
   });
 
-  const getSyncVersion = (record: any): number => {
+  const getSyncVersion = useCallback((record: any): number => {
     if (!record) return 0;
     const candidates = [
       record.lastModified,
@@ -489,31 +489,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return 0;
-  };
+  }, []);
 
-  const mergeCloudDataByVersion = <T extends { id?: string }>(localData: T[], cloudData: T[]): T[] => {
-    const merged = new Map<string, T>();
-
-    localData.forEach(item => {
-      if (item?.id) {
-        merged.set(String(item.id), item);
-      }
-    });
-
-    cloudData.forEach(cloudItem => {
-      if (!cloudItem?.id) return;
-      const id = String(cloudItem.id);
-      const localItem = merged.get(id);
-
-      if (!localItem || shouldUseCloudItem(localItem, cloudItem)) {
-        merged.set(id, cloudItem);
-      }
-    });
-
-    return Array.from(merged.values());
-  };
-
-  const getPaymentRank = (paymentStatus?: string): number => {
+  const getPaymentRank = useCallback((paymentStatus?: string): number => {
     switch (paymentStatus) {
       case 'paid': return 3;
       case 'partial': return 2;
@@ -521,9 +499,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       case 'unpaid':
       default: return 0;
     }
-  };
+  }, []);
 
-  const getOrderStatusRank = (status?: string): number => {
+  const getOrderStatusRank = useCallback((status?: string): number => {
     switch (status) {
       case 'cancelled':
       case 'completed': return 5;
@@ -534,17 +512,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       case 'draft':
       default: return 0;
     }
-  };
+  }, []);
 
-  const isTerminalOrderStatus = (status?: string): boolean => {
+  const isTerminalOrderStatus = useCallback((status?: string): boolean => {
     return status === 'completed' || status === 'cancelled';
-  };
+  }, []);
 
-  const isCloudTerminalAdvance = (localItem: any, cloudItem: any): boolean => {
+  const isCloudTerminalAdvance = useCallback((localItem: any, cloudItem: any): boolean => {
     return isTerminalOrderStatus(cloudItem.status) && !isTerminalOrderStatus(localItem.status);
-  };
+  }, [isTerminalOrderStatus]);
 
-  const isOrderStateRegression = (localItem: any, cloudItem: any): boolean => {
+  const isOrderStateRegression = useCallback((localItem: any, cloudItem: any): boolean => {
     const localLooksLikeOrder = 'paymentStatus' in localItem || 'status' in localItem || 'items' in localItem;
     const cloudLooksLikeOrder = 'paymentStatus' in cloudItem || 'status' in cloudItem || 'items' in cloudItem;
     if (!localLooksLikeOrder || !cloudLooksLikeOrder) return false;
@@ -565,9 +543,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return false;
-  };
+  }, [getOrderStatusRank, getPaymentRank]);
 
-  const shouldUseCloudItem = <T extends { id?: string }>(localItem: T, cloudItem: T): boolean => {
+  const shouldUseCloudItem = useCallback(<T extends { id?: string }>(localItem: T, cloudItem: T): boolean => {
     if (isCloudTerminalAdvance(localItem, cloudItem)) {
       return true;
     }
@@ -577,7 +555,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return getSyncVersion(cloudItem) >= getSyncVersion(localItem);
-  };
+  }, [getSyncVersion, isCloudTerminalAdvance, isOrderStateRegression]);
+
+  const mergeCloudDataByVersion = useCallback(<T extends { id?: string }>(localData: T[], cloudData: T[]): T[] => {
+    const merged = new Map<string, T>();
+
+    localData.forEach(item => {
+      if (item?.id) {
+        merged.set(String(item.id), item);
+      }
+    });
+
+    cloudData.forEach(cloudItem => {
+      if (!cloudItem?.id) return;
+      const id = String(cloudItem.id);
+      const localItem = merged.get(id);
+
+      if (!localItem || shouldUseCloudItem(localItem, cloudItem)) {
+        merged.set(id, cloudItem);
+      }
+    });
+
+    return Array.from(merged.values());
+  }, [shouldUseCloudItem]);
 
   useEffect(() => {
     const applyCloudData = <T extends { id?: string }>(
@@ -640,7 +640,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cancelled = true;
       unsubscribers.forEach(unsubscribe => unsubscribe());
     };
-  }, [activeStoreId]);
+  }, [activeStoreId, mergeCloudDataByVersion]);
 
   // 扣减库存
   const getFridgeDeductionKey = (fridgeId: string, itemId: string) => JSON.stringify([fridgeId, itemId]);
