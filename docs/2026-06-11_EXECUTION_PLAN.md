@@ -76,3 +76,9 @@ Data isolation rule:
 - POS cancelled-order freeze hotfix: cancelled orders now remain visible as read-only audit records, available tables clear stale `currentOrderId`, and confirm-order logic creates a new order when the selected order is cancelled/completed/draft instead of appending items to the old order. Deployed to Firebase Hosting in commit `52311ca`.
 - Financial reports now show `今日订单` as one combined business field: completed orders, whole-order cancellations, and cancelled dish quantity. The same field is used in the screen report and A4 print report, with cancellation reasons intentionally omitted from print.
 - Financial report summary cards now follow the fixed two-row order requested for real operation: top row revenue/cash/card/order/profit-loss, bottom row handover/difference/daily expenses/purchase payments/supplier debt. The label was changed from `今日订单` to `订单` for date filters beyond today.
+
+## Next Session Start
+
+- Read `docs/2026-06-14_DAILY_WRAPUP.md` first.
+- Continue the remaining ordered queue from `Manager management`: expense records, shift handover, order history, financial reports, and customers.
+- After manager management, continue `System settings`: stores, exchange rate, permissions, and backup/export.
