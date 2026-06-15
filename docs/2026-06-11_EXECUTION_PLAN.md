@@ -48,6 +48,7 @@ Data isolation rule:
 - Leftover cleanup pass 6 removed seven obsolete redirect-only migration/test routes from `App.tsx` after RED/GREEN data-safety verification. Compatibility redirects `/stores`, `/exchange-rate`, and `/reports` were intentionally kept.
 - Leftover cleanup pass 7 removed the remaining short compatibility redirects `/stores`, `/exchange-rate`, and `/reports` after reference/history checks confirmed active navigation uses canonical paths only.
 - Leftover cleanup pass 8 removed disabled legacy POS sync comment blocks and one dead `if (false && ...)` order migration branch after RED/GREEN data-safety verification.
+- Leftover cleanup pass 9 removed the stale POS data-linkage debug `useEffect` with permanently empty counters after RED/GREEN data-safety verification.
 
 ## Remaining Queue
 
@@ -94,4 +95,4 @@ Data isolation rule:
 
 - Read `docs/2026-06-15_PROGRESS.md` first.
 - Ordered module verification queue is complete. Continue with cleanup only after import, route, test, build, deploy, and online checks, or handle newly reported production issues first.
-- Next pass, if no production bug is reported first: continue reviewing remaining stale comments/logging and source references only after source-history checks before any deletion.
+- Next pass, if no production bug is reported first: continue reviewing remaining noisy console logging and mojibake comments only after source-history checks before any deletion.

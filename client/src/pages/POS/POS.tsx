@@ -894,23 +894,6 @@ const POS: React.FC = () => {
     });
   }, [orders]);
 
-  // 馃攧 鏁版嵁浜掗€氭祴璇曪細鍦ㄦ帶鍒跺彴鏄剧ず鍚勬ā鍧楁暟鎹姸鎬?
-  useEffect(() => {
-    // 鍙湪璁㈠崟鏁伴噺鍙樺寲鏃惰緭鍑猴紝閬垮厤鎷栨嫿鏃堕绻佽緭鍑?
-    const posOrders: any[] = [];
-    const menuItems: any[] = [];
-    const inventoryItems: any[] = [];
-
-    if (orders.length > 0) {
-      console.log('\n馃敆 === 鏁版嵁浜掗€氱姸鎬佹鏌?===');
-      console.log('馃搳 POS璁㈠崟鏁?', orders.length);
-      console.log('馃捑 localStorage.pos_orders:', posOrders.length);
-      console.log('馃捑 localStorage.restaurant_menu_items:', menuItems.length);
-      console.log('馃捑 localStorage.inventory_items:', inventoryItems.length);
-      console.log('鉁?鏁版嵁浜掗€氭鏌ュ畬鎴怽n');
-    }
-  }, [orders.length]);
-
   useEffect(() => {
     saveToStorage('pos_cancel_records', cancelRecords);
   }, [cancelRecords]);

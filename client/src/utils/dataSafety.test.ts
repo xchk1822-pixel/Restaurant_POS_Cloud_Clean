@@ -95,6 +95,22 @@ describe('production data safety guards', () => {
     });
   });
 
+  test('POS does not keep the stale data-linkage debug effect with empty counters', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    [
+      'const posOrders: any[] = [];',
+      'const menuItems: any[] = [];',
+      'const inventoryItems: any[] = [];',
+      'localStorage.pos_orders',
+      'restaurant_menu_items',
+      'inventory_items',
+    ].forEach(staleDebugSource => {
+      expect(source).not.toContain(staleDebugSource);
+    });
+  });
+
   test('POS cancel and complete actions publish terminal order state immediately', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
