@@ -54,4 +54,4 @@ Data isolation rule:
 - POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting in commit `d8be493`.
 - Legacy global sync service and hook were removed after import verification; deployed to Firebase Hosting in commit `e4ef353`.
 - Confirmed-unused legacy UI, duplicate page, and old store-isolation leftovers were removed after RED/GREEN data-safety verification; deployed to Firebase Hosting in commit `c416c71`.
-- Backup export now reads Firestore only and excludes browser local cache; deployed to Firebase Hosting, commit pending.
+- Backup export now reads Firestore only and excludes browser local cache; deployed to Firebase Hosting in commit `d33b0d4`.
