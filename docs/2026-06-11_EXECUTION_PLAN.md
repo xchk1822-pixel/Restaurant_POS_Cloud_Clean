@@ -38,6 +38,7 @@ Data isolation rule:
 - Confirmed-unused legacy UI leftovers were deleted after import and route checks: `components/OrderDetails.tsx`, `components/OrderList.tsx`, `components/Payment.tsx`, old `pages/Dashboard/Dashboard.tsx`, old `pages/Reports/Reports.tsx`, `pages/Manager/ManagerDashboard.tsx`, `pages/Manager/ShiftHandoverEmbedded.tsx`, and `utils/storeDataIsolation.ts`.
 - Backup export is Firestore-only and read-only; it no longer scans browser `localStorage` or includes `localCache` in the backup JSON.
 - Owner dashboard branch cards were rechecked online after the data-layer cleanup: branch totals render, card click expands in-page detail instead of navigating blank, and 390px mobile width remains readable.
+- Cleanup pass 1 removed confirmed-unreferenced technical leftovers after route/import/package checks: unused `client/src/types/index.ts`, old one-off `client/scripts/*.cjs`, stale `client/test-results`, undeployed reserved `server/` and `shared/`, and the mojibake legacy module overview document. Deployed and archived in commit `8fd84f0`.
 
 ## Remaining Queue
 
@@ -84,3 +85,4 @@ Data isolation rule:
 
 - Read `docs/2026-06-15_PROGRESS.md` first.
 - Ordered module verification queue is complete. Continue with cleanup only after import, route, test, build, deploy, and online checks, or handle newly reported production issues first.
+- Next cleanup pass, if no production bug is reported first: review root-level historical markdown files and keep only current operating documentation.
