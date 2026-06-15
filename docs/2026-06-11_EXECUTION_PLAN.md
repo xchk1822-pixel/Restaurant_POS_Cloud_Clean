@@ -55,4 +55,4 @@ Data isolation rule:
 - Operational local caches were scoped by store and deployed in commit `deabd48`.
 - Smart sync now blocks global Firestore/localStorage fallback paths for store-scoped business collections when `storeId` is missing.
 - Login store sync is cloud-authoritative and clears stale local store caches, deployed in commit `d010b81`.
-- POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting, GitHub commit pending.
+- POS table layout persistence now protects against stale local table replay, duplicate table edits, and split-after-merge layout drift; deployed to Firebase Hosting in commit `d8be493`.
