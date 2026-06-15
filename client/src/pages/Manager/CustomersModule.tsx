@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { getExchangeRateConfig, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
+import { getExchangeRateConfig, getExchangeRateStorageKey, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
 import { loadScopedPointsTransactions, saveScopedPointsTransactions } from '../../utils/customerPoints';
 import { filterActiveCustomers } from '../../utils/customerRecords';
 import { smartGetDocuments, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
@@ -34,7 +34,7 @@ interface PointsTransaction {
 }
 
 const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
-  localStorage.setItem('global_exchange_rate', JSON.stringify(config));
+  localStorage.setItem(getExchangeRateStorageKey(), JSON.stringify(config));
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
 };
 

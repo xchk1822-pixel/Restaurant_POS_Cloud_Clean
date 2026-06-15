@@ -432,6 +432,19 @@ describe('production data safety guards', () => {
     expect(globalOrderBlock).not.toContain('setOrders(incomingOrders)');
   });
 
+  test('POS local business caches use scoped storage keys only', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).toContain("localStorage.getItem(getScopedStorageKey('pos_deducted_orders'))");
+    expect(source).toContain("localStorage.setItem(getScopedStorageKey('pos_deducted_orders')");
+    expect(source).not.toContain("localStorage.getItem('pos_deducted_orders')");
+    expect(source).not.toContain("localStorage.setItem('pos_deducted_orders'");
+    expect(source).not.toContain("localStorage.getItem('pos_orders')");
+    expect(source).not.toContain("localStorage.getItem('restaurant_menu_items')");
+    expect(source).not.toContain("localStorage.getItem('inventory_items')");
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');
@@ -553,6 +566,24 @@ describe('production data safety guards', () => {
     );
   });
 
+  test('points and exchange-rate settings use store-scoped local cache keys', () => {
+    const exchangeRatePath = path.join(process.cwd(), 'src/utils/exchangeRate.ts');
+    const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
+    const settingsPath = path.join(process.cwd(), 'src/pages/Manager/ExchangeRateSettings.tsx');
+    const exchangeRateSource = fs.readFileSync(exchangeRatePath, 'utf8');
+    const customersSource = fs.readFileSync(customersPath, 'utf8');
+    const settingsSource = fs.readFileSync(settingsPath, 'utf8');
+
+    expect(exchangeRateSource).toContain('getExchangeRateStorageKey');
+    expect(exchangeRateSource).toContain('store_${storeId}_${EXCHANGE_RATE_KEY}');
+    expect(customersSource).toContain('localStorage.setItem(getExchangeRateStorageKey()');
+    expect(settingsSource).toContain('localStorage.getItem(getExchangeRateStorageKey())');
+    expect(settingsSource).toContain('localStorage.setItem(getExchangeRateStorageKey()');
+    expect(customersSource).not.toContain("localStorage.setItem('global_exchange_rate'");
+    expect(settingsSource).not.toContain("localStorage.getItem('global_exchange_rate'");
+    expect(settingsSource).not.toContain("localStorage.setItem('global_exchange_rate'");
+  });
+
   test('manager dashboard uses collected revenue and financial order dates', () => {
     const dashboardPath = path.join(process.cwd(), 'src/pages/Manager/Dashboard.tsx');
     const source = fs.readFileSync(dashboardPath, 'utf8');
@@ -611,6 +642,57 @@ describe('production data safety guards', () => {
     expect(source).toContain("await smartDeleteDocument('inventory_categories', category.id || category.key)");
     expect(source).not.toContain('shouldSyncToCloud');
     expect(source).not.toContain('normalizedCategories.forEach(category =>');
+  });
+
+  test('inventory category cache writes stay store-scoped', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain('localStorage.setItem(categoryStorageKey');
+    expect(source).not.toContain("localStorage.setItem('inventory_categories'");
+  });
+
+  test('inventory refresh and stock records do not use global business cache keys', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain("dataService.getStoreKey('inventory_stock_records')");
+    expect(source).not.toContain("localStorage.setItem('inventory_items'");
+    expect(source).not.toContain("localStorage.setItem('inventory'");
+    expect(source).not.toContain("localStorage.getItem('inventory_stock_records')");
+  });
+
+  test('stocktake refresh caches require store scope for business data', () => {
+    const stocktakePath = path.join(process.cwd(), 'src/utils/stocktakeRefresh.ts');
+    const source = fs.readFileSync(stocktakePath, 'utf8');
+
+    expect(source).toContain('if (!storeId) {');
+    expect(source).toContain("console.warn('Missing storeId");
+    expect(source).not.toContain("localStorage.setItem('inventory_items'");
+    expect(source).not.toContain("localStorage.setItem('inventory'");
+    expect(source).not.toContain(": 'fridges'");
+    expect(source).not.toContain(": 'fridge_inventory'");
+  });
+
+  test('inventory stocktake category readers use store-scoped local cache keys', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+
+    [warehouseSource, fridgeSource].forEach(source => {
+      expect(source).toContain("dataService.getStoreKey('inventory_categories')");
+      expect(source).not.toContain("localStorage.getItem('inventory_categories')");
+    });
+  });
+
+  test('menu management keeps menu categories separate from inventory categories', () => {
+    const menuPath = path.join(process.cwd(), 'src/pages/Inventory/MenuManagement.tsx');
+    const menuSource = fs.readFileSync(menuPath, 'utf8');
+
+    expect(menuSource).toContain("dataService.getStoreKey('menu_categories')");
+    expect(menuSource).not.toContain("localStorage.getItem('inventory_categories')");
+    expect(menuSource).not.toContain("localStorage.setItem('inventory_categories'");
   });
 
   test('inventory item deletion waits for linked cloud deletes before local state updates', () => {

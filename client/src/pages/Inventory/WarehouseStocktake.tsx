@@ -25,11 +25,12 @@ const WarehouseStocktake: React.FC = () => {
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const inventoryCategoryStorageKey = dataService.getStoreKey('inventory_categories');
   
   // 库存分类（从 localStorage 加载）
   const [inventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
     try {
-      const saved = localStorage.getItem('inventory_categories');
+      const saved = localStorage.getItem(inventoryCategoryStorageKey);
       return saved ? JSON.parse(saved) : [
         { key: 'ingredient', name: '食材', icon: '🥬' },
         { key: 'alcohol', name: '酒水', icon: '🍺' },

@@ -566,7 +566,7 @@ const POS: React.FC = () => {
   // 鉁?璁板綍宸叉墸鍑忓簱瀛樼殑璁㈠崟ID锛堥槻姝㈤噸澶嶆墸鍑忥級
   const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('pos_deducted_orders');
+      const saved = localStorage.getItem(getScopedStorageKey('pos_deducted_orders'));
       if (saved) {
         return new Set(JSON.parse(saved));
       }
@@ -868,11 +868,11 @@ const POS: React.FC = () => {
   // 馃攧 鏁版嵁浜掗€氭祴璇曪細鍦ㄦ帶鍒跺彴鏄剧ず鍚勬ā鍧楁暟鎹姸鎬?
   useEffect(() => {
     // 鍙湪璁㈠崟鏁伴噺鍙樺寲鏃惰緭鍑猴紝閬垮厤鎷栨嫿鏃堕绻佽緭鍑?
-    const posOrders = JSON.parse(localStorage.getItem('pos_orders') || '[]');
-    const menuItems = JSON.parse(localStorage.getItem('restaurant_menu_items') || '[]');
-    const inventoryItems = JSON.parse(localStorage.getItem('inventory_items') || '[]');
+    const posOrders: any[] = [];
+    const menuItems: any[] = [];
+    const inventoryItems: any[] = [];
 
-    if (orders.length > 0 || posOrders.length > 0) {
+    if (orders.length > 0) {
       console.log('\n馃敆 === 鏁版嵁浜掗€氱姸鎬佹鏌?===');
       console.log('馃搳 POS璁㈠崟鏁?', orders.length);
       console.log('馃捑 localStorage.pos_orders:', posOrders.length);
@@ -1885,7 +1885,7 @@ const POS: React.FC = () => {
     const nextDeductedOrderIds = new Set(deductedOrderIds);
     nextDeductedOrderIds.add(order.id);
     setDeductedOrderIds(nextDeductedOrderIds);
-    localStorage.setItem('pos_deducted_orders', JSON.stringify(Array.from(nextDeductedOrderIds)));
+        localStorage.setItem(getScopedStorageKey('pos_deducted_orders'), JSON.stringify(Array.from(nextDeductedOrderIds)));
 
     return {
       ...order,

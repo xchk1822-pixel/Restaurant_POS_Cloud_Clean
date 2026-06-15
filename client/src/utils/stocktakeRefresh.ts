@@ -32,14 +32,13 @@ export const normalizeFridgeInventoryForRefresh = (records: any[]) => {
 };
 
 export const saveInventoryRefreshCache = (storeId: string | null | undefined, items: any[]) => {
-  if (storeId) {
-    localStorage.setItem(`store_${storeId}_inventory_items`, JSON.stringify(items));
-    localStorage.setItem(`store_${storeId}_inventory`, JSON.stringify(items));
+  if (!storeId) {
+    console.warn('Missing storeId; skipped inventory refresh cache write');
     return;
   }
 
-  localStorage.setItem('inventory_items', JSON.stringify(items));
-  localStorage.setItem('inventory', JSON.stringify(items));
+  localStorage.setItem(`store_${storeId}_inventory_items`, JSON.stringify(items));
+  localStorage.setItem(`store_${storeId}_inventory`, JSON.stringify(items));
 };
 
 export const saveFridgeRefreshCache = (
@@ -47,11 +46,13 @@ export const saveFridgeRefreshCache = (
   fridges: any[],
   fridgeInventory: any[]
 ) => {
-  localStorage.setItem(storeId ? `store_${storeId}_fridges` : 'fridges', JSON.stringify(fridges));
-  localStorage.setItem(
-    storeId ? `store_${storeId}_fridge_inventory` : 'fridge_inventory',
-    JSON.stringify(fridgeInventory)
-  );
+  if (!storeId) {
+    console.warn('Missing storeId; skipped fridge refresh cache write');
+    return;
+  }
+
+  localStorage.setItem(`store_${storeId}_fridges`, JSON.stringify(fridges));
+  localStorage.setItem(`store_${storeId}_fridge_inventory`, JSON.stringify(fridgeInventory));
 };
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

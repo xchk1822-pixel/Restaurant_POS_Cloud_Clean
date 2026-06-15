@@ -215,8 +215,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     console.log('Financial report data status', {
       orderCount: orders.length,
       purchaseRecords: dataManager.getData('purchases').length,
-      expenseRecords: dataManager.getData('expenses').length,
-      localPosOrders: localStorage.getItem('pos_orders') ? JSON.parse(localStorage.getItem('pos_orders')!).length : 0
+      expenseRecords: dataManager.getData('expenses').length
     });
   }, [orders]);
 

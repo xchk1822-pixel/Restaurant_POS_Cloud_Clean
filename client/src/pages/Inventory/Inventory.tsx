@@ -282,7 +282,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
       const storageKey = getInventoryCategoryStorageKey();
       localStorage.setItem(storageKey, JSON.stringify(normalizedCategories));
-      localStorage.setItem('inventory_categories', JSON.stringify(normalizedCategories));
     } catch (error) {
       console.error('保存库存类别失败:', error);
     }
@@ -311,15 +310,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
         localStorage.setItem(`store_${storeId}_inventory_items`, JSON.stringify(normalizedCloudItems));
         localStorage.setItem(`store_${storeId}_inventory`, JSON.stringify(normalizedCloudItems));
       } else {
-        localStorage.setItem('inventory_items', JSON.stringify(normalizedCloudItems));
-        localStorage.setItem('inventory', JSON.stringify(normalizedCloudItems));
+        console.warn('Missing storeId; skipped inventory refresh cache write');
       }
 
       const normalizedCloudCategories = normalizeInventoryCategories(cloudCategories);
       setInventoryCategories(normalizedCloudCategories);
       const categoryStorageKey = getInventoryCategoryStorageKey();
       localStorage.setItem(categoryStorageKey, JSON.stringify(normalizedCloudCategories));
-      localStorage.setItem('inventory_categories', JSON.stringify(normalizedCloudCategories));
 
       setInventoryLastSyncedAt(new Date());
     } catch (error) {
@@ -334,7 +331,6 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     const normalizedCategories = normalizeInventoryCategories(nextCategories);
     const categoryStorageKey = getInventoryCategoryStorageKey();
     localStorage.setItem(categoryStorageKey, JSON.stringify(normalizedCategories));
-    localStorage.setItem('inventory_categories', JSON.stringify(normalizedCategories));
     setInventoryCategories(normalizedCategories);
     return normalizedCategories;
   }, [getInventoryCategoryStorageKey]);
@@ -380,7 +376,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
   const [stockRecords] = useState<StockRecord[]>(() => {
     try {
-      const saved = localStorage.getItem('inventory_stock_records');
+      const stockRecordsStorageKey = dataService.getStoreKey('inventory_stock_records');
+      const saved = localStorage.getItem(stockRecordsStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         // 恢复 Date 对象

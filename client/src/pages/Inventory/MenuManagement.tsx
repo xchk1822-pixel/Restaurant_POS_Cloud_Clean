@@ -4,6 +4,7 @@ import { smartDeleteDocument, smartGetDocuments, smartSetDocument, smartUpdateDo
 import { getRecordVersion, mergeRecordsByVersion } from '../../utils/syncMerge';
 import MenuImage from '../../components/MenuImage';
 import { processAndUploadMenuImage } from '../../services/menuImageService';
+import { dataService } from '../../services/DataService';
 
 interface RecipeIngredient {
   itemId: string;
@@ -58,11 +59,12 @@ const MenuManagement: React.FC = () => {
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [menuSearchTerm, setMenuSearchTerm] = useState('');
   const [selectedMenuCategory, setSelectedMenuCategory] = useState('all');
+  const menuCategoryStorageKey = dataService.getStoreKey('menu_categories');
   
   // 从 localStorage 加载分类配置
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('inventory_categories');
+      const saved = localStorage.getItem(menuCategoryStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -75,7 +77,7 @@ const MenuManagement: React.FC = () => {
     } catch (error) {
       console.error('加载分类配置失败:', error);
     }
-  }, []);
+  }, [categories.length, menuCategoryStorageKey, setCategories]);
 
   const refreshMenuData = async () => {
     setIsRefreshing(true);
@@ -92,7 +94,7 @@ const MenuManagement: React.FC = () => {
         const menuCategories = cloudMenus.map(item => item.category).filter(Boolean);
         const mergedCategories = Array.from(new Set([...latestCategoryDoc.names, ...menuCategories]));
         setCategories(mergedCategories);
-        localStorage.setItem('inventory_categories', JSON.stringify(mergedCategories));
+        localStorage.setItem(menuCategoryStorageKey, JSON.stringify(mergedCategories));
       }
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -105,7 +107,7 @@ const MenuManagement: React.FC = () => {
 
   const saveMenuCategories = async (nextCategories: string[]) => {
     setCategories(nextCategories);
-    localStorage.setItem('inventory_categories', JSON.stringify(nextCategories));
+    localStorage.setItem(menuCategoryStorageKey, JSON.stringify(nextCategories));
     await smartSetDocument('menu_categories', 'categories', {
       id: 'categories',
       names: nextCategories,

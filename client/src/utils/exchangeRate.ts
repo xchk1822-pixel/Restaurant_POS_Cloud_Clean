@@ -17,6 +17,16 @@ export interface ExchangeRateConfig {
 
 const EXCHANGE_RATE_KEY = 'global_exchange_rate';
 
+export const getExchangeRateStorageKey = (): string => {
+  try {
+    const currentUser = localStorage.getItem('current_user');
+    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
+    return storeId ? `store_${storeId}_${EXCHANGE_RATE_KEY}` : EXCHANGE_RATE_KEY;
+  } catch {
+    return EXCHANGE_RATE_KEY;
+  }
+};
+
 /**
  * 🔥 获取本地日期字符串 (YYYY-MM-DD)
  * 使用系统本地时间，避免时区问题
@@ -46,7 +56,7 @@ const DEFAULT_CONFIG: ExchangeRateConfig = {
  */
 export const getExchangeRateConfig = (): ExchangeRateConfig => {
   try {
-    const saved = localStorage.getItem(EXCHANGE_RATE_KEY);
+    const saved = localStorage.getItem(getExchangeRateStorageKey());
     if (saved) {
       return {
         ...DEFAULT_CONFIG,

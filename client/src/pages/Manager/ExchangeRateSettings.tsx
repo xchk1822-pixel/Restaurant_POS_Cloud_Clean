@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import { getExchangeRateStorageKey } from '../../utils/exchangeRate';
 
 interface ExchangeRateConfig {
   id: string;
@@ -9,7 +10,6 @@ interface ExchangeRateConfig {
   updatedBy?: string;
 }
 
-const STORAGE_KEY = 'global_exchange_rate';
 const COLLECTION = 'exchange_rate';
 const DOC_ID = 'global';
 
@@ -22,7 +22,7 @@ const defaultConfig = (): ExchangeRateConfig => ({
 
 const readLocalConfig = (): ExchangeRateConfig => {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(getExchangeRateStorageKey());
     if (saved) {
       return { ...defaultConfig(), ...JSON.parse(saved), id: DOC_ID };
     }
@@ -33,7 +33,7 @@ const readLocalConfig = (): ExchangeRateConfig => {
 };
 
 const saveLocalConfig = (config: ExchangeRateConfig) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  localStorage.setItem(getExchangeRateStorageKey(), JSON.stringify(config));
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
 };
 
