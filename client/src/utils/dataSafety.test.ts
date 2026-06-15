@@ -303,13 +303,19 @@ describe('production data safety guards', () => {
 
   test('backup page is read-only export and cannot restore or bulk sync data', () => {
     const backupPath = path.join(process.cwd(), 'src/pages/Settings/DataBackup.tsx');
+    const backupServicePath = path.join(process.cwd(), 'src/services/backupExportService.ts');
     const source = fs.readFileSync(backupPath, 'utf8');
+    const serviceSource = fs.readFileSync(backupServicePath, 'utf8');
 
     expect(source).toContain('createFirestoreBackup');
     expect(source).toContain('downloadBackupFile');
+    expect(source).not.toContain('backup.localCache');
     expect(source).not.toContain('restoreFromFirestore');
     expect(source).not.toContain('syncToFirestoreNow');
     expect(source).not.toContain('setBackupMode');
+    expect(serviceSource).not.toContain('localStorage');
+    expect(serviceSource).not.toContain('localCache');
+    expect(serviceSource).not.toContain('getRestaurantLocalCache');
   });
 
   test('owner dashboard uses manual refresh wording and has no legacy data sync entry', () => {

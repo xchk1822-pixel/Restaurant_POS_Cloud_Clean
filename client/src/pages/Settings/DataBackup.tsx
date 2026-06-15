@@ -47,7 +47,7 @@ const DataBackup: React.FC = () => {
           <div>
             <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#111827' }}>数据备份导出</h1>
             <p style={{ margin: '0.5rem 0 0', color: '#6b7280', fontSize: '0.9rem' }}>
-              只读取云端和本机缓存并下载 JSON 文件，不会写入、恢复或覆盖任何数据。
+              只读取 Firestore 云端数据并下载 JSON 文件，不会写入、恢复或覆盖任何数据，也不会把浏览器本地缓存打包成权威备份。
             </p>
           </div>
           <button
@@ -70,7 +70,7 @@ const DataBackup: React.FC = () => {
 
         <div style={{ ...cardStyle, background: '#fffbeb', borderColor: '#fcd34d', color: '#92400e' }}>
           <strong>备份范围：</strong>
-          老板账号会导出全局数据、所有分店业务数据和当前浏览器里的餐厅本地缓存。图片文件本身不打包，菜品记录会保留 Firebase Storage 图片 URL 和路径。
+          老板账号会导出全局数据和所有分店业务数据；分店账号只导出当前分店业务数据。图片文件本身不打包，菜品记录会保留 Firebase Storage 图片 URL 和路径。
         </div>
 
         {error && (
@@ -108,7 +108,6 @@ const DataBackup: React.FC = () => {
                 <div>导出时间：{new Date(backup.metadata.exportedAt).toLocaleString()}</div>
                 <div>时区：{backup.metadata.timezone}</div>
                 <div>导出账号：{backup.metadata.exportedBy.username} ({backup.metadata.exportedBy.role})</div>
-                <div>本地缓存键数量：{Object.keys(backup.localCache).length}</div>
               </div>
             </div>
 

@@ -58,7 +58,6 @@ export interface BackupExport {
   };
   global: Record<string, CollectionBackupResult>;
   stores: Record<string, StoreBackupResult>;
-  localCache: Record<string, any>;
   summary: {
     globalCollections: number;
     storeCount: number;
@@ -105,31 +104,6 @@ const readCollection = async (path: string): Promise<CollectionBackupResult> => 
       error: error?.message || String(error),
     };
   }
-};
-
-const getRestaurantLocalCache = (): Record<string, any> => {
-  const allowedPrefixes = [
-    'store_',
-    'global_',
-    'system_roles',
-    'stores',
-    'users',
-    'current_store',
-    'pending_',
-    'offline_',
-  ];
-
-  const cache: Record<string, any> = {};
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key || !allowedPrefixes.some(prefix => key.startsWith(prefix))) continue;
-    try {
-      cache[key] = JSON.parse(localStorage.getItem(key) || 'null');
-    } catch {
-      cache[key] = localStorage.getItem(key);
-    }
-  }
-  return cache;
 };
 
 const getStoreIdsForBackup = (user: User, stores: CollectionBackupResult): string[] => {
@@ -182,7 +156,6 @@ export const createFirestoreBackup = async (user: User): Promise<BackupExport> =
     },
     global: globalResults,
     stores: storeResults,
-    localCache: getRestaurantLocalCache(),
     summary: {
       globalCollections: Object.keys(globalResults).length,
       storeCount: Object.keys(storeResults).length,
