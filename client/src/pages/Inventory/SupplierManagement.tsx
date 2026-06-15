@@ -42,8 +42,8 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
   const [editingSupplier, setEditingSupplier] = useState<Partial<Supplier>>({});
   
   // 📄 业务流水弹窗
-  const [showTransactionModal, setShowTransactionModal] = useState(false);
-  const [selectedSupplierForTransaction, setSelectedSupplierForTransaction] = useState<Supplier | null>(null);
+  const [, setShowTransactionModal] = useState(false);
+  const [, setSelectedSupplierForTransaction] = useState<Supplier | null>(null);
   
   // 还款表单
   const [paymentForm, setPaymentForm] = useState({
@@ -354,10 +354,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
     }
     
     // 计算统计
-    const totalPurchases = filteredOrders.reduce((sum, order) => sum + order.totalAmount, 0);
-    const totalPaid = filteredPayments.reduce((sum, pay) => sum + pay.amount, 0);
-    const currentBalance = totalPurchases - totalPaid;
-
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('请允许弹出窗口以打印对账单');

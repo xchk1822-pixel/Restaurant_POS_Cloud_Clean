@@ -76,7 +76,7 @@ const serializeOrderForFirestore = (order: Order) => ({
 });
 
 const WaiterInterface: React.FC = () => {
-  const { menuItems: contextMenuItems, orders: appOrders, setOrders: setAppOrders } = useAppContext();
+  const { orders: appOrders, setOrders: setAppOrders } = useAppContext();
   const publishedTablesSignatureRef = useRef<string>('');
   const localTablesSignatureRef = useRef<string>('');
   const skipInitialTablePublishRef = useRef(true);
@@ -134,7 +134,6 @@ const WaiterInterface: React.FC = () => {
   
   // 使用 AppContext 中的订单数据（实时同步）
   const orders = appOrders;
-  const menuItems = contextMenuItems;
   const displayedTables = tables.map(table => {
     const activeOrder = orders.find(order =>
       order.tableId === table.id &&

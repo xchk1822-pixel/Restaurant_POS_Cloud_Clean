@@ -279,7 +279,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   // 🔥 标记是否已经加载过真实数据
-  const [hasLoadedRealData, setHasLoadedRealData] = useState(false);
+  const [, setHasLoadedRealData] = useState(false);
 
   // ❌ 临时禁用库存数据实时监听（避免死循环）
   /*

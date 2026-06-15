@@ -4,15 +4,6 @@ import { dataService } from '../../services/DataService';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
-interface ExpenseItem {
-  id: string;
-  date: string;
-  categoryId: string;
-  description: string;
-  amount: number;
-  receipt?: string;
-}
-
 interface ExpenseCategory {
   id: string;
   name: string;

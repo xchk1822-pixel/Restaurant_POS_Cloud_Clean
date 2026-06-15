@@ -127,6 +127,8 @@ const FridgeStocktake: React.FC = () => {
     return new Set(otherItems.map(inv => inv.itemId));
   };
 
+  void getOtherFridgeItemIds;
+
   const fridgeItems = getFridgeItems();
   const fridgeItemOrderSignature = fridgeItems
     .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)

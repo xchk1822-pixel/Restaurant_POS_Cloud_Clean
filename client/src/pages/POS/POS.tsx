@@ -2818,6 +2818,9 @@ const POS: React.FC = () => {
     console.log('鉁?妗屽彴绉诲姩瀹屾垚');
   };
 
+  void handleTableDragOver;
+  void handleTableDrop;
+
   const handleTableSelectForMerge = (tableId: string) => {
     if (!isEditMode) return;
     setSelectedTables(prev =>
@@ -2963,6 +2966,8 @@ const POS: React.FC = () => {
     if (diffHours < 24) return `${diffHours}小时${diffMins % 60}分钟`;
     return `${Math.floor(diffHours / 24)}天`;
   };
+
+  void getWaitTime;
 
   // Cancel Modal Component
   const renderCancelModal = () => (

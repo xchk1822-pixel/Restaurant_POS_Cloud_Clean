@@ -71,13 +71,11 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
 
       // 找到商品当前所在的账单
       let currentItem: OrderItem | null = null;
-      let currentBillIndex = -1;
 
-      newBills.forEach((bill, billIdx) => {
+      newBills.forEach((bill) => {
         const itemIndex = bill.items.findIndex(item => item.id === itemId);
         if (itemIndex !== -1) {
           currentItem = bill.items[itemIndex];
-          currentBillIndex = billIdx;
           bill.items.splice(itemIndex, 1);
           bill.subtotal = bill.items.reduce((sum, item) => sum + item.subtotal, 0);
         }
