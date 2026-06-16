@@ -30,13 +30,10 @@ interface SplitBillModalProps {
 }
 
 const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfirm, initialSplitBills }) => {
-  console.log('SplitBillModal 渲染，商品数:', items.length);
-  
   const [splitCount, setSplitCount] = useState(2); // 默认拆分成2份
   const [splitBills, setSplitBills] = useState<SplitBill[]>(() => {
     // 如果有初始数据，使用初始数据
     if (initialSplitBills && initialSplitBills.length > 0) {
-      console.log('使用已保存的拆分账单数据');
       return initialSplitBills;
     }
     

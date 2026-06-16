@@ -49,6 +49,7 @@ Data isolation rule:
 - Leftover cleanup pass 7 removed the remaining short compatibility redirects `/stores`, `/exchange-rate`, and `/reports` after reference/history checks confirmed active navigation uses canonical paths only.
 - Leftover cleanup pass 8 removed disabled legacy POS sync comment blocks and one dead `if (false && ...)` order migration branch after RED/GREEN data-safety verification.
 - Leftover cleanup pass 9 removed the stale POS data-linkage debug `useEffect` with permanently empty counters after RED/GREEN data-safety verification.
+- Leftover cleanup pass 10 removed noisy split-bill modal render/load debug logs after RED/GREEN data-safety verification.
 
 ## Remaining Queue
 

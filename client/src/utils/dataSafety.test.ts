@@ -111,6 +111,18 @@ describe('production data safety guards', () => {
     });
   });
 
+  test('split bill modal does not keep noisy render debug logging', () => {
+    const splitBillPath = path.join(process.cwd(), 'src/components/SplitBillModal.tsx');
+    const source = fs.readFileSync(splitBillPath, 'utf8');
+
+    [
+      "console.log('SplitBillModal 渲染，商品数:', items.length);",
+      "console.log('使用已保存的拆分账单数据');",
+    ].forEach(staleLog => {
+      expect(source).not.toContain(staleLog);
+    });
+  });
+
   test('POS cancel and complete actions publish terminal order state immediately', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
