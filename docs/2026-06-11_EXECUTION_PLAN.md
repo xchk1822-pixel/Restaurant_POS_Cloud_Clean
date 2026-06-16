@@ -91,6 +91,7 @@ Data isolation rule:
 
 - Manager management was verified in order: expense records, shift handover, order history, financial reports, data overview, and customer management render online with 0 console errors. Expense receipt removal and shift handover submit now wait for cloud writes before local state updates. Order history detail now shows available cancellation summary and item-level cancellation records. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - System settings were verified in order: store management, exchange-rate settings, permission management, and backup export. Store/account/role/exchange saves now write through cloud paths before local UI/cache mutation. Exchange-rate settings are store-scoped with an admin store selector, and backup export keeps `exchange_rate` under store business data only. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
+- POS completion responsiveness hotfix: clear-table and takeout/delivery complete buttons now show immediate processing feedback, block duplicate clicks, yield a browser frame before stock/cloud work, and avoid a duplicate stale-table overwrite during clear-table. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
 
 ## Next Session Start
 

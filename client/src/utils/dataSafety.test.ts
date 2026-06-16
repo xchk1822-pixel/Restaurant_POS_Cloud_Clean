@@ -213,6 +213,38 @@ describe('production data safety guards', () => {
     expect(completeBlock).toContain('deductStockForOrder');
   });
 
+  test('POS terminal completion actions paint processing feedback before stock and cloud work', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const tableActionBlock = source.slice(
+      source.indexOf("const handleTableAction = async (action: 'clear' | 'add') => {"),
+      source.indexOf('const subtotal = currentItems.reduce')
+    );
+    const nonDineInButtonStart = source.indexOf("{order.orderType !== 'dine_in' && order.status !== 'completed'");
+    const nonDineInButtonBlock = source.slice(
+      nonDineInButtonStart,
+      source.indexOf('</button>', nonDineInButtonStart)
+    );
+
+    expect(source).toContain('const waitForNextPaint = () => new Promise<void>');
+    expect(source).toContain('const [clearingOrderId, setClearingOrderId] = useState<string | null>(null);');
+    expect(source).toContain('const [completingOrderIds, setCompletingOrderIds] = useState<Set<string>>');
+    expect(tableActionBlock).toContain('setClearingOrderId(orderToClear.id);');
+    expect(tableActionBlock.indexOf('setClearingOrderId(orderToClear.id);')).toBeLessThan(
+      tableActionBlock.indexOf('await waitForNextPaint();')
+    );
+    expect(tableActionBlock.indexOf('await waitForNextPaint();')).toBeLessThan(
+      tableActionBlock.indexOf('await completeOrderWithStockDeduction(orderToClear, { releaseTable: true });')
+    );
+    expect(tableActionBlock).not.toContain('setTables(tables.map(t =>');
+    expect(nonDineInButtonBlock).toContain('setCompletingOrderIds(prev =>');
+    expect(nonDineInButtonBlock.indexOf('await waitForNextPaint();')).toBeLessThan(
+      nonDineInButtonBlock.indexOf('await completeOrderWithStockDeduction(order);')
+    );
+    expect(nonDineInButtonBlock).toContain('disabled={completingOrderIds.has(order.id)}');
+    expect(nonDineInButtonBlock).toContain("completingOrderIds.has(order.id) ? '处理中...' :");
+  });
+
   test('smart update uses Firestore upsert instead of update-only writes', () => {
     const servicePath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');

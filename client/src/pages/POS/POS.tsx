@@ -273,6 +273,15 @@ const savePendingOrderSyncIds = (ids: Set<string>) => {
   }
 };
 
+const waitForNextPaint = () => new Promise<void>(resolve => {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    Promise.resolve().then(resolve);
+    return;
+  }
+
+  window.requestAnimationFrame(() => resolve());
+});
+
 const getTablesSignature = (tables: Array<Partial<Table>> = []): string => {
   return JSON.stringify(
     [...tables]
@@ -602,6 +611,8 @@ const POS: React.FC = () => {
 
   // 馃毇 闃叉閲嶅鏀粯
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [clearingOrderId, setClearingOrderId] = useState<string | null>(null);
+  const [completingOrderIds, setCompletingOrderIds] = useState<Set<string>>(() => new Set());
 
   // 鉁?璁板綍宸叉墸鍑忓簱瀛樼殑璁㈠崟ID锛堥槻姝㈤噸澶嶆墸鍑忥級
   const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => {
@@ -1583,31 +1594,26 @@ const POS: React.FC = () => {
         return;
       }
 
+      if (clearingOrderId === orderToClear.id) {
+        return;
+      }
+
+      setClearingOrderId(orderToClear.id);
       try {
+        await waitForNextPaint();
         await completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
       } catch (error) {
         console.error('complete order sync failed:', orderToClear.id, error);
         alert('完成订单同步失败，请检查网络后重试');
         return;
+      } finally {
+        setClearingOrderId(null);
       }
 
-      // 濡傛灉鏈夋鍙帮紝鏇存柊妗屽彴鐘舵€?
       if (tableActionData.tableId) {
-        const updatedTable = tables.find(t => t.id === tableActionData.tableId);
-        if (updatedTable) {
-          const tableWithTimestamp = {
-            ...updatedTable,
-            status: 'available' as const,
-            lastModified: Date.now() // 馃敟 娣诲姞鏃堕棿鎴?
-          };
-          setTables(tables.map(t =>
-            t.id === tableActionData.tableId ? tableWithTimestamp : t
-          ));
-
-        }
         alert('\u684c\u53f0\u5df2\u6e05\u7406\uff0c\u53ef\u4ee5\u63a5\u5f85\u65b0\u987e\u5ba2');
       } else {
-        alert('\u6e05\u53f0\u5931\u8d25');
+        alert('\u8ba2\u5355\u5df2\u5b8c\u6210');
       }
     } else {
       console.log('鉁?鎵ц鍔犺彍鎿嶄綔');
@@ -3035,18 +3041,19 @@ const POS: React.FC = () => {
             onClick={() => {
               handleTableAction('clear');
             }}
+            disabled={!!clearingOrderId}
             style={{
               padding: '0.75rem 1.5rem',
-              backgroundColor: '#ef4444',
+              backgroundColor: clearingOrderId ? '#9ca3af' : '#ef4444',
               color: 'white',
               border: 'none',
               borderRadius: '0.375rem',
               fontWeight: '600',
-              cursor: 'pointer',
+              cursor: clearingOrderId ? 'not-allowed' : 'pointer',
               fontSize: '0.95rem'
             }}
           >
-            {isDineIn ? '🧹 清台' : '✅ 完成'}
+            {clearingOrderId ? '处理中...' : (isDineIn ? '🧹 清台' : '✅ 完成')}
           </button>
         </div>
       </div>
@@ -4516,30 +4523,46 @@ const POS: React.FC = () => {
                           }
 
                           if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '外卖订单已完成'}？\n\n点击确定后订单完成，并扣减库存。`)) {
+                            setCompletingOrderIds(prev => {
+                              const next = new Set(prev);
+                              next.add(order.id);
+                              return next;
+                            });
                             try {
+                              await waitForNextPaint();
                               await completeOrderWithStockDeduction(order);
                               alert('✅ 订单已完成，库存已扣减');
                             } catch (error) {
                               console.error('complete order sync failed:', order.id, error);
                               alert('完成订单同步失败，请检查网络后重试');
+                            } finally {
+                              setCompletingOrderIds(prev => {
+                                const next = new Set(prev);
+                                next.delete(order.id);
+                                return next;
+                              });
                             }
                           }
                         }}
+                        disabled={completingOrderIds.has(order.id)}
                         style={{
                           width: '100%',
                           padding: '0.55rem 0.75rem',
                           margin: '0.45rem 0 0.6rem 0',
-                          backgroundColor: order.paymentStatus === 'paid' || order.status === 'served' ? '#16a34a' : '#f59e0b',
+                          backgroundColor: completingOrderIds.has(order.id)
+                            ? '#9ca3af'
+                            : order.paymentStatus === 'paid' || order.status === 'served' ? '#16a34a' : '#f59e0b',
                           color: 'white',
                           border: 'none',
                           borderRadius: '0.375rem',
-                          cursor: 'pointer',
+                          cursor: completingOrderIds.has(order.id) ? 'not-allowed' : 'pointer',
                           fontSize: '0.9rem',
                           fontWeight: '700',
                           boxShadow: '0 1px 2px rgba(0,0,0,0.12)'
                         }}
                       >
-                        {order.paymentStatus === 'paid' || order.status === 'served'
+                        {completingOrderIds.has(order.id) ? '处理中...' :
+                          order.paymentStatus === 'paid' || order.status === 'served'
                           ? (order.orderType === 'takeout' ? '✅ 顾客已取餐，完成订单' : '✅ 外卖已完成，完成订单')
                           : '💳 先支付后完成订单'}
                       </button>
