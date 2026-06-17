@@ -596,6 +596,23 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('smartAddDocument(\'system_roles\'');
   });
 
+  test('permissions management does not emit noisy role-edit debug logs', () => {
+    const permissionsPath = path.join(process.cwd(), 'src/pages/Settings/PermissionsModule.tsx');
+    const source = fs.readFileSync(permissionsPath, 'utf8');
+    const toggleBlock = source.slice(
+      source.indexOf('const togglePerm = (permId: string) => {'),
+      source.indexOf('const handleSelectRole = (role: Role) => {')
+    );
+    const selectRoleBlock = source.slice(
+      source.indexOf('const handleSelectRole = (role: Role) => {'),
+      source.indexOf('const handleSave = async () => {')
+    );
+
+    expect(toggleBlock).not.toContain('console.log');
+    expect(selectRoleBlock).not.toContain('console.log');
+    expect(source).toContain('console.error');
+  });
+
   test('backup page is read-only export and cannot restore or bulk sync data', () => {
     const backupPath = path.join(process.cwd(), 'src/pages/Settings/DataBackup.tsx');
     const backupServicePath = path.join(process.cwd(), 'src/services/backupExportService.ts');

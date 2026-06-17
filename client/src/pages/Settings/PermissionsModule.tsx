@@ -211,11 +211,8 @@ const PermissionsModule: React.FC = () => {
   }, [refreshRoles]);
 
   const togglePerm = (permId: string) => {
-    console.log('🔘 切换权限:', permId);
-    
     setFormPerms(prev => {
       const isChecked = prev.includes(permId);
-      console.log('  当前状态:', isChecked ? '已勾选' : '未勾选');
       
       let next: string[];
       
@@ -226,7 +223,6 @@ const PermissionsModule: React.FC = () => {
         const addNodeAndChildren = (nodeId: string) => {
           if (!next.includes(nodeId)) {
             next.push(nodeId);
-            console.log('    ➕ 添加:', nodeId);
           }
           const node = findNode(PERMISSION_TREE, nodeId);
           if (node && node.children) {
@@ -244,14 +240,12 @@ const PermissionsModule: React.FC = () => {
           const allChildrenChecked = areAllChildPermissionsSelected(parent, next);
           if (allChildrenChecked && !next.includes(parent.id)) {
             next.push(parent.id);
-            console.log('    ➕ 自动添加父节点:', parent.id);
           }
           currentNode = parent.id;
         }
       } else {
         // ❌ 取消勾选：移除该节点及其所有子节点
         next = prev.filter(id => id !== permId);
-        console.log('    ➖ 移除:', permId);
         
         const removeNodeAndChildren = (nodeId: string) => {
           const node = findNode(PERMISSION_TREE, nodeId);
@@ -260,7 +254,6 @@ const PermissionsModule: React.FC = () => {
               const idx = next.indexOf(child.id);
               if (idx >= 0) {
                 next.splice(idx, 1);
-                console.log('    ➖ 移除子节点:', child.id);
               }
             });
           }
@@ -276,20 +269,17 @@ const PermissionsModule: React.FC = () => {
           const idx = next.indexOf(parent.id);
           if (idx >= 0) {
             next.splice(idx, 1);
-            console.log('    ➖ 移除父节点:', parent.id);
           }
           
           currentNode = parent.id;
         }
       }
 
-      console.log('  新的权限列表:', next);
       return next;
     });
   };
 
   const handleSelectRole = (role: Role) => {
-    console.log('📝 选择角色进行编辑:', role.id, role.name);
     setSelectedRoleId(role.id);
     setEditingRoleId(role.id); // ✅ 确保设置 editingRoleId
     setFormName(role.name);
