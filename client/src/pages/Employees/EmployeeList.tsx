@@ -119,7 +119,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         syncFirestore: false,
         notify: false,
       });
-      console.log('employee marked deleted in Firestore:', id);
       setEmployees(activeEmployees);
     } catch (error) {
       console.error('delete employee from Firestore failed:', error);

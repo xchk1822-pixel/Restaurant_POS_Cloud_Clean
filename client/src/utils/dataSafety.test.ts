@@ -1718,6 +1718,7 @@ describe('production data safety guards', () => {
     expect(employeeListSource).toContain("smartUpdateDocument('employee_deletions', id");
     expect(employeeListSource).toContain("dataManager.saveData('employees', activeEmployees");
     expect(employeeListSource).toContain('syncFirestore: false');
+    expect(employeeListSource).not.toContain('employee marked deleted in Firestore');
   });
 
   test('attendance changes use awaited deterministic single-document writes', () => {
