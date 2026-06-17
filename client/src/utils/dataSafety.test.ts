@@ -104,6 +104,15 @@ describe('production data safety guards', () => {
     expect(source).toContain('console.error');
   });
 
+  test('firebase initialization does not emit success debug logs', () => {
+    const firebaseIndexPath = path.join(process.cwd(), 'src/firebase/index.ts');
+    const source = fs.readFileSync(firebaseIndexPath, 'utf8');
+
+    expect(source).not.toContain('console.log');
+    expect(source).not.toContain('Firebase已初始化');
+    expect(source).toContain('console.warn');
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');

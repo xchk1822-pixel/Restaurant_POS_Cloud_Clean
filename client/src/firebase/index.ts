@@ -25,6 +25,4 @@ enableIndexedDbPersistence(db)
     }
   });
 
-console.log('✅ Firebase已初始化');
-
 export default app;
