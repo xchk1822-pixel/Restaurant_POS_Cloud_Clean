@@ -1756,6 +1756,7 @@ describe('production data safety guards', () => {
     expect(addLoanBlock.indexOf('await recordCashFlow({')).toBeLessThan(
       addLoanBlock.indexOf('setLoanRecords(updated)')
     );
+    expect(loanSource).not.toContain('console.log');
     expect(salaryBlock.indexOf("await smartAddDocument('salary_records', salaryRecord)")).toBeLessThan(
       salaryBlock.indexOf('setSalaryRecords(updatedSalaries)')
     );

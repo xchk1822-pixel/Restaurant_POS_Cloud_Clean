@@ -75,7 +75,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     
     try {
       await smartAddDocument('cash_flow_records', newFlow);
-      console.log('✅ 现金流记录已同步到 Firestore');
     } catch (error) {
       console.error('❌ 同步现金流记录失败:', error);
       throw error;
@@ -83,7 +82,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
     const updated = [...cashFlowRecords, newFlow];
     setCashFlowRecords(updated);
-    console.log('💰 现金流记录:', newFlow);
   };
 
   const handleAddLoan = async () => {
@@ -139,7 +137,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
         date: loanFormData.date || getLocalDateString(),
         description: `借款给${employee?.name}`,
       });
-      console.log('✅ 借款记录已同步到 Firestore');
     } catch (error) {
       console.error('❌ 保存借款记录失败:', error);
       alert('保存借款失败，请检查网络后重试');
@@ -149,7 +146,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     setLoanRecords(updated);
     const nextExpenses = [...dataManager.getData('expenses'), newExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    console.log('💰 已创建开支记录:', newExpense);
     
     setShowLoanModal(false);
     setLoanFormData({
