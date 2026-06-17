@@ -91,6 +91,19 @@ describe('production data safety guards', () => {
     expect(source).toContain('console.error');
   });
 
+  test('firebase auth service does not emit identity success-flow debug logs', () => {
+    const authServicePath = path.join(process.cwd(), 'src/services/FirebaseAuthService.ts');
+    const source = fs.readFileSync(authServicePath, 'utf8');
+
+    expect(source).not.toContain('console.log');
+    expect(source).not.toContain('尝试 Firebase Auth 登录');
+    expect(source).not.toContain('Firebase Auth 登录成功');
+    expect(source).not.toContain('Firebase Auth 登出成功');
+    expect(source).not.toContain('创建 Firebase Auth 用户:');
+    expect(source).not.toContain('Firebase Auth 用户创建成功');
+    expect(source).toContain('console.error');
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');

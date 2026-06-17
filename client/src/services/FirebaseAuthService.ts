@@ -33,13 +33,9 @@ export const firebaseLogin = async (username: string, password: string): Promise
     // 用户名作为邮箱登录（添加 @restaurant.local 后缀）
     const email = `${username}@restaurant.local`;
     
-    console.log('🔐 尝试 Firebase Auth 登录:', username);
-    
     // 使用 Firebase Auth 登录
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const firebaseUser = userCredential.user;
-    
-    console.log('✅ Firebase Auth 登录成功:', firebaseUser.uid);
     
     // 从 Firestore 获取用户详细信息
     const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
@@ -79,7 +75,6 @@ export const firebaseLogin = async (username: string, password: string): Promise
 export const firebaseLogout = async (): Promise<void> => {
   try {
     await signOut(auth);
-    console.log('✅ Firebase Auth 登出成功');
   } catch (error) {
     console.error('❌ Firebase Auth 登出失败:', error);
     throw error;
@@ -97,8 +92,6 @@ export const createFirebaseUser = async (
   try {
     // 用户名作为邮箱
     const email = `${username}@restaurant.local`;
-    
-    console.log('🔐 创建 Firebase Auth 用户:', username);
     
     // 创建 Firebase Auth 用户
     const userCreationAuth = getAuth(getUserCreationApp());
@@ -122,8 +115,6 @@ export const createFirebaseUser = async (
     };
     
     await setDoc(doc(db, 'users', firebaseUser.uid), appUser);
-    
-    console.log('✅ Firebase Auth 用户创建成功:', firebaseUser.uid);
     
     return appUser;
   } catch (error: any) {
