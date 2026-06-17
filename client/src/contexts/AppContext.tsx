@@ -180,7 +180,7 @@ interface AppContextType {
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
 
   // 扣减库存（销售时调用）
-  deductStock: (orderItems: OrderItem[]) => void;
+  deductStock: (orderItems: OrderItem[]) => Promise<void>;
 
   // 增加库存（采购入库时调用）
   addStock: (itemId: string, quantity: number) => void;
@@ -542,6 +542,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         label: string;
       }> = [
         { name: 'menu_items', setter: setMenuItems, label: '菜单' },
+        { name: 'inventory_items', setter: setInventoryItems, label: '库存' },
         { name: 'purchase_orders', setter: setPurchaseOrders, label: '采购订单' },
         { name: 'suppliers', setter: setSuppliers, label: '供应商' },
         { name: 'fridges', setter: setFridges, label: '冰箱' },
@@ -588,11 +589,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : [key.slice(0, lastDash), key.slice(lastDash + 1)];
   };
 
-  const deductStock = (orderItems: OrderItem[]) => {
+  const deductStock = async (orderItems: OrderItem[]) => {
     console.log('🔧 AppContext.deductStock 被调用');
     console.log('📋 orderItems:', orderItems);
     console.log('📋 menuItems:', menuItems.length, '个菜品');
     console.log('📋 inventoryItems:', inventoryItems.length, '个库存物品');
+
+    const [cloudMenuItems, cloudInventoryItems, cloudFridgeInventory] = await Promise.all([
+      smartGetDocuments('menu_items', true),
+      smartGetDocuments('inventory_items', true),
+      smartGetDocuments('fridge_inventory', true)
+    ]);
+
+    const effectiveMenuItems = (cloudMenuItems.length > 0 ? cloudMenuItems : menuItems) as MenuItem[];
+    const effectiveInventoryItems = (cloudInventoryItems.length > 0 ? cloudInventoryItems : inventoryItems) as InventoryItem[];
+    const effectiveFridgeInventory = (cloudFridgeInventory.length > 0 ? cloudFridgeInventory : fridgeInventory) as FridgeInventory[];
+
+    if (effectiveInventoryItems.length === 0) {
+      const needsInventory = orderItems.some(item =>
+        item.stockItemId ||
+        (item.ingredients && item.ingredients.length > 0) ||
+        effectiveMenuItems.some(menu =>
+          menu.id === item.menuItemId &&
+          (menu.stockItemId || (menu.ingredients && menu.ingredients.length > 0))
+        )
+      );
+      if (needsInventory) {
+        throw new Error('库存数据未加载，已阻止订单标记为已扣库存');
+      }
+    }
 
     // ✅ 先计算所有需要扣减的数量（不立即更新状态）
     const fridgeDeductionsMap: Map<string, number> = new Map(); // key: "fridgeId-itemId", value: deductQty
@@ -602,7 +627,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (requiredQuantity <= 0) return;
 
       let remainingQuantity = requiredQuantity;
-      const fridgeRecords = fridgeInventory
+      const fridgeRecords = effectiveFridgeInventory
         .filter(inv => inv.itemId === stockItem.id)
         .sort((a, b) => String(a.fridgeId).localeCompare(String(b.fridgeId)));
 
@@ -633,7 +658,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     orderItems.forEach(orderItem => {
       console.log('🔍 处理商品:', orderItem.name, 'menuItemId:', orderItem.menuItemId);
-      const menuItem = menuItems.find(m => m.id === orderItem.menuItemId);
+      const menuItem = effectiveMenuItems.find(m => m.id === orderItem.menuItemId);
       const ingredients = menuItem?.ingredients || orderItem.ingredients || [];
       const stockItemId = menuItem?.stockItemId || orderItem.stockItemId;
 
@@ -657,7 +682,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // 配方模式：扣减原料
         ingredients.forEach(ing => {
           console.log('  - 原料:', ing.itemName, '需要扣减:', ing.quantity * orderItem.quantity, ing.unit || '单位');
-          const stockItem = inventoryItems.find(i => i.id === ing.itemId);
+          const stockItem = effectiveInventoryItems.find(i => i.id === ing.itemId);
           if (!stockItem) {
             console.warn('  ❌ 未找到库存物品 ID:', ing.itemId);
             return;
@@ -695,7 +720,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } else if (deductionType === 'direct' && stockItemId) {
         console.log('📦 直接扣库存模式，stockItemId:', stockItemId);
         // 直接扣库存模式 - 优先从冰箱扣减
-        const stockItem = inventoryItems.find(i => i.id === stockItemId);
+        const stockItem = effectiveInventoryItems.find(i => i.id === stockItemId);
         if (!stockItem) {
           console.warn('  ❌ 未找到库存物品 ID:', stockItemId);
           return;
@@ -713,73 +738,75 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
-    // ✅ 一次性更新冰箱库存
+    const stockWriteTasks: Promise<any>[] = [];
+
+    // ✅ 先同步云端/离线队列，成功或已进入待同步队列后再更新本地状态
     if (fridgeDeductionsMap.size > 0) {
-      setFridgeInventory(prevFridgeInv => {
-        let newFridgeInv = [...prevFridgeInv];
-
-        fridgeDeductionsMap.forEach((deductQty, key) => {
-          const [fridgeId, itemId] = parseFridgeDeductionKey(key);
-          const idx = newFridgeInv.findIndex(
-            inv => inv.fridgeId === fridgeId && inv.itemId === itemId
-          );
-          if (idx !== -1) {
-            const updatedInv = {
-              ...newFridgeInv[idx],
-              quantity: Math.max(0, newFridgeInv[idx].quantity - deductQty),
-              lastModified: Date.now() // 🔥 添加时间戳
-            };
-
-            // 生成 ID（如果不存在）
-            if (!updatedInv.id) {
-              updatedInv.id = `${updatedInv.fridgeId}-${updatedInv.itemId}`;
+      fridgeDeductionsMap.forEach((deductQty, key) => {
+        const [fridgeId, itemId] = parseFridgeDeductionKey(key);
+        const currentInv = effectiveFridgeInventory.find(
+          inv => inv.fridgeId === fridgeId && inv.itemId === itemId
+        );
+        if (!currentInv) return;
+        const recordId = currentInv.id || `${currentInv.fridgeId}-${currentInv.itemId}`;
+        stockWriteTasks.push(
+          smartIncrementField('fridge_inventory', recordId, 'quantity', -deductQty, {
+            fridgeId: currentInv.fridgeId,
+            itemId: currentInv.itemId,
+            lastModified: Date.now()
+          }).then(result => {
+            if (result?.error) {
+              throw new Error(`冰箱库存扣减失败: ${recordId} ${result.error}`);
             }
-
-            newFridgeInv[idx] = updatedInv;
-            console.log(`🧊 冰箱 ${fridgeId} 的 ${itemId} 扣减 ${deductQty}，剩余 ${updatedInv.quantity}`);
-
-            smartIncrementField('fridge_inventory', updatedInv.id, 'quantity', -deductQty, {
-              fridgeId: updatedInv.fridgeId,
-              itemId: updatedInv.itemId,
-              lastModified: updatedInv.lastModified
-            }).catch(error => {
-              console.error(`❌ 同步冰箱库存扣减失败:`, error);
-            });
-          }
-        });
-
-        // ✅ 保留数量为0的记录，不删除（商品列表固定）
-        // newFridgeInv = newFridgeInv.filter(inv => inv.quantity > 0);
-
-        console.log('🧊 冰箱库存更新完成，当前记录数:', newFridgeInv.length);
-        return newFridgeInv;
+          })
+        );
       });
     }
 
-    // ✅ 一次性更新仓库库存
     if (warehouseDeductionsMap.size > 0) {
-      setInventoryItems(items => {
-        const newItems = items.map(item => {
-          const deductQty = warehouseDeductionsMap.get(item.id);
-          if (deductQty && deductQty > 0) {
-            console.log(`🏪 仓库 ${item.name} 扣减 ${deductQty}，原库存 ${item.currentStock} → ${Math.max(0, item.currentStock - deductQty)}`);
-            smartIncrementField('inventory_items', item.id, 'currentStock', -deductQty, {
-              lastModified: Date.now(),
-              lastUpdated: new Date()
-            }).catch(error => {
-              console.error(`❌ 同步库存扣减失败: ${item.name}`, error);
-            });
-            return {
-              ...item,
-              currentStock: Math.max(0, item.currentStock - deductQty),
-              lastUpdated: new Date(),
-              lastModified: Date.now() // 🔥 添加时间戳
-            };
-          }
-          return item;
-        });
-        return newItems;
+      warehouseDeductionsMap.forEach((deductQty, itemId) => {
+        const item = effectiveInventoryItems.find(stockItem => stockItem.id === itemId);
+        if (!item || deductQty <= 0) return;
+        stockWriteTasks.push(
+          smartIncrementField('inventory_items', item.id, 'currentStock', -deductQty, {
+            lastModified: Date.now(),
+            lastUpdated: new Date()
+          }).then(result => {
+            if (result?.error) {
+              throw new Error(`仓库库存扣减失败: ${item.name} ${result.error}`);
+            }
+          })
+        );
       });
+    }
+
+    await Promise.all(stockWriteTasks);
+
+    if (fridgeDeductionsMap.size > 0) {
+      setFridgeInventory(effectiveFridgeInventory.map(inv => {
+        const mapKey = getFridgeDeductionKey(inv.fridgeId, inv.itemId);
+        const deductQty = fridgeDeductionsMap.get(mapKey) || 0;
+        if (deductQty <= 0) return inv;
+        return {
+          ...inv,
+          id: inv.id || `${inv.fridgeId}-${inv.itemId}`,
+          quantity: Math.max(0, Number(inv.quantity || 0) - deductQty),
+          lastModified: Date.now()
+        };
+      }));
+    }
+
+    if (warehouseDeductionsMap.size > 0) {
+      setInventoryItems(effectiveInventoryItems.map(item => {
+        const deductQty = warehouseDeductionsMap.get(item.id) || 0;
+        if (deductQty <= 0) return item;
+        return {
+          ...item,
+          currentStock: Math.max(0, Number(item.currentStock || 0) - deductQty),
+          lastUpdated: new Date(),
+          lastModified: Date.now()
+        };
+      }));
     }
 
     console.log('✅ 库存扣减完成');

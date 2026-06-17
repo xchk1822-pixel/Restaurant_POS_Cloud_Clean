@@ -211,6 +211,45 @@ describe('production data safety guards', () => {
     expect(sendBlock).not.toContain('deductStockForOrder');
     expect(sendBlock).not.toContain('deductStock(');
     expect(completeBlock).toContain('deductStockForOrder');
+    expect(source).toContain('const deductStockForOrder = async (order: Order): Promise<Order> => {');
+    expect(completeBlock).toContain('const completedOrder = await deductStockForOrder');
+    expect(source).toContain('await deductStock(itemsToDeduct)');
+  });
+
+  test('POS stock deduction uses fresh store inventory before marking order completed', () => {
+    const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
+    const source = fs.readFileSync(appContextPath, 'utf8');
+    const snapshotBlock = source.slice(
+      source.indexOf('const loadSnapshotData = async () => {'),
+      source.indexOf('loadSnapshotData();')
+    );
+    const deductBlock = source.slice(
+      source.indexOf('const deductStock = async'),
+      source.indexOf('const addStock =')
+    );
+
+    expect(snapshotBlock).toContain("{ name: 'inventory_items', setter: setInventoryItems, label: '库存' }");
+    expect(deductBlock).toContain("smartGetDocuments('menu_items', true)");
+    expect(deductBlock).toContain("smartGetDocuments('inventory_items', true)");
+    expect(deductBlock).toContain("smartGetDocuments('fridge_inventory', true)");
+    expect(deductBlock).toContain('await Promise.all(stockWriteTasks)');
+    expect(deductBlock).not.toContain("smartIncrementField('fridge_inventory', updatedInv.id");
+    expect(deductBlock).not.toContain('.catch(error =>');
+  });
+
+  test('pending sync keeps failed inventory changes queued', () => {
+    const syncPath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const source = fs.readFileSync(syncPath, 'utf8');
+    const pendingBlock = source.slice(
+      source.indexOf('export const syncPendingChanges = async () => {'),
+      source.indexOf('// ==================== 分店数据隔离')
+    );
+
+    expect(source).toContain('const setPendingChanges = (changes: PendingChange[]) => {');
+    expect(pendingBlock).toContain('const failedChanges: PendingChange[] = []');
+    expect(pendingBlock).toContain('failedChanges.push(change)');
+    expect(pendingBlock).toContain('setPendingChanges(failedChanges)');
+    expect(pendingBlock).not.toContain('clearPendingChanges();');
   });
 
   test('POS terminal completion actions paint processing feedback before stock and cloud work', () => {

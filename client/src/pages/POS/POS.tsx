@@ -1826,7 +1826,7 @@ const POS: React.FC = () => {
 
   const getStockDeductionKey = (item: OrderItem) => item.id || item.menuItemId;
 
-  const deductStockForOrder = (order: Order): Order => {
+  const deductStockForOrder = async (order: Order): Promise<Order> => {
     if (order.stockDeducted) {
       console.log('订单库存已经扣减过，跳过重复扣减:', order.id);
       return {
@@ -1863,7 +1863,7 @@ const POS: React.FC = () => {
     }
 
     console.log('鉁?寮€濮嬫墸鍑忓簱瀛?', order.id, itemsToDeduct.map(item => `${item.name} x${item.quantity}`).join(', '));
-    deductStock(itemsToDeduct);
+    await deductStock(itemsToDeduct);
 
     const operationId = order.stockDeductionOperationId || `stock-${order.id}-${Date.now()}`;
     const nextDeductedItems = { ...deductedItems };
@@ -1888,7 +1888,7 @@ const POS: React.FC = () => {
 
   const completeOrderWithStockDeduction = async (order: Order, options: { releaseTable?: boolean } = {}) => {
     const now = new Date();
-    const completedOrder = deductStockForOrder({
+    const completedOrder = await deductStockForOrder({
       ...order,
       status: 'completed' as const,
       completedAt: order.completedAt || now,

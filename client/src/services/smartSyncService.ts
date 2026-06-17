@@ -314,6 +314,14 @@ const clearPendingChanges = () => {
   localStorage.removeItem(PENDING_CHANGES_KEY);
 };
 
+const setPendingChanges = (changes: PendingChange[]) => {
+  if (changes.length === 0) {
+    clearPendingChanges();
+    return;
+  }
+  localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(changes));
+};
+
 // ==================== 智能CRUD操作 ====================
 
 /**
@@ -814,12 +822,14 @@ export const syncPendingChanges = async () => {
 
   let successCount = 0;
   let failCount = 0;
+  const failedChanges: PendingChange[] = [];
 
   for (const change of changes) {
       try {
         const collectionPath = getStoreCollectionPath(change.collection);
         if (!collectionPath) {
           failCount++;
+          failedChanges.push(change);
           continue;
         }
         switch (change.operation) {
@@ -848,13 +858,14 @@ export const syncPendingChanges = async () => {
       console.log(`✅ 同步成功: ${change.operation} ${change.collection}/${change.id}`);
     } catch (error) {
       failCount++;
+      failedChanges.push(change);
       console.error(`❌ 同步失败: ${change.operation} ${change.collection}/${change.id}`, error);
     }
   }
 
   // 清除已成功同步的记录
   if (successCount > 0) {
-    clearPendingChanges();
+    setPendingChanges(failedChanges);
     console.log(`✅ 同步完成: 成功${successCount}条, 失败${failCount}条`);
   }
 };
