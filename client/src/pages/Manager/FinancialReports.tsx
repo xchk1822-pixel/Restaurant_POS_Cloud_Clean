@@ -113,11 +113,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   }, [refreshFinancialData]);
 
   const generateDailyReport = React.useCallback((date: string): DailyReport => {
-    console.log('Generating financial report:', date, 'orders:', orders.length);
-
     const dayOrders = orders.filter((order: any) => getOrderFinancialDateKey(order) === date);
-
-    console.log(`  - ${date} orders:`, dayOrders.length);
 
     const collectedSales = dayOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
     const orderCount = dayOrders.filter((order: any) => getOrderCollectedAmount(order) > 0).length;
@@ -146,8 +142,6 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     }
 
     const expenses = dataManager.getData('expenses');
-    console.log('  - expense records:', expenses.length);
-
 
     const purchaseAmount = expenses.reduce((sum: number, exp: any) => {
       if (!isPurchaseRelatedExpense(exp)) {
@@ -219,15 +213,6 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   useEffect(() => {
     loadReports();
   }, [loadReports, dataVersion]);
-
-  // Debug current financial data counts.
-  useEffect(() => {
-    console.log('Financial report data status', {
-      orderCount: orders.length,
-      purchaseRecords: dataManager.getData('purchases').length,
-      expenseRecords: dataManager.getData('expenses').length
-    });
-  }, [orders]);
 
   const supplierDebtTotal = getSupplierDebtTotal(dataManager.getData('purchases'));
 

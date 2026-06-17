@@ -864,6 +864,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('buildDailyExpenseBreakdown(dataManager.getData');
     expect(source).toContain("smartGetDocuments('expense_categories', true)");
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
+    expect(source).not.toContain('console.log');
   });
 
   test('financial report totals use cash card expense and include handover difference in profit loss', () => {
