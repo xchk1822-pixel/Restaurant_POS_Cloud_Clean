@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { firebaseLogin, createFirebaseUser } from '../../services/FirebaseAuthService';
@@ -14,12 +14,6 @@ const Login: React.FC = () => {
   
   // ✅ 获取重定向 URL
   const redirectUrl = searchParams.get('redirect') || '';
-  console.log('🔍 Login页面 - redirect:', redirectUrl);
-
-  // 🔥 页面加载时，检查 Firebase Auth 状态
-  useEffect(() => {
-    console.log('🔐 Login 页面加载');
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,14 +21,11 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      console.log('🔐 尝试登录:', username);
-      
       let appUser;
       
       // 🔥 首先尝试 Firebase Auth 登录
       try {
         appUser = await firebaseLogin(username, password);
-        console.log('✅ Firebase Auth 登录成功:', appUser.username);
       } catch (firebaseError: any) {
         if (process.env.REACT_APP_ENABLE_LOCAL_LOGIN_FALLBACK !== 'true') {
           throw firebaseError;
@@ -45,7 +36,6 @@ const Login: React.FC = () => {
         const localUser = await tryLocalLogin(username, password);
         if (localUser) {
           appUser = localUser;
-          console.log('✅ 本地验证登录成功:', appUser.username);
         } else {
           throw firebaseError; // 重新抛出 Firebase 错误
         }
@@ -63,11 +53,9 @@ const Login: React.FC = () => {
 
       // 执行登录（更新 AuthContext）
       login(loggedInUser);
-      console.log('✅ 登录成功，准备跳转');
 
       // ✅ 如果有 redirect 参数，跳转到之前的页面
       if (redirectUrl) {
-        console.log('🔄 跳转到之前的页面:', redirectUrl);
         navigate(redirectUrl);
       } else {
         // 根据角色跳转到不同页面
@@ -120,8 +108,6 @@ const Login: React.FC = () => {
         return null;
       }
       
-      console.log('✅ 本地验证成功，自动迁移到 Firebase Auth...');
-      
       // 自动迁移用户到 Firebase Auth
       try {
         const migratedUser = await createFirebaseUser(
@@ -135,7 +121,6 @@ const Login: React.FC = () => {
             storeName: user.storeName
           }
         );
-        console.log('✅ 用户已自动迁移到 Firebase Auth:', migratedUser.username);
         return migratedUser;
       } catch (migrateError: any) {
         console.error('❌ 自动迁移失败:', migrateError.message);

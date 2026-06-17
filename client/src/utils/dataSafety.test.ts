@@ -66,6 +66,19 @@ describe('production data safety guards', () => {
     });
   });
 
+  test('login page does not emit success-flow debug logs in production', () => {
+    const loginPath = path.join(process.cwd(), 'src/pages/Login/Login.tsx');
+    const source = fs.readFileSync(loginPath, 'utf8');
+
+    expect(source).not.toContain('console.log');
+    expect(source).not.toContain('Login页面 - redirect');
+    expect(source).not.toContain('尝试登录');
+    expect(source).not.toContain('登录成功');
+    expect(source).not.toContain('自动迁移到 Firebase Auth:');
+    expect(source).toContain('console.warn');
+    expect(source).toContain('console.error');
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
