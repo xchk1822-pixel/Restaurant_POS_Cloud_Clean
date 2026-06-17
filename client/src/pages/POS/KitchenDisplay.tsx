@@ -89,14 +89,12 @@ const KitchenDisplay: React.FC = () => {
   // ✅ 使用 DataManager 获取订单数据
   const [orders, setOrders] = useState<KitchenOrder[]>(() => {
     const allOrders = dataManager.getData('orders');
-    console.log('🍳 厨房模块初始化加载订单:', allOrders.length, '个');
     return toKitchenOrders(allOrders);
   });
   
   // 🔄 实时监听 DataManager 订单变化
   useEffect(() => {
     const unsubscribe = dataManager.subscribe('orders', (allOrders) => {
-      console.log('🍳 厨房模块收到订单更新:', allOrders.length, '个');
       setOrders(toKitchenOrders(allOrders));
     });
     

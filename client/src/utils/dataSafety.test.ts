@@ -638,6 +638,7 @@ describe('production data safety guards', () => {
     expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
     expect(source).toContain("status !== 'served'");
     expect(source).toContain("status: 'served'");
+    expect(source).not.toContain('console.log');
   });
 
   test('permissions management keeps only the four editable store roles', () => {
