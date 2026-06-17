@@ -329,7 +329,6 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
           salaryPeriod: period,
         });
       }
-      console.log('✅ 工资结算记录已同步到 Firestore');
     } catch (error) {
       console.error('❌ 保存工资结算失败:', error);
       alert('保存工资结算失败，请检查网络后重试');
@@ -340,7 +339,6 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     setSalaryRecords(updatedSalaries);
     const nextExpenses = [...dataManager.getData('expenses'), salaryExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    console.log('💰 已创建薪资开支记录:', salaryExpense);
 
     // 显示结算结果
     showSalarySlip(salaryRecord, employee);

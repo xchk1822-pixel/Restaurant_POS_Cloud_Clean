@@ -1766,6 +1766,7 @@ describe('production data safety guards', () => {
     expect(salaryBlock.indexOf("smartUpdateDocument('loan_records', loan.id, loan)")).toBeLessThan(
       salaryBlock.indexOf('setLoanRecords(updatedLoans)')
     );
+    expect(salarySource).not.toContain('console.log');
     expect(salaryBlock).not.toContain("console.error('同步借款扣减记录失败:'");
     expect(salaryBlock).not.toContain("console.error('❌ 同步工资结算记录失败:'");
   });
