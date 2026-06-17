@@ -206,15 +206,11 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const endStr = getLocalDateString(end); // 🔥 使用本地时间
       const dashboardOrders = propOrders || orders || getStoreOrdersDirect();
 
-      console.log('📊 加载数据概览:', { timeRange, startStr, endStr, 订单总数: dashboardOrders.length });
-
       // 🔄 使用统一数据管理服务的订单数据
       const filteredOrders = dashboardOrders.filter((order: any) => {
         const orderDateStr = getOrderFinancialDateKey(order);
         return orderDateStr >= startStr && orderDateStr < endStr;
       });
-
-      console.log(`  - 筛选后订单数: ${filteredOrders.length}`);
 
       // 基础统计
       const totalSales = filteredOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
@@ -270,12 +266,10 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
 
       // 🔄 使用统一数据管理服务读取开支和采购数据
       const expenses = dataManager.getData('expenses');
-      console.log('  - 开支记录数:', expenses.length);
 
       const expenseAmount = sumExpensesByKind(expenses, startStr, endStr, 'operating');
 
       const purchases = dataManager.getData('purchases');
-      console.log('  - 采购记录数:', purchases.length);
 
       const purchaseAmount = sumExpensesByKind(expenses, startStr, endStr, 'purchase');
 

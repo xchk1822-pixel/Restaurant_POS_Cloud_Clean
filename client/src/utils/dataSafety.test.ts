@@ -1254,6 +1254,7 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('sum + (order.totalAmount || 0)');
     expect(source).not.toContain('customerMap[phone].totalSpent += order.totalAmount || 0');
     expect(source).not.toContain('hourStats[hour].revenue += order.totalAmount || 0');
+    expect(source).not.toContain('console.log');
   });
 
   test('owner dashboard uses collected revenue and financial order dates', () => {
