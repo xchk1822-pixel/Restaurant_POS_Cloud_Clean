@@ -113,6 +113,16 @@ describe('production data safety guards', () => {
     expect(source).toContain('console.warn');
   });
 
+  test('purchase item category selector does not emit render debug logs', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+
+    expect(source).not.toContain('当前库存物品数量');
+    expect(source).not.toContain('提取到的类别');
+    expect(source).not.toContain('console.log');
+    expect(source).toContain('console.error');
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');

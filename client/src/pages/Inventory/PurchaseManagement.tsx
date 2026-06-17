@@ -965,10 +965,6 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                                       .filter(cat => cat && cat.trim() !== '')
                                   )
                                 );
-                                
-                                console.log('📦 当前库存物品数量:', inventoryItems.length);
-                                console.log('🏷️ 提取到的类别:', uniqueCategories);
-                                
                                 return uniqueCategories.map(cat => {
                                   const categoryInfo = inventoryCategories.find(c => c.key === cat);
                                   const displayName = categoryInfo ? `${categoryInfo.icon} ${categoryInfo.name}` : cat;
