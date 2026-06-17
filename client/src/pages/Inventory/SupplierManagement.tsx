@@ -154,7 +154,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       
       try {
         await smartUpdateDocument('suppliers', editingSupplier.id, updatedSupplier);
-        console.log('✅ 供应商信息已同步到 Firestore');
       } catch (error) {
         console.error('❌ 同步供应商信息失败:', error);
         alert('保存供应商失败，请检查网络后重试');
@@ -179,7 +178,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
       };
       try {
         await smartAddDocument('suppliers', newSupplier);
-        console.log('✅ 新供应商已同步到 Firestore');
       } catch (error) {
         console.error('❌ 同步新供应商失败:', error);
         alert('保存供应商失败，请检查网络后重试');
@@ -309,7 +307,6 @@ const SupplierManagement: React.FC<SupplierManagementProps> = () => {
     savePaymentRecord(selectedOrder.supplierId, paymentRecord);
     const nextExpenses = [...dataManager.getData('expenses'), paymentExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    console.log('💰 已创建供应商还款开支记录:', paymentExpense);
 
     alert(`✅ 还款成功！\n\n票号：${selectedOrder.orderNumber}\n还款金额：C$ ${amount.toFixed(2)}\n剩余欠款：C$ ${(orderRemaining - amount).toFixed(2)}`);
 

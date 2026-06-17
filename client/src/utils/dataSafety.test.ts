@@ -828,6 +828,7 @@ describe('production data safety guards', () => {
       paymentBlock.indexOf("dataManager.saveData('expenses', nextExpenses")
     );
     expect(paymentBlock).not.toContain('还款已在本机记录');
+    expect(source).not.toContain('console.log');
   });
 
   test('purchase order creation waits for linked cloud writes before local state updates', () => {
