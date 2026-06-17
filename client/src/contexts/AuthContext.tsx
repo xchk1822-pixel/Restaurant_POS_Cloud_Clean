@@ -39,12 +39,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 🔥 监听 Firebase Auth 状态变化
   useEffect(() => {
-    console.log('🔐 初始化 Firebase Auth 监听器...');
-    
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
       if (firebaseUser) {
-        console.log('✅ Firebase Auth 用户已登录:', firebaseUser.email);
-        
         // 从 localStorage 恢复完整的用户信息（包含 role, storeId 等）
         try {
           const savedUser = localStorage.getItem('current_user');
@@ -52,7 +48,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const parsed = JSON.parse(savedUser);
             setUser(parsed);
             setIsLoading(false);
-            console.log('✅ 从缓存恢复用户:', parsed.username, '角色:', parsed.role);
             
             // 云端同步放到后台执行，避免阻塞路由恢复导致页面一直停在 loading。
             const syncTask = parsed.storeId
@@ -67,7 +62,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.removeItem('current_user');
         }
       } else {
-        console.log('⚠️ Firebase Auth 用户未登录');
         setUser(null);
       }
       setIsLoading(false);
@@ -81,7 +75,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
     localStorage.setItem('current_user', JSON.stringify(userData));
     
-    console.log('🔔 已触发 userLoggedIn 事件');
     window.dispatchEvent(new Event('userLoggedIn'));
   };
 
@@ -93,7 +86,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { firebaseLogout } = await import('../services/FirebaseAuthService');
       await firebaseLogout();
-      console.log('✅ Firebase Auth 登出成功');
     } catch (error) {
       console.error('❌ Firebase Auth 登出失败:', error);
     }

@@ -79,6 +79,18 @@ describe('production data safety guards', () => {
     expect(source).toContain('console.error');
   });
 
+  test('auth context does not emit user identity success-flow debug logs', () => {
+    const authContextPath = path.join(process.cwd(), 'src/contexts/AuthContext.tsx');
+    const source = fs.readFileSync(authContextPath, 'utf8');
+
+    expect(source).not.toContain('console.log');
+    expect(source).not.toContain('Firebase Auth 用户已登录');
+    expect(source).not.toContain('从缓存恢复用户');
+    expect(source).not.toContain('已触发 userLoggedIn');
+    expect(source).not.toContain('Firebase Auth 登出成功');
+    expect(source).toContain('console.error');
+  });
+
   test('pos does not use broad dataManager.addData writes for production records', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
