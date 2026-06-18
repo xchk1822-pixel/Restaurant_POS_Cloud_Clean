@@ -319,6 +319,21 @@ const getTableDedupeKey = (table: Partial<Table>): string => {
   return number ? `number:${number}` : `id:${table.id}`;
 };
 
+const inferTableShape = (
+  table: Partial<Table>,
+  width: number,
+  height: number
+): 'round' | 'square' | 'rectangle' => {
+  if (table.shape) return table.shape;
+
+  const number = String(table.number || '');
+  if (width > height * 1.75 || height > width * 1.75) {
+    return 'rectangle';
+  }
+
+  return number.includes('+') ? 'rectangle' : 'round';
+};
+
 const normalizeTables = (
   rawTables: Table[],
   preferredTableIds: Set<string> = new Set()
@@ -339,7 +354,7 @@ const normalizeTables = (
     const normalizedWidth = table.width || 110;
     const normalizedHeight = table.height || 90;
     const normalizedOrientation = table.orientation || (normalizedWidth >= normalizedHeight ? 'horizontal' : 'vertical');
-    const normalizedShape = table.shape || (Math.abs(normalizedWidth - normalizedHeight) <= 12 ? 'round' : 'rectangle');
+    const normalizedShape = inferTableShape(table, normalizedWidth, normalizedHeight);
 
     const normalizedTable: Table = {
       ...table,
@@ -495,7 +510,7 @@ const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Or
 };
 
 const tableCanvasFoodPattern = [
-  'linear-gradient(rgba(248,250,252,0.76), rgba(248,250,252,0.84))',
+  'linear-gradient(rgba(248,250,252,0.34), rgba(248,250,252,0.42))',
   `url(${tableFoodBackground})`,
   'linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)',
   'linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px)',
@@ -2912,9 +2927,16 @@ const POS: React.FC = () => {
   };
 
   const getTableBorderRadius = (table: Table) => {
-    if (table.shape === 'round') return '999px';
+    if (table.shape === 'round') return '50% / 44%';
     if (table.shape === 'square') return '18px';
     return table.orientation === 'vertical' ? '22px' : '16px';
+  };
+
+  const getTableSurfaceTransform = (table: Table) => {
+    if (table.shape === 'round') return 'perspective(520px) rotateX(12deg)';
+    return table.orientation === 'vertical'
+      ? 'perspective(560px) rotateX(8deg)'
+      : 'perspective(560px) rotateX(7deg)';
   };
 
 
@@ -4087,7 +4109,7 @@ const POS: React.FC = () => {
                 backgroundColor: '#f8fafc',
                 overflow: 'hidden',
                 backgroundImage: tableCanvasFoodPattern,
-                backgroundSize: 'cover, cover, 28px 28px, 28px 28px',
+                backgroundSize: '100% 100%, min(100%, 1586px) auto, 28px 28px, 28px 28px',
                 backgroundPosition: 'center, center, 0 0, 0 0'
               }}
               onMouseMove={handleMouseMove}
@@ -4123,14 +4145,35 @@ const POS: React.FC = () => {
                 >
                   <div style={{
                     position: 'absolute',
-                    top: '8px',
-                    left: '8px',
-                    right: '-8px',
-                    bottom: '-8px',
-                    backgroundColor: 'rgba(15, 23, 42, 0.14)',
-                    borderRadius: getTableBorderRadius(table),
-                    filter: 'blur(8px)'
+                    left: '10%',
+                    right: '10%',
+                    bottom: '-5px',
+                    height: '18px',
+                    backgroundColor: 'rgba(15, 23, 42, 0.18)',
+                    borderRadius: '999px',
+                    filter: 'blur(9px)'
                   }} />
+
+                  {[
+                    { label: 'Mesa izquierda', left: '21%' },
+                    { label: 'Mesa derecha', right: '21%' }
+                  ].map(leg => (
+                    <div
+                      key={leg.label}
+                      aria-label={leg.label}
+                      style={{
+                        position: 'absolute',
+                        bottom: '2px',
+                        left: leg.left,
+                        right: leg.right,
+                        width: '8px',
+                        height: `${Math.max(16, Math.min(24, table.height * 0.28))}px`,
+                        borderRadius: '999px',
+                        background: 'linear-gradient(180deg, rgba(71, 85, 105, 0.72), rgba(30, 41, 59, 0.92))',
+                        boxShadow: '0 4px 8px rgba(15, 23, 42, 0.22)'
+                      }}
+                    />
+                  ))}
 
                   <div style={{
                     width: '100%',
@@ -4142,12 +4185,14 @@ const POS: React.FC = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     position: 'relative',
+                    transform: getTableSurfaceTransform(table),
+                    transformOrigin: 'center bottom',
                     background: selectedTables.includes(table.id)
-                      ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                      : `linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
+                      ? 'radial-gradient(ellipse at 35% 22%, rgba(255,255,255,0.48) 0%, rgba(255,255,255,0.16) 34%, rgba(255,255,255,0) 58%), linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                      : `radial-gradient(ellipse at 35% 22%, rgba(255,255,255,0.48) 0%, rgba(255,255,255,0.16) 34%, rgba(255,255,255,0) 58%), linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
                     boxShadow: selectedTableId === table.id
-                      ? '0 14px 24px rgba(37, 99, 235, 0.28), inset 0 2px 5px rgba(255, 255, 255, 0.32), inset 0 -8px 12px rgba(15, 23, 42, 0.12)'
-                      : '0 10px 16px rgba(15, 23, 42, 0.18), inset 0 2px 5px rgba(255, 255, 255, 0.28), inset 0 -8px 12px rgba(15, 23, 42, 0.14)',
+                      ? '0 15px 24px rgba(37, 99, 235, 0.30), inset 0 3px 6px rgba(255, 255, 255, 0.34), inset 0 -10px 14px rgba(15, 23, 42, 0.16)'
+                      : '0 12px 17px rgba(15, 23, 42, 0.20), inset 0 3px 6px rgba(255, 255, 255, 0.30), inset 0 -10px 14px rgba(15, 23, 42, 0.16)',
                     overflow: 'hidden'
                   }}>
                     <div style={{

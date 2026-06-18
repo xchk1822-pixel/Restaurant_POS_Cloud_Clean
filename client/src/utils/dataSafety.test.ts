@@ -1160,6 +1160,33 @@ describe('production data safety guards', () => {
     expect(renderBlock).toContain('borderRadius: getTableBorderRadius(table)');
   });
 
+  test('POS table visual uses an oval pseudo 3D tabletop instead of a flat square block', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const renderBlock = source.slice(
+      source.indexOf('{tables.map(table => ('),
+      source.indexOf('{isEditMode && table.number.includes', source.indexOf('{tables.map(table => ('))
+    );
+
+    expect(source).toContain('const inferTableShape =');
+    expect(source).toContain("number.includes('+') ? 'rectangle' : 'round'");
+    expect(source).toContain('const getTableSurfaceTransform =');
+    expect(renderBlock).toContain('radial-gradient(ellipse at 35% 22%');
+    expect(renderBlock).toContain('transform: getTableSurfaceTransform(table)');
+    expect(renderBlock).toContain('Mesa izquierda');
+    expect(renderBlock).toContain('Mesa derecha');
+  });
+
+  test('POS table background keeps the food image sharp instead of hiding it under a heavy cover overlay', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).toContain('linear-gradient(rgba(248,250,252,0.34), rgba(248,250,252,0.42))');
+    expect(source).toContain("backgroundSize: '100% 100%, min(100%, 1586px) auto, 28px 28px, 28px 28px'");
+    expect(source).not.toContain('linear-gradient(rgba(248,250,252,0.76), rgba(248,250,252,0.84))');
+    expect(source).not.toContain("backgroundSize: 'cover, cover, 28px 28px, 28px 28px'");
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');
