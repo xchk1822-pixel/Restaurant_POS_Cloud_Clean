@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
-import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
+import { getLocalDateString } from '../../utils/exchangeRate';
 import {
   getExpenseDateKey,
   getOrderCollectedAmount,
@@ -11,6 +11,24 @@ import {
   isPurchaseRelatedExpense,
   sumExpensesByKind,
 } from '../../utils/financeMetrics';
+import {
+  buildKpis,
+  buildMonthlySalesCalendar,
+  buildPeriodComparison,
+  buildRankingComparison,
+  buildSalesRankings,
+  filterOrdersByRange,
+  normalizeDashboardRange,
+  type BeverageCategoryFilter,
+  type DashboardKpis,
+  type DashboardOrderTypeFilter,
+  type MonthlySalesCalendar,
+  type PeriodComparison,
+  type RankingMovement,
+  type RankingScope,
+  type RankingSortBy,
+  type SalesRanking as AnalyticsSalesRanking,
+} from '../../utils/dashboardAnalytics';
 
 interface TimeRangeStats {
   totalSales: number;
@@ -28,13 +46,6 @@ interface TimeRangeStats {
   deliveryRevenue: number;
 }
 
-interface SalesRanking {
-  name: string;
-  category: string;
-  quantity: number;
-  revenue: number;
-}
-
 interface DailyTrend {
   date: string;
   sales: number;
@@ -42,6 +53,7 @@ interface DailyTrend {
   profit: number;
   dineInSales: number;
   takeoutSales: number;
+  deliverySales: number;
 }
 
 interface CustomerProfile {
@@ -71,8 +83,51 @@ interface CustomerProfile {
 }
 
 interface DashboardModuleProps {
-  orders?: any[]; // 从父组件传入订单数据
+  orders?: any[];
 }
+
+interface ComparisonStats {
+  totalSales: PeriodComparison;
+  orderCount: PeriodComparison;
+  averageTicket: PeriodComparison;
+  cashPayment: PeriodComparison;
+  cardPayment: PeriodComparison;
+  profit: PeriodComparison;
+}
+
+const emptyStats: TimeRangeStats = {
+  totalSales: 0,
+  orderCount: 0,
+  cashPayment: 0,
+  cardPayment: 0,
+  purchaseAmount: 0,
+  expenseAmount: 0,
+  profit: 0,
+  dineInOrders: 0,
+  takeoutOrders: 0,
+  deliveryOrders: 0,
+  dineInRevenue: 0,
+  takeoutRevenue: 0,
+  deliveryRevenue: 0,
+};
+
+const emptyKpis: DashboardKpis = {
+  totalSales: 0,
+  orderCount: 0,
+  averageTicket: 0,
+  cashPayment: 0,
+  cardPayment: 0,
+  profit: 0,
+};
+
+const emptyComparison: ComparisonStats = {
+  totalSales: buildPeriodComparison(0, 0),
+  orderCount: buildPeriodComparison(0, 0),
+  averageTicket: buildPeriodComparison(0, 0),
+  cashPayment: buildPeriodComparison(0, 0),
+  cardPayment: buildPeriodComparison(0, 0),
+  profit: buildPeriodComparison(0, 0),
+};
 
 const getRecordDateString = (value: any): string => {
   if (!value) return '';
@@ -86,7 +141,7 @@ const getStoreOrdersDirect = (): any[] => {
     const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
     const keys = [
       ...(storeId ? [`store_${storeId}_pos_orders`] : []),
-      'pos_orders'
+      'pos_orders',
     ];
 
     for (const key of keys) {
@@ -101,40 +156,66 @@ const getStoreOrdersDirect = (): any[] => {
   return [];
 };
 
+const money = (value: number): string => `C$ ${Number(value || 0).toFixed(2)}`;
+const pct = (value: number): string => `${Number(value || 0).toFixed(1)}%`;
+
+const comparisonText = (comparison: PeriodComparison): string => {
+  if (comparison.direction === 'flat') return '与上期持平';
+  const sign = comparison.value > 0 ? '+' : '';
+  const percentText = comparison.percent === null ? '' : ` / ${sign}${comparison.percent.toFixed(1)}%`;
+  return `${sign}${comparison.value.toFixed(2)}${percentText}`;
+};
+
+const comparisonColor = (comparison: PeriodComparison): string => {
+  if (comparison.direction === 'up') return '#047857';
+  if (comparison.direction === 'down') return '#b91c1c';
+  return '#64748b';
+};
+
+const getOrderType = (order: any): DashboardOrderTypeFilter => order?.orderType || 'dine_in';
+
+const getRankingScopeLabel = (scope: RankingScope, beverageCategory: BeverageCategoryFilter): string => {
+  if (scope === 'dishes') return '菜品';
+  if (scope === 'beverages') return beverageCategory === 'all' ? '酒水饮料' : beverageCategory;
+  return '全部商品';
+};
+
+const getHeatBackground = (intensity: number, inMonth: boolean): string => {
+  if (!inMonth) return '#f8fafc';
+  if (intensity <= 0) return '#ffffff';
+  if (intensity < 25) return '#ecfdf5';
+  if (intensity < 50) return '#bbf7d0';
+  if (intensity < 75) return '#86efac';
+  return '#22c55e';
+};
+
 const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders }) => {
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
-  const [startDate, setStartDate] = useState(getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))); // 🔥 使用本地时间
-  const [endDate, setEndDate] = useState(getLocalDateString()); // 🔥 使用本地时间
+  const [startDate, setStartDate] = useState(getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
+  const [endDate, setEndDate] = useState(getLocalDateString());
+  const [calendarMonth, setCalendarMonth] = useState(getLocalDateString().slice(0, 7));
 
-  // 🔄 使用统一数据管理服务
-  const [orders, setOrders] = useState<any[]>(() => {
-    return propOrders || dataManager.getData('orders');
-  });
+  const [orders, setOrders] = useState<any[]>(() => propOrders || dataManager.getData('orders') || []);
+  const [menuItems, setMenuItems] = useState<any[]>(() => dataManager.getData('menuItems') || []);
+  const [inventoryItems, setInventoryItems] = useState<any[]>(() => dataManager.getData('inventory') || []);
   const [dataVersion, setDataVersion] = useState(0);
 
-  const [stats, setStats] = useState<TimeRangeStats>({
-    totalSales: 0,
-    orderCount: 0,
-    cashPayment: 0,
-    cardPayment: 0,
-    purchaseAmount: 0,
-    expenseAmount: 0,
-    profit: 0,
-    dineInOrders: 0,
-    takeoutOrders: 0,
-    deliveryOrders: 0,
-    dineInRevenue: 0,
-    takeoutRevenue: 0,
-    deliveryRevenue: 0,
-  });
+  const [rankingScope, setRankingScope] = useState<RankingScope>('all');
+  const [rankingSortBy, setRankingSortBy] = useState<RankingSortBy>('revenue');
+  const [rankingOrderType, setRankingOrderType] = useState<DashboardOrderTypeFilter>('all');
+  const [rankingTopN, setRankingTopN] = useState<number>(10);
+  const [beverageCategoryFilter, setBeverageCategoryFilter] = useState<BeverageCategoryFilter>('all');
+  const [movementMetric, setMovementMetric] = useState<RankingSortBy>('revenue');
 
-  const [salesRankings, setSalesRankings] = useState<Record<string, SalesRanking[]>>({});
+  const [stats, setStats] = useState<TimeRangeStats>(emptyStats);
+  const [currentKpis, setCurrentKpis] = useState<DashboardKpis>(emptyKpis);
+  const [comparisonStats, setComparisonStats] = useState<ComparisonStats>(emptyComparison);
+  const [focusedRankings, setFocusedRankings] = useState<AnalyticsSalesRanking[]>([]);
+  const [rankingMovement, setRankingMovement] = useState<{ increased: RankingMovement[]; decreased: RankingMovement[] }>({ increased: [], decreased: [] });
+  const [monthlyCalendar, setMonthlyCalendar] = useState<MonthlySalesCalendar | null>(null);
   const [salesTrend, setSalesTrend] = useState<DailyTrend[]>([]);
-
-  // 🔥 支出分析数据
   const [expenseByCategory, setExpenseByCategory] = useState<Array<{ category: string; amount: number }>>([]);
   const [topPurchases, setTopPurchases] = useState<Array<{ name: string; quantity: number; amount: number }>>([]);
-
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile>({
     totalCustomers: 0,
     newCustomers: 0,
@@ -152,25 +233,31 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   const refreshManagerData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudOrders, cloudExpenses, cloudPurchases] = await Promise.all([
+      const [cloudOrders, cloudExpenses, cloudPurchases, cloudMenuItems, cloudInventoryItems] = await Promise.all([
         smartGetDocuments('pos_orders', true),
         smartGetDocuments('expenses', true),
         smartGetDocuments('purchase_orders', true),
+        smartGetDocuments('menu_items', true),
+        smartGetDocuments('inventory_items', true),
       ]);
 
       await Promise.all([
         dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false }),
         dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false }),
         dataManager.saveData('purchases', cloudPurchases, { syncFirestore: false, notify: false }),
+        dataManager.saveData('menuItems', cloudMenuItems, { syncFirestore: false, notify: false }),
+        dataManager.saveData('inventory', cloudInventoryItems, { syncFirestore: false, notify: false }),
       ]);
 
       dataManager.clearCache();
       setOrders(cloudOrders);
+      setMenuItems(cloudMenuItems);
+      setInventoryItems(cloudInventoryItems);
       setDataVersion(version => version + 1);
       setLastSyncedAt(new Date());
     } catch (error) {
-      console.error('\u5237\u65b0\u5e97\u957f\u6570\u636e\u5931\u8d25:', error);
-      alert('\u5237\u65b0\u5e97\u957f\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      console.error('刷新店长数据失败:', error);
+      alert('刷新店长数据失败，请检查网络后重试');
     } finally {
       setIsRefreshing(false);
     }
@@ -180,178 +267,209 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     refreshManagerData();
   }, [refreshManagerData]);
 
+  const calculateCustomerProfile = React.useCallback((sourceOrders: any[]): CustomerProfile => {
+    const customerMap: Record<string, {
+      orderCount: number;
+      totalSpent: number;
+      lastVisit: string;
+      dishes: Record<string, number>;
+    }> = {};
+
+    sourceOrders.forEach((order: any) => {
+      const phone = order.customerPhone || '散客';
+      const orderDate = String(order.date || order.createdAt || getOrderFinancialDateKey(order));
+      const spent = getOrderCollectedAmount(order);
+      if (spent <= 0) return;
+
+      if (!customerMap[phone]) {
+        customerMap[phone] = {
+          orderCount: 0,
+          totalSpent: 0,
+          lastVisit: orderDate,
+          dishes: {},
+        };
+      }
+
+      customerMap[phone].orderCount += 1;
+      customerMap[phone].totalSpent += spent;
+      if (orderDate > customerMap[phone].lastVisit) customerMap[phone].lastVisit = orderDate;
+
+      (Array.isArray(order.items) ? order.items : []).forEach((item: any) => {
+        const dishName = String(item.name || item.itemName || '未知商品');
+        customerMap[phone].dishes[dishName] = (customerMap[phone].dishes[dishName] || 0) + 1;
+      });
+    });
+
+    const customers = Object.entries(customerMap);
+    const totalCustomers = customers.length;
+    const newCustomers = customers.filter(([, data]) => data.orderCount === 1).length;
+    const returningCustomers = customers.filter(([, data]) => data.orderCount > 1).length;
+    const newCustomerRate = totalCustomers > 0 ? (newCustomers / totalCustomers) * 100 : 0;
+    const avgOrderFrequency = totalCustomers > 0
+      ? customers.reduce((sum, [, data]) => sum + data.orderCount, 0) / totalCustomers
+      : 0;
+
+    const topCustomers = customers
+      .map(([phone, data]) => ({
+        phone: phone === '散客' ? undefined : phone,
+        orderCount: data.orderCount,
+        totalSpent: data.totalSpent,
+        lastVisit: data.lastVisit,
+        favoriteDish: Object.entries(data.dishes).sort((a, b) => b[1] - a[1])[0]?.[0],
+      }))
+      .sort((a, b) => b.totalSpent - a.totalSpent)
+      .slice(0, 10);
+
+    const hourStats: Record<number, { orderCount: number; revenue: number }> = {};
+    for (let hour = 0; hour < 24; hour += 1) hourStats[hour] = { orderCount: 0, revenue: 0 };
+
+    sourceOrders.forEach((order: any) => {
+      const amount = getOrderCollectedAmount(order);
+      if (amount <= 0) return;
+      const rawTime = order.date || order.createdAt || order.completedAt || order.paidAt;
+      const timestamp = toTimestampMillis(rawTime);
+      const hour = timestamp ? new Date(timestamp).getHours() : 0;
+      hourStats[hour].orderCount += 1;
+      hourStats[hour].revenue += amount;
+    });
+
+    const peakHours = Object.entries(hourStats)
+      .map(([hour, data]) => ({ hour: Number(hour), orderCount: data.orderCount, revenue: data.revenue }))
+      .filter(item => item.orderCount > 0)
+      .sort((a, b) => b.orderCount - a.orderCount)
+      .slice(0, 5);
+
+    const categoryStats: Record<string, { orderCount: number; revenue: number }> = {};
+    sourceOrders.forEach((order: any) => {
+      if (getOrderCollectedAmount(order) <= 0) return;
+      (Array.isArray(order.items) ? order.items : []).forEach((item: any) => {
+        const category = item.category || '其他';
+        if (!categoryStats[category]) categoryStats[category] = { orderCount: 0, revenue: 0 };
+        categoryStats[category].orderCount += Number(item.quantity || 1);
+        categoryStats[category].revenue += Number(item.subtotal ?? (Number(item.price || 0) * Number(item.quantity || 1)));
+      });
+    });
+
+    const totalCategoryOrders = Object.values(categoryStats).reduce((sum, item) => sum + item.orderCount, 0);
+    const categoryPreference = Object.entries(categoryStats)
+      .map(([category, data]) => ({
+        category,
+        orderCount: data.orderCount,
+        revenue: data.revenue,
+        percentage: totalCategoryOrders > 0 ? (data.orderCount / totalCategoryOrders) * 100 : 0,
+      }))
+      .sort((a, b) => b.orderCount - a.orderCount);
+
+    return {
+      totalCustomers,
+      newCustomers,
+      returningCustomers,
+      newCustomerRate,
+      avgOrderFrequency,
+      topCustomers,
+      peakHours,
+      categoryPreference,
+    };
+  }, []);
+
   const loadDashboardData = React.useCallback(() => {
     try {
-      // 计算时间范围
-      let start: Date;
-      let end: Date;
-      const now = new Date();
-
-      if (timeRange === 'today') {
-        start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      } else if (timeRange === 'week') {
-        start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        end = now;
-      } else if (timeRange === 'month') {
-        start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        end = now;
-      } else {
-        start = new Date(startDate);
-        end = new Date(endDate);
-        end.setDate(end.getDate() + 1);
-      }
-
-      const startStr = getLocalDateString(start); // 🔥 使用本地时间
-      const endStr = getLocalDateString(end); // 🔥 使用本地时间
+      const range = normalizeDashboardRange(timeRange, startDate, endDate, new Date());
       const dashboardOrders = propOrders || orders || getStoreOrdersDirect();
+      const filteredOrders = filterOrdersByRange(dashboardOrders, range.startDate, range.endDateExclusive);
+      const previousOrders = filterOrdersByRange(dashboardOrders, range.previousStartDate, range.previousEndDateExclusive);
+      const financialOrders = filteredOrders.filter((order: any) => getOrderCollectedAmount(order) > 0);
+      const previousFinancialOrders = previousOrders.filter((order: any) => getOrderCollectedAmount(order) > 0);
+      const expenses = dataManager.getData('expenses') || [];
+      const purchases = dataManager.getData('purchases') || [];
 
-      // 🔄 使用统一数据管理服务的订单数据
-      const filteredOrders = dashboardOrders.filter((order: any) => {
-        const orderDateStr = getOrderFinancialDateKey(order);
-        return orderDateStr >= startStr && orderDateStr < endStr;
-      });
-
-      // 基础统计
-      const totalSales = filteredOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
-      const orderCount = filteredOrders.length;
-      const cardPayment = filteredOrders.reduce((sum: number, order: any) => {
-        if (order.paymentMethod === 'card') {
-          // 纯刷卡：使用订单总额
-          return sum + getOrderCollectedAmount(order);
-        } else if (order.paymentMethod === 'mixed') {
-          // 混合支付：使用刷卡部分
-          return sum + getOrderPaymentBreakdown(order).card;
-        }
+      const expenseAmount = sumExpensesByKind(expenses, range.startDate, range.endDateExclusive, 'operating');
+      const purchaseAmount = sumExpensesByKind(expenses, range.startDate, range.endDateExclusive, 'purchase');
+      const previousExpenseAmount = sumExpensesByKind(expenses, range.previousStartDate, range.previousEndDateExclusive, 'operating');
+      const previousPurchaseAmount = sumExpensesByKind(expenses, range.previousStartDate, range.previousEndDateExclusive, 'purchase');
+      const totalSales = financialOrders.reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+      const orderCount = financialOrders.length;
+      const cardPayment = financialOrders.reduce((sum: number, order: any) => {
+        if (order.paymentMethod === 'card') return sum + getOrderCollectedAmount(order);
+        if (order.paymentMethod === 'mixed') return sum + getOrderPaymentBreakdown(order).card;
         return sum;
       }, 0);
-
-      const cashPayment = filteredOrders.reduce((sum: number, order: any) => {
-        if (order.paymentMethod === 'cash') {
-          // 纯现金：使用订单总额（不是实际收到的现金）
-          return sum + getOrderCollectedAmount(order);
-        } else if (order.paymentMethod === 'mixed') {
-          // 混合支付：使用现金部分
-          return sum + getOrderPaymentBreakdown(order).cash;
-        }
+      const cashPayment = financialOrders.reduce((sum: number, order: any) => {
+        if (order.paymentMethod === 'cash') return sum + getOrderCollectedAmount(order);
+        if (order.paymentMethod === 'mixed') return sum + getOrderPaymentBreakdown(order).cash;
         return sum;
       }, 0);
-
-      // 验证：现金+刷卡应该等于总营业额
-      const totalPayment = cashPayment + cardPayment;
-      if (Math.abs(totalPayment - totalSales) > 0.01 && totalSales > 0) {
-        console.warn('⚠️ 警告：现金+刷卡金额与总营业额不符', {
-          totalSales,
-          cashPayment,
-          cardPayment,
-          totalPayment,
-          difference: totalPayment - totalSales
-        });
-      }
-
-      // 堂食/打包/外卖分析
-      const dineInOrders = filteredOrders.filter((o: any) => o.orderType === 'dine_in' || !o.orderType).length;
-      const takeoutOrders = filteredOrders.filter((o: any) => o.orderType === 'takeout').length;
-      const deliveryOrders = filteredOrders.filter((o: any) => o.orderType === 'delivery').length;
-
-      const dineInRevenue = filteredOrders
-        .filter((o: any) => o.orderType === 'dine_in' || !o.orderType)
-        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
-      const takeoutRevenue = filteredOrders
-        .filter((o: any) => o.orderType === 'takeout')
-        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
-      const deliveryRevenue = filteredOrders
-        .filter((o: any) => o.orderType === 'delivery')
-        .reduce((sum: number, o: any) => sum + getOrderCollectedAmount(o), 0);
-
-      // 🔄 使用统一数据管理服务读取开支和采购数据
-      const expenses = dataManager.getData('expenses');
-
-      const expenseAmount = sumExpensesByKind(expenses, startStr, endStr, 'operating');
-
-      const purchases = dataManager.getData('purchases');
-
-      const purchaseAmount = sumExpensesByKind(expenses, startStr, endStr, 'purchase');
-
-      // 计算利润
-      // 注意：这里的利润是简化计算，使用当天的采购总额作为成本
-      // 更精确的计算需要追踪每个订单中商品的实际成本
-      // 允许负数利润（例如：大量采购但销售较少时）
       const profit = totalSales - purchaseAmount - expenseAmount;
 
-      // 销售排行 - 按实际商品分类动态统计
-      const categorySales: Record<string, Record<string, SalesRanking>> = {};
+      const dineInOrders = financialOrders.filter((order: any) => getOrderType(order) === 'dine_in').length;
+      const takeoutOrders = financialOrders.filter((order: any) => getOrderType(order) === 'takeout').length;
+      const deliveryOrders = financialOrders.filter((order: any) => getOrderType(order) === 'delivery').length;
+      const dineInRevenue = financialOrders
+        .filter((order: any) => getOrderType(order) === 'dine_in')
+        .reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+      const takeoutRevenue = financialOrders
+        .filter((order: any) => getOrderType(order) === 'takeout')
+        .reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+      const deliveryRevenue = financialOrders
+        .filter((order: any) => getOrderType(order) === 'delivery')
+        .reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
 
-      filteredOrders.forEach((order: any) => {
-        if (order.items) {
-          order.items.forEach((item: any) => {
-            // 获取商品分类，如果没有则使用'其他'
-            const category = item.category || '其他';
+      const currentKpiData = buildKpis(financialOrders, { purchaseAmount, expenseAmount });
+      const previousKpiData = buildKpis(previousFinancialOrders, { purchaseAmount: previousPurchaseAmount, expenseAmount: previousExpenseAmount });
+      const rankingFilters = {
+        scope: rankingScope,
+        sortBy: rankingSortBy,
+        orderType: rankingOrderType,
+        topN: rankingTopN,
+        beverageCategory: beverageCategoryFilter,
+      };
+      const movementFilters = { ...rankingFilters, sortBy: movementMetric };
 
-            // 初始化该分类的排行榜
-            if (!categorySales[category]) {
-              categorySales[category] = {};
-            }
-
-            const key = item.name;
-            const existingItem = categorySales[category][key];
-
-            categorySales[category][key] = {
-              name: item.name,
-              category: category,
-              quantity: (existingItem?.quantity || 0) + (item.quantity || 1),
-              revenue: (existingItem?.revenue || 0) + (item.price * (item.quantity || 1)),
-            };
-          });
-        }
-      });
-
-      // 为每个分类生成Top 10排行
-      const salesRankings: Record<string, SalesRanking[]> = {};
-      Object.keys(categorySales).forEach(category => {
-        salesRankings[category] = Object.values(categorySales[category])
-          .sort((a, b) => b.revenue - a.revenue)
-          .slice(0, 10);
-      });
-
-      // 销售趋势
       const trendMap: Record<string, DailyTrend> = {};
-      for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
-        const dateStr = getLocalDateString(d); // 🔥 使用本地时间
-        trendMap[dateStr] = { date: dateStr, sales: 0, orders: 0, profit: 0, dineInSales: 0, takeoutSales: 0 };
+      for (let date = new Date(`${range.startDate}T00:00:00`); getLocalDateString(date) < range.endDateExclusive; date.setDate(date.getDate() + 1)) {
+        const dateKey = getLocalDateString(date);
+        trendMap[dateKey] = { date: dateKey, sales: 0, orders: 0, profit: 0, dineInSales: 0, takeoutSales: 0, deliverySales: 0 };
       }
 
-      filteredOrders.forEach((order: any) => {
-        const orderDate = getOrderFinancialDateKey(order);
-        const collectedAmount = getOrderCollectedAmount(order);
-        if (trendMap[orderDate]) {
-          trendMap[orderDate].sales += collectedAmount;
-          trendMap[orderDate].orders += 1;
-          if (order.orderType === 'takeout') {
-            trendMap[orderDate].takeoutSales += collectedAmount;
-          } else if (order.orderType === 'delivery') {
-            trendMap[orderDate].takeoutSales += collectedAmount; // 外卖也计入takeoutSales
-          } else {
-            trendMap[orderDate].dineInSales += collectedAmount;
-          }
+      financialOrders.forEach((order: any) => {
+        const dateKey = getOrderFinancialDateKey(order);
+        const amount = getOrderCollectedAmount(order);
+        if (!trendMap[dateKey]) return;
+        trendMap[dateKey].sales += amount;
+        trendMap[dateKey].orders += 1;
+        if (getOrderType(order) === 'takeout') trendMap[dateKey].takeoutSales += amount;
+        else if (getOrderType(order) === 'delivery') trendMap[dateKey].deliverySales += amount;
+        else trendMap[dateKey].dineInSales += amount;
+      });
+
+      expenses.forEach((expense: any) => {
+        const dateKey = getExpenseDateKey(expense);
+        if (trendMap[dateKey]) trendMap[dateKey].profit -= Number(expense.amount || 0);
+      });
+      Object.keys(trendMap).forEach(dateKey => {
+        trendMap[dateKey].profit += trendMap[dateKey].sales;
+      });
+
+      const expenseCategories: Record<string, number> = {};
+      expenses.forEach((expense: any) => {
+        const expenseDate = getExpenseDateKey(expense);
+        if (!isPurchaseRelatedExpense(expense) && expenseDate >= range.startDate && expenseDate < range.endDateExclusive) {
+          const category = expense.categoryName || expense.category || '其他';
+          expenseCategories[category] = (expenseCategories[category] || 0) + Number(expense.amount || 0);
         }
       });
 
-      expenses.forEach((exp: any) => {
-        const expenseDate = getExpenseDateKey(exp);
-        if (trendMap[expenseDate]) {
-          trendMap[expenseDate].profit -= exp.amount || 0;
-        }
+      const purchaseItems: Record<string, { name: string; quantity: number; amount: number }> = {};
+      purchases.forEach((purchase: any) => {
+        const purchaseDate = getRecordDateString(purchase.date || purchase.createdAt);
+        if (!purchaseDate || purchaseDate < range.startDate || purchaseDate >= range.endDateExclusive) return;
+        (Array.isArray(purchase.items) ? purchase.items : []).forEach((item: any) => {
+          const name = String(item.itemName || item.name || '未知物品');
+          if (!purchaseItems[name]) purchaseItems[name] = { name, quantity: 0, amount: 0 };
+          purchaseItems[name].quantity += Number(item.quantity || 0);
+          purchaseItems[name].amount += Number(item.subtotal || 0);
+        });
       });
-
-      Object.keys(trendMap).forEach(date => {
-        trendMap[date].profit += trendMap[date].sales;
-      });
-
-      const trendData = Object.values(trendMap).sort((a, b) => a.date.localeCompare(b.date));
-
-      // 客户画像
-      const customerStats = calculateCustomerProfile(filteredOrders);
 
       setStats({
         totalSales,
@@ -368,790 +486,576 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         takeoutRevenue,
         deliveryRevenue,
       });
-
-      setSalesRankings(salesRankings);
-      setSalesTrend(trendData);
-
-      // 🔥 计算支出分类统计
-      const expenseCategories: Record<string, number> = {};
-      expenses.forEach((exp: any) => {
-        const expenseDate = getExpenseDateKey(exp);
-        if (!isPurchaseRelatedExpense(exp) && expenseDate >= startStr && expenseDate < endStr) {
-          const category = exp.category || '其他';
-          expenseCategories[category] = (expenseCategories[category] || 0) + (exp.amount || 0);
-        }
+      setCurrentKpis(currentKpiData);
+      setComparisonStats({
+        totalSales: buildPeriodComparison(currentKpiData.totalSales, previousKpiData.totalSales),
+        orderCount: buildPeriodComparison(currentKpiData.orderCount, previousKpiData.orderCount),
+        averageTicket: buildPeriodComparison(currentKpiData.averageTicket, previousKpiData.averageTicket),
+        cashPayment: buildPeriodComparison(currentKpiData.cashPayment, previousKpiData.cashPayment),
+        cardPayment: buildPeriodComparison(currentKpiData.cardPayment, previousKpiData.cardPayment),
+        profit: buildPeriodComparison(currentKpiData.profit, previousKpiData.profit),
       });
-      const expenseByCategoryData = Object.entries(expenseCategories)
-        .map(([category, amount]) => ({ category, amount }))
-        .sort((a, b) => b.amount - a.amount);
-      setExpenseByCategory(expenseByCategoryData);
-
-      // 🔥 计算采购物品排行
-      const purchaseItems: Record<string, { name: string; quantity: number; amount: number }> = {};
-      purchases.forEach((purchase: any) => {
-        const purchaseDate = purchase.date || purchase.createdAt;
-        const purchaseDateStr = getRecordDateString(purchaseDate);
-        if (purchaseDateStr && purchaseDateStr >= startStr && purchaseDateStr < endStr) {
-          if (purchase.items && Array.isArray(purchase.items)) {
-            purchase.items.forEach((item: any) => {
-              const key = item.itemName || item.name || '未知';
-              if (!purchaseItems[key]) {
-                purchaseItems[key] = { name: key, quantity: 0, amount: 0 };
-              }
-              purchaseItems[key].quantity += item.quantity || 0;
-              purchaseItems[key].amount += item.subtotal || 0;
-            });
-          }
-        }
-      });
-      const topPurchasesData = Object.values(purchaseItems)
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 10);
-      setTopPurchases(topPurchasesData);
-
-      setCustomerProfile(customerStats);
-    } catch (e) {
-      console.error('加载数据失败:', e);
+      setFocusedRankings(buildSalesRankings(financialOrders, menuItems, inventoryItems, rankingFilters));
+      setRankingMovement(buildRankingComparison(financialOrders, previousFinancialOrders, menuItems, inventoryItems, movementFilters));
+      setMonthlyCalendar(buildMonthlySalesCalendar(dashboardOrders, calendarMonth));
+      setSalesTrend(Object.values(trendMap).sort((a, b) => a.date.localeCompare(b.date)));
+      setExpenseByCategory(Object.entries(expenseCategories).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount));
+      setTopPurchases(Object.values(purchaseItems).sort((a, b) => b.amount - a.amount).slice(0, 10));
+      setCustomerProfile(calculateCustomerProfile(financialOrders));
+    } catch (error) {
+      console.error('加载数据概览失败:', error);
     } finally {
       setLoading(false);
     }
-  }, [timeRange, startDate, endDate, propOrders, orders]);
+  }, [
+    timeRange,
+    startDate,
+    endDate,
+    propOrders,
+    orders,
+    menuItems,
+    inventoryItems,
+    rankingScope,
+    rankingSortBy,
+    rankingOrderType,
+    rankingTopN,
+    beverageCategoryFilter,
+    calendarMonth,
+    movementMetric,
+    calculateCustomerProfile,
+  ]);
 
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData, dataVersion]);
-
-  // 计算客户画像
-  const calculateCustomerProfile = (orders: any[]): CustomerProfile => {
-    const customerMap: Record<string, {
-      orderCount: number;
-      totalSpent: number;
-      lastVisit: string;
-      dishes: Record<string, number>;
-    }> = {};
-
-    orders.forEach((order: any) => {
-      const phone = order.customerPhone || '散客';
-      const orderDate = order.date || order.createdAt;
-
-      if (!customerMap[phone]) {
-        customerMap[phone] = {
-          orderCount: 0,
-          totalSpent: 0,
-          lastVisit: orderDate,
-          dishes: {},
-        };
-      }
-
-      customerMap[phone].orderCount += 1;
-      customerMap[phone].totalSpent += getOrderCollectedAmount(order);
-      if (orderDate > customerMap[phone].lastVisit) {
-        customerMap[phone].lastVisit = orderDate;
-      }
-
-      if (order.items) {
-        order.items.forEach((item: any) => {
-          const dishName = item.name;
-          customerMap[phone].dishes[dishName] = (customerMap[phone].dishes[dishName] || 0) + 1;
-        });
-      }
-    });
-
-    const customers = Object.entries(customerMap);
-    const totalCustomers = customers.length;
-    const newCustomers = customers.filter(([_, data]) => data.orderCount === 1).length;
-    const returningCustomers = customers.filter(([_, data]) => data.orderCount > 1).length;
-    const newCustomerRate = totalCustomers > 0 ? (newCustomers / totalCustomers * 100) : 0;
-    const avgOrderFrequency = totalCustomers > 0 ?
-      customers.reduce((sum, [_, data]) => sum + data.orderCount, 0) / totalCustomers : 0;
-
-    const topCustomers = customers
-      .map(([phone, data]) => {
-        const favoriteDish = Object.entries(data.dishes)
-          .sort((a, b) => b[1] - a[1])[0]?.[0];
-
-        return {
-          phone: phone === '散客' ? undefined : phone,
-          orderCount: data.orderCount,
-          totalSpent: data.totalSpent,
-          lastVisit: data.lastVisit,
-          favoriteDish,
-        };
-      })
-      .sort((a, b) => b.totalSpent - a.totalSpent)
-      .slice(0, 10);
-
-    const hourStats: Record<number, { orderCount: number; revenue: number }> = {};
-    for (let i = 0; i < 24; i++) {
-      hourStats[i] = { orderCount: 0, revenue: 0 };
-    }
-
-    orders.forEach((order: any) => {
-      const orderTime = order.date || order.createdAt;
-      try {
-        const hour = new Date(orderTime).getHours();
-        hourStats[hour].orderCount += 1;
-        hourStats[hour].revenue += getOrderCollectedAmount(order);
-      } catch (e) {}
-    });
-
-    const peakHours = Object.entries(hourStats)
-      .map(([hour, data]) => ({
-        hour: parseInt(hour),
-        orderCount: data.orderCount,
-        revenue: data.revenue,
-      }))
-      .filter(h => h.orderCount > 0)
-      .sort((a, b) => b.orderCount - a.orderCount)
-      .slice(0, 5);
-
-    const categoryStats: Record<string, { orderCount: number; revenue: number }> = {};
-    orders.forEach((order: any) => {
-      if (order.items) {
-        order.items.forEach((item: any) => {
-          const category = item.category || '其他';
-          if (!categoryStats[category]) {
-            categoryStats[category] = { orderCount: 0, revenue: 0 };
-          }
-          categoryStats[category].orderCount += 1;
-          categoryStats[category].revenue += item.price * (item.quantity || 1);
-        });
-      }
-    });
-
-    const totalCategoryOrders = Object.values(categoryStats).reduce((sum, c) => sum + c.orderCount, 0);
-    const categoryPreference = Object.entries(categoryStats)
-      .map(([category, data]) => ({
-        category,
-        orderCount: data.orderCount,
-        revenue: data.revenue,
-        percentage: totalCategoryOrders > 0 ? (data.orderCount / totalCategoryOrders * 100) : 0,
-      }))
-      .sort((a, b) => b.orderCount - a.orderCount);
-
-    return {
-      totalCustomers,
-      newCustomers,
-      returningCustomers,
-      newCustomerRate,
-      avgOrderFrequency,
-      topCustomers,
-      peakHours,
-      categoryPreference,
-    };
-  };
 
   const styles = {
     container: {
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1.5rem',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      padding: '1rem',
+      background: '#f3f4f6',
+      color: '#111827',
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '1.5rem',
-      flexWrap: 'wrap' as const,
+      alignItems: 'flex-start',
       gap: '1rem',
+      marginBottom: '1rem',
+      flexWrap: 'wrap' as const,
       flexShrink: 0 as const,
     },
     title: {
-      fontSize: '2rem',
-      fontWeight: 'bold',
-      color: 'white',
+      fontSize: '1.5rem',
+      fontWeight: 800,
       margin: 0,
-      textShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      color: '#111827',
+      letterSpacing: 0,
     },
-    controls: {
+    subtitle: {
+      marginTop: '0.25rem',
+      color: '#64748b',
+      fontSize: '0.875rem',
+    },
+    toolbar: {
       display: 'flex',
-      gap: '0.5rem',
       alignItems: 'center',
       flexWrap: 'wrap' as const,
-      background: 'rgba(255,255,255,0.95)',
-      padding: '0.5rem',
-      borderRadius: '0.75rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-    },
-    timeBtn: (active: boolean) => ({
-      padding: '0.6rem 1.2rem',
-      background: active ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : 'transparent',
-      color: active ? 'white' : '#6b7280',
-      border: 'none',
+      gap: '0.5rem',
+      background: '#ffffff',
+      border: '1px solid #e5e7eb',
       borderRadius: '0.5rem',
+      padding: '0.5rem',
+      boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
+    },
+    segmentButton: (active: boolean) => ({
+      border: '1px solid transparent',
+      background: active ? '#111827' : '#f8fafc',
+      color: active ? '#ffffff' : '#334155',
+      borderRadius: '0.375rem',
+      padding: '0.5rem 0.75rem',
+      fontSize: '0.8125rem',
+      fontWeight: 700,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '0.875rem',
-      transition: 'all 0.3s',
+      whiteSpace: 'nowrap' as const,
     }),
     input: {
-      padding: '0.5rem',
+      height: '2.25rem',
       border: '1px solid #d1d5db',
       borderRadius: '0.375rem',
-      fontSize: '0.875rem',
+      padding: '0 0.5rem',
+      fontSize: '0.8125rem',
+      background: '#ffffff',
     },
-    grid3: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-      gap: '1.5rem',
-      marginBottom: '1.5rem',
+    select: {
+      height: '2.25rem',
+      border: '1px solid #d1d5db',
+      borderRadius: '0.375rem',
+      padding: '0 0.5rem',
+      fontSize: '0.8125rem',
+      background: '#ffffff',
+      color: '#111827',
     },
-    grid2: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))',
-      gap: '1.5rem',
-      marginBottom: '1.5rem',
-    },
-    statCard: (bg: string) => ({
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '1.5rem',
-      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
-      borderLeft: `5px solid ${bg}`,
-      transition: 'transform 0.2s',
-    }),
-    statLabel: {
-      fontSize: '0.875rem',
-      color: '#6b7280',
-      marginBottom: '0.5rem',
-      fontWeight: '500',
-    },
-    statValue: (color: string) => ({
-      fontSize: '1.75rem',
-      fontWeight: 'bold',
-      color: color,
-      marginBottom: '0.25rem',
-    }),
-    statSub: {
-      fontSize: '0.75rem',
-      color: '#9ca3af',
+    scroll: {
+      flex: 1,
+      overflowY: 'auto' as const,
+      paddingRight: '0.25rem',
     },
     card: {
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '1.5rem',
-      boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
-      marginBottom: '1.5rem',
+      background: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '0.5rem',
+      padding: '1rem',
+      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
     },
-    cardTitle: {
-      fontSize: '1.25rem',
-      fontWeight: '700',
-      color: '#1f2937',
-      marginBottom: '1.25rem',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem',
+    section: {
+      background: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '0.5rem',
+      padding: '1rem',
+      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+      marginBottom: '1rem',
+    },
+    sectionTitle: {
+      margin: 0,
+      fontSize: '1rem',
+      fontWeight: 800,
+      color: '#111827',
+    },
+    muted: {
+      color: '#64748b',
+      fontSize: '0.8125rem',
     },
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.875rem',
+      fontSize: '0.8125rem',
     },
     th: {
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      padding: '1rem',
       textAlign: 'left' as const,
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      color: 'white',
+      padding: '0.625rem',
+      color: '#475569',
+      background: '#f8fafc',
+      borderBottom: '1px solid #e5e7eb',
+      fontWeight: 800,
     },
     td: {
-      padding: '0.875rem',
-      borderBottom: '1px solid #f3f4f6',
+      padding: '0.625rem',
+      borderBottom: '1px solid #f1f5f9',
+      color: '#334155',
     },
-    rankingList: {
-      listStyle: 'none',
-      padding: 0,
-      margin: 0,
-    },
-    rankingItem: (index: number) => ({
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '0.875rem',
-      borderBottom: index < 9 ? '1px solid #f3f4f6' : 'none',
-      borderRadius: '0.5rem',
-      transition: 'background 0.2s',
-    }),
-    rankBadge: (index: number) => ({
-      width: '28px',
-      height: '28px',
-      borderRadius: '50%',
-      background: index === 0 ? 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)' :
-                  index === 1 ? 'linear-gradient(135deg, #d1d5db 0%, #9ca3af 100%)' :
-                  index === 2 ? 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)' : '#e5e7eb',
-      color: index < 3 ? 'white' : '#6b7280',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '0.75rem',
-      fontWeight: 'bold',
-      marginRight: '0.875rem',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-    }),
-    comparisonBox: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: '1rem',
-      padding: '1rem',
-      background: '#f9fafb',
-      borderRadius: '0.75rem',
-      marginBottom: '1rem',
-    },
-    progressBar: (percentage: number, color: string) => ({
-      height: '10px',
-      background: '#e5e7eb',
-      borderRadius: '5px',
-      overflow: 'hidden',
-      marginTop: '0.5rem',
-    }),
-    progressFill: (percentage: number, color: string) => ({
-      height: '100%',
-      width: `${percentage}%`,
-      background: color,
-      borderRadius: '5px',
-      transition: 'width 0.5s ease',
-    }),
+  };
+
+  const kpiCards = [
+    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales },
+    { label: '订单数', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount },
+    { label: '客单价', value: money(currentKpis.averageTicket), sub: '按已收款订单计算', comparison: comparisonStats.averageTicket },
+    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment },
+    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment },
+    { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit },
+  ];
+
+  const maxRankingRevenue = Math.max(...focusedRankings.map(item => item.revenue), 0);
+  const rankMetricLabel = rankingSortBy === 'revenue' ? '金额' : '销量';
+  const movementMetricLabel = movementMetric === 'revenue' ? '金额' : '销量';
+
+  const renderMovementRow = (item: RankingMovement, index: number, type: 'up' | 'down') => {
+    const delta = movementMetric === 'revenue' ? item.revenueDelta : item.quantityDelta;
+    const current = movementMetric === 'revenue' ? item.currentRevenue : item.currentQuantity;
+    const previous = movementMetric === 'revenue' ? item.previousRevenue : item.previousQuantity;
+    const percentValue = movementMetric === 'revenue' ? item.revenuePercent : item.quantityPercent;
+    const color = type === 'up' ? '#047857' : '#b91c1c';
+    const formattedDelta = movementMetric === 'revenue' ? money(delta) : delta.toFixed(1);
+    const formattedCurrent = movementMetric === 'revenue' ? money(current) : current.toFixed(1);
+    const formattedPrevious = movementMetric === 'revenue' ? money(previous) : previous.toFixed(1);
+
+    return (
+      <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
+        <div style={{ width: 28, height: 28, borderRadius: 14, background: type === 'up' ? '#dcfce7' : '#fee2e2', color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.75rem' }}>{index + 1}</div>
+        <div>
+          <div style={{ fontWeight: 800, color: '#111827' }}>{item.name}</div>
+          <div style={{ ...styles.muted, marginTop: 2 }}>{item.category} · 本期 {formattedCurrent} / 上期 {formattedPrevious}</div>
+        </div>
+        <div style={{ textAlign: 'right', color, fontWeight: 800 }}>
+          {delta > 0 ? '+' : ''}{formattedDelta}
+          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{percentValue === null ? '新增' : `${percentValue > 0 ? '+' : ''}${percentValue.toFixed(1)}%`}</div>
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '3rem', color: 'white', fontSize: '1.25rem' }}>
-        加载中...
+      <div style={{ padding: '3rem', textAlign: 'center', color: '#475569' }}>
+        数据加载中...
       </div>
     );
   }
 
   return (
     <div style={styles.container}>
-      {/* 头部 */}
       <div style={styles.header}>
-        <h1 style={styles.title}>📊 数据分析中心</h1>
-        <div style={styles.controls}>
-          <button onClick={() => setTimeRange('today')} style={styles.timeBtn(timeRange === 'today')}>今日</button>
-          <button onClick={() => setTimeRange('week')} style={styles.timeBtn(timeRange === 'week')}>本周</button>
-          <button onClick={() => setTimeRange('month')} style={styles.timeBtn(timeRange === 'month')}>本月</button>
-          <button onClick={() => setTimeRange('custom')} style={styles.timeBtn(timeRange === 'custom')}>自定义</button>
-
+        <div>
+          <h1 style={styles.title}>数据概览</h1>
+          <div style={styles.subtitle}>销售、排行、月历和经营对比</div>
+        </div>
+        <div style={styles.toolbar}>
+          {[
+            ['today', '今日'],
+            ['week', '近7天'],
+            ['month', '近30天'],
+            ['custom', '自定义'],
+          ].map(([key, label]) => (
+            <button key={key} onClick={() => setTimeRange(key as any)} style={styles.segmentButton(timeRange === key)}>{label}</button>
+          ))}
           {timeRange === 'custom' && (
             <>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={styles.input} />
-              <span style={{ color: '#6b7280' }}>至</span>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={styles.input} />
+              <input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} style={styles.input} />
+              <span style={styles.muted}>至</span>
+              <input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} style={styles.input} />
             </>
           )}
-
-          {lastSyncedAt && (
-            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
-            </span>
-          )}
-
+          <input type="month" value={calendarMonth} onChange={event => setCalendarMonth(event.target.value)} style={styles.input} />
+          {lastSyncedAt && <span style={{ ...styles.muted, whiteSpace: 'nowrap' }}>最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}</span>}
           <button
             onClick={refreshManagerData}
             disabled={isRefreshing}
             style={{
-              padding: '0.6rem 1.2rem',
-              background: isRefreshing ? '#9ca3af' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
+              ...styles.segmentButton(false),
+              background: isRefreshing ? '#94a3b8' : '#0f766e',
+              color: '#ffffff',
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              fontWeight: '600',
             }}
           >
-            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+            {isRefreshing ? '刷新中...' : '刷新云端数据'}
           </button>
         </div>
       </div>
 
-      {/* 内容区 - 可滚动 */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-
-      {/* 核心指标卡片 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
-        <div style={styles.statCard('#3b82f6')}>
-          <div style={styles.statLabel}>💰 总营业额</div>
-          <div style={styles.statValue('#3b82f6')}>C$ {stats.totalSales.toFixed(2)}</div>
-          <div style={styles.statSub}>{stats.orderCount} 笔订单</div>
+      <div style={styles.scroll}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+          {kpiCards.map(card => (
+            <div key={card.label} style={styles.card}>
+              <div style={styles.muted}>{card.label}</div>
+              <div style={{ fontSize: '1.375rem', fontWeight: 900, marginTop: '0.375rem', color: '#111827' }}>{card.value}</div>
+              <div style={{ ...styles.muted, marginTop: '0.25rem' }}>{card.sub}</div>
+              <div style={{ marginTop: '0.75rem', color: comparisonColor(card.comparison), fontSize: '0.8125rem', fontWeight: 800 }}>
+                {comparisonText(card.comparison)}
+              </div>
+            </div>
+          ))}
         </div>
 
-        <div style={styles.statCard('#10b981')}>
-          <div style={styles.statLabel}>💵 现金收入</div>
-          <div style={styles.statValue('#10b981')}>C$ {stats.cashPayment.toFixed(2)}</div>
-          <div style={styles.statSub}>占比 {stats.totalSales > 0 ? ((stats.cashPayment / stats.totalSales) * 100).toFixed(1) : 0}%</div>
-        </div>
-
-        <div style={styles.statCard('#8b5cf6')}>
-          <div style={styles.statLabel}>💳 刷卡收入</div>
-          <div style={styles.statValue('#8b5cf6')}>C$ {stats.cardPayment.toFixed(2)}</div>
-          <div style={styles.statSub}>占比 {stats.totalSales > 0 ? ((stats.cardPayment / stats.totalSales) * 100).toFixed(1) : 0}%</div>
-        </div>
-
-        <div style={styles.statCard('#f59e0b')}>
-          <div style={styles.statLabel}>🍽️ 堂食订单</div>
-          <div style={styles.statValue('#f59e0b')}>{stats.dineInOrders}</div>
-          <div style={styles.statSub}>C$ {stats.dineInRevenue.toFixed(2)}</div>
-        </div>
-
-        <div style={styles.statCard('#06b6d4')}>
-          <div style={styles.statLabel}>🥡 打包订单</div>
-          <div style={styles.statValue('#06b6d4')}>{stats.takeoutOrders}</div>
-          <div style={styles.statSub}>C$ {stats.takeoutRevenue.toFixed(2)}</div>
-        </div>
-
-        <div style={styles.statCard('#ec4899')}>
-          <div style={styles.statLabel}>🚚 外卖配送</div>
-          <div style={styles.statValue('#ec4899')}>{stats.deliveryOrders}</div>
-          <div style={styles.statSub}>C$ {stats.deliveryRevenue.toFixed(2)}</div>
-        </div>
-
-        <div style={styles.statCard(stats.profit >= 0 ? '#10b981' : '#ef4444')}>
-          <div style={styles.statLabel}>📊 净利润</div>
-          <div style={styles.statValue(stats.profit >= 0 ? '#10b981' : '#ef4444')}>
-            C$ {stats.profit.toFixed(2)}
+        <div style={styles.section}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+            <div>
+              <h2 style={styles.sectionTitle}>月度销售日历</h2>
+              <div style={{ ...styles.muted, marginTop: 4 }}>
+                {monthlyCalendar?.month || calendarMonth} · 总额 {money(monthlyCalendar?.totalRevenue || 0)} · {monthlyCalendar?.totalOrders || 0} 单
+                {monthlyCalendar?.bestWeekday ? ` · 最高 ${monthlyCalendar.bestWeekday.weekday}` : ''}
+              </div>
+            </div>
+            <div style={styles.muted}>颜色越深表示当天销售额越高</div>
           </div>
-          <div style={styles.statSub}>利润率 {stats.totalSales > 0 ? ((stats.profit / stats.totalSales) * 100).toFixed(1) : 0}%</div>
-        </div>
-      </div>
-
-      {/* 🔥 支出明细分析 */}
-      {(expenseByCategory.length > 0 || topPurchases.length > 0) && (
-        <div style={{ ...styles.card, marginBottom: '1.5rem' }}>
-          <div style={styles.cardTitle}>💸 支出明细分析</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem', marginTop: '1rem' }}>
-            {/* 运营支出分类 */}
-            {expenseByCategory.length > 0 && (
-              <div>
-                <h4 style={{ fontSize: '1rem', fontWeight: 'bold', marginBottom: '0.75rem', color: '#ef4444' }}>
-                  📊 运营支出明细
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {expenseByCategory.map((item, index) => (
-                    <div key={index} style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '0.75rem',
-                      backgroundColor: '#f9fafb',
-                      borderRadius: '0.375rem'
-                    }}>
-                      <div style={{ fontWeight: '600', color: '#374151' }}>
-                        {item.category}
-                      </div>
-                      <div style={{ fontWeight: 'bold', color: '#ef4444' }}>
-                        C$ {item.amount.toFixed(2)}
-                      </div>
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 760 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 110px', gap: 6, marginBottom: 6 }}>
+                {(monthlyCalendar?.weekdays || ['周一', '周二', '周三', '周四', '周五', '周六', '周日']).map(day => (
+                  <div key={day} style={{ ...styles.muted, fontWeight: 800, textAlign: 'center' }}>{day}</div>
+                ))}
+                <div style={{ ...styles.muted, fontWeight: 800, textAlign: 'center' }}>周合计</div>
+              </div>
+              {(monthlyCalendar?.weeks || []).map((week, weekIndex) => (
+                <div key={weekIndex} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 110px', gap: 6, marginBottom: 6 }}>
+                  {week.days.map(day => (
+                    <div
+                      key={day.date}
+                      style={{
+                        minHeight: 78,
+                        padding: '0.5rem',
+                        borderRadius: '0.5rem',
+                        border: day.inMonth ? '1px solid #dbe4ea' : '1px solid #f1f5f9',
+                        background: getHeatBackground(day.intensity, day.inMonth),
+                        color: day.intensity >= 75 ? '#052e16' : '#111827',
+                        opacity: day.inMonth ? 1 : 0.35,
+                      }}
+                    >
+                      <div style={{ fontWeight: 900, fontSize: '0.8125rem' }}>{day.day}</div>
+                      <div style={{ fontWeight: 800, marginTop: 6, fontSize: '0.8125rem' }}>{money(day.revenue)}</div>
+                      <div style={{ fontSize: '0.72rem', marginTop: 3 }}>{day.orderCount} 单</div>
+                      {day.averageDeltaPercent !== null && (
+                        <div style={{ fontSize: '0.7rem', color: day.averageDeltaPercent >= 0 ? '#047857' : '#b91c1c' }}>
+                          {day.averageDeltaPercent >= 0 ? '+' : ''}{day.averageDeltaPercent.toFixed(0)}%
+                        </div>
+                      )}
                     </div>
                   ))}
+                  <div style={{ padding: '0.5rem', borderRadius: '0.5rem', background: '#0f172a', color: '#ffffff', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <div style={{ fontWeight: 900 }}>{money(week.weeklyRevenue)}</div>
+                    <div style={{ fontSize: '0.75rem', marginTop: 4 }}>{week.weeklyOrders} 单</div>
+                  </div>
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
+          </div>
+        </div>
 
-            {/* 采购物品排行 */}
-            {topPurchases.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(320px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
+          <div style={styles.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               <div>
-                <h4 style={{ fontSize: '1rem', fontWeight: 'bold', marginBottom: '0.75rem', color: '#f59e0b' }}>
-                  🛒 采购物品 TOP 10
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {topPurchases.map((item, index) => (
-                    <div key={index} style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '0.75rem',
-                      backgroundColor: '#f9fafb',
-                      borderRadius: '0.375rem'
-                    }}>
-                      <div>
-                        <div style={{ fontWeight: '600', color: '#374151' }}>
-                          #{index + 1} {item.name}
-                        </div>
-                        <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                          数量: {item.quantity}
-                        </div>
-                      </div>
-                      <div style={{ fontWeight: 'bold', color: '#f59e0b' }}>
-                        C$ {item.amount.toFixed(2)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <h2 style={styles.sectionTitle}>{getRankingScopeLabel(rankingScope, beverageCategoryFilter)}销售排行</h2>
+                <div style={{ ...styles.muted, marginTop: 4 }}>当前按{rankMetricLabel}排序，酒水会从库存分类补齐，不再漏掉饮料和啤酒</div>
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 业务类型对比 */}
-      <div style={styles.card}>
-        <div style={styles.cardTitle}>📊 业务类型对比分析</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', padding: '1rem', background: '#f9fafb', borderRadius: '0.75rem', marginBottom: '1rem' }}>
-          {/* 堂食 */}
-          <div style={{ textAlign: 'center', padding: '1.5rem', background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🍽️</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#f59e0b', marginBottom: '0.5rem' }}>
-              {stats.dineInOrders} 单
-            </div>
-            <div style={{ color: '#6b7280', marginBottom: '0.25rem', fontSize: '0.875rem' }}>堂食营业额</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937' }}>
-              C$ {stats.dineInRevenue.toFixed(2)}
-            </div>
-            <div style={{ height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden', marginTop: '0.75rem' }}>
-              <div style={{
-                height: '100%',
-                width: `${stats.totalSales > 0 ? (stats.dineInRevenue / stats.totalSales * 100) : 0}%`,
-                background: '#f59e0b',
-                borderRadius: '4px',
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-              占比 {stats.totalSales > 0 ? ((stats.dineInRevenue / stats.totalSales) * 100).toFixed(1) : 0}%
-            </div>
-          </div>
-
-          {/* 打包 */}
-          <div style={{ textAlign: 'center', padding: '1.5rem', background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderLeft: '2px solid #e5e7eb', borderRight: '2px solid #e5e7eb' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🥡</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#06b6d4', marginBottom: '0.5rem' }}>
-              {stats.takeoutOrders} 单
-            </div>
-            <div style={{ color: '#6b7280', marginBottom: '0.25rem', fontSize: '0.875rem' }}>打包营业额</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937' }}>
-              C$ {stats.takeoutRevenue.toFixed(2)}
-            </div>
-            <div style={{ height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden', marginTop: '0.75rem' }}>
-              <div style={{
-                height: '100%',
-                width: `${stats.totalSales > 0 ? (stats.takeoutRevenue / stats.totalSales * 100) : 0}%`,
-                background: '#06b6d4',
-                borderRadius: '4px',
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-              占比 {stats.totalSales > 0 ? ((stats.takeoutRevenue / stats.totalSales) * 100).toFixed(1) : 0}%
-            </div>
-          </div>
-
-          {/* 外卖配送 */}
-          <div style={{ textAlign: 'center', padding: '1.5rem', background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🚚</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#ec4899', marginBottom: '0.5rem' }}>
-              {stats.deliveryOrders} 单
-            </div>
-            <div style={{ color: '#6b7280', marginBottom: '0.25rem', fontSize: '0.875rem' }}>外卖配送营业额</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937' }}>
-              C$ {stats.deliveryRevenue.toFixed(2)}
-            </div>
-            <div style={{ height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden', marginTop: '0.75rem' }}>
-              <div style={{
-                height: '100%',
-                width: `${stats.totalSales > 0 ? (stats.deliveryRevenue / stats.totalSales * 100) : 0}%`,
-                background: '#ec4899',
-                borderRadius: '4px',
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-              占比 {stats.totalSales > 0 ? ((stats.deliveryRevenue / stats.totalSales) * 100).toFixed(1) : 0}%
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 销售排行 - 按商品分类动态显示 */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1f2937', marginBottom: '1rem' }}>📊 销售排行榜</h3>
-
-        {Object.keys(salesRankings).length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af', backgroundColor: 'white', borderRadius: '0.5rem' }}>
-            暂无销售数据
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1rem' }}>
-            {Object.entries(salesRankings).map(([category, rankings]) => (
-              <div key={category} style={styles.card}>
-                <div style={styles.cardTitle}>
-                  🏆 {category} TOP 10
-                </div>
-                {rankings.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>暂无数据</div>
-                ) : (
-                  <ul style={styles.rankingList}>
-                    {rankings.map((item: SalesRanking, index: number) => (
-                      <li key={index} style={styles.rankingItem(index)}>
-                        <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                          <span style={styles.rankBadge(index)}>{index + 1}</span>
-                          <div>
-                            <div style={{ fontWeight: '600', color: '#1f2937' }}>{item.name}</div>
-                            <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>销量: {item.quantity}</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 'bold', color: '#3b82f6' }}>C$ {item.revenue.toFixed(2)}</div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {[
+                  ['all', '全部'],
+                  ['dishes', '菜品'],
+                  ['beverages', '酒水'],
+                ].map(([key, label]) => (
+                  <button key={key} onClick={() => setRankingScope(key as RankingScope)} style={styles.segmentButton(rankingScope === key)}>{label}</button>
+                ))}
+                <button onClick={() => setRankingSortBy('revenue')} style={styles.segmentButton(rankingSortBy === 'revenue')}>金额</button>
+                <button onClick={() => setRankingSortBy('quantity')} style={styles.segmentButton(rankingSortBy === 'quantity')}>销量</button>
+                <select value={rankingOrderType} onChange={event => setRankingOrderType(event.target.value as DashboardOrderTypeFilter)} style={styles.select}>
+                  <option value="all">全部渠道</option>
+                  <option value="dine_in">堂食</option>
+                  <option value="takeout">Barra</option>
+                  <option value="delivery">Delivery</option>
+                </select>
+                <select value={rankingTopN} onChange={event => setRankingTopN(Number(event.target.value))} style={styles.select}>
+                  <option value={10}>Top 10</option>
+                  <option value={20}>Top 20</option>
+                  <option value={50}>Top 50</option>
+                </select>
+                {rankingScope === 'beverages' && (
+                  <select value={beverageCategoryFilter} onChange={event => setBeverageCategoryFilter(event.target.value as BeverageCategoryFilter)} style={styles.select}>
+                    <option value="all">全部酒水</option>
+                    <option value="Cerveza">Cerveza</option>
+                    <option value="Bebida">Bebida</option>
+                    <option value="Jugo">Jugo</option>
+                  </select>
                 )}
+              </div>
+            </div>
+            {focusedRankings.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '0.5rem' }}>暂无销售数据</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {focusedRankings.map((item, index) => {
+                  const barWidth = maxRankingRevenue > 0 ? Math.max(4, (item.revenue / maxRankingRevenue) * 100) : 0;
+                  return (
+                    <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '36px minmax(0, 1fr) 110px 110px 100px', gap: '0.75rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 14, background: index < 3 ? '#111827' : '#e2e8f0', color: index < 3 ? '#ffffff' : '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '0.75rem' }}>{index + 1}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
+                        <div style={{ ...styles.muted, marginTop: 2 }}>{item.category} · 均价 {money(item.averagePrice)}</div>
+                        <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
+                          <div style={{ width: `${barWidth}%`, height: '100%', background: '#0f766e', borderRadius: 3 }} />
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={styles.muted}>销量</div>
+                        <div style={{ fontWeight: 900 }}>{item.quantity.toFixed(1)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={styles.muted}>金额</div>
+                        <div style={{ fontWeight: 900 }}>{money(item.revenue)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={styles.muted}>占比</div>
+                        <div style={{ fontWeight: 900 }}>{pct(item.revenueShare)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem' }}>
+              <div>
+                <h2 style={styles.sectionTitle}>本期对比上期</h2>
+                <div style={{ ...styles.muted, marginTop: 4 }}>按{movementMetricLabel}观察增长和下降</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                <button onClick={() => setMovementMetric('revenue')} style={styles.segmentButton(movementMetric === 'revenue')}>金额</button>
+                <button onClick={() => setMovementMetric('quantity')} style={styles.segmentButton(movementMetric === 'quantity')}>销量</button>
+              </div>
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 900, color: '#047857', marginBottom: '0.25rem' }}>增长最大</div>
+              {rankingMovement.increased.length === 0 ? (
+                <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无增长项</div>
+              ) : rankingMovement.increased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'up'))}
+            </div>
+            <div>
+              <div style={{ fontWeight: 900, color: '#b91c1c', marginBottom: '0.25rem' }}>下降最大</div>
+              {rankingMovement.decreased.length === 0 ? (
+                <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无下降项</div>
+              ) : rankingMovement.decreased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'down'))}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.section}>
+          <h2 style={styles.sectionTitle}>业务类型分析</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
+            {[
+              { label: '堂食', orders: stats.dineInOrders, revenue: stats.dineInRevenue, color: '#0f766e' },
+              { label: 'Barra', orders: stats.takeoutOrders, revenue: stats.takeoutRevenue, color: '#2563eb' },
+              { label: 'Delivery', orders: stats.deliveryOrders, revenue: stats.deliveryRevenue, color: '#7c3aed' },
+            ].map(item => (
+              <div key={item.label} style={{ background: '#f8fafc', borderRadius: '0.5rem', padding: '0.875rem', border: '1px solid #e5e7eb' }}>
+                <div style={{ ...styles.muted, fontWeight: 800 }}>{item.label}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginTop: '0.5rem' }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 900, color: item.color }}>{item.orders} 单</div>
+                  <div style={{ fontWeight: 900 }}>{money(item.revenue)}</div>
+                </div>
+                <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: '0.75rem', overflow: 'hidden' }}>
+                  <div style={{ width: `${stats.totalSales > 0 ? (item.revenue / stats.totalSales) * 100 : 0}%`, height: '100%', background: item.color }} />
+                </div>
               </div>
             ))}
           </div>
+        </div>
+
+        {(expenseByCategory.length > 0 || topPurchases.length > 0) && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+            <div style={styles.section}>
+              <h2 style={styles.sectionTitle}>日常开支分类</h2>
+              <div style={{ marginTop: '0.75rem' }}>
+                {expenseByCategory.length === 0 ? <div style={styles.muted}>暂无开支</div> : expenseByCategory.map(item => (
+                  <div key={item.category} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <span style={{ fontWeight: 800 }}>{item.category}</span>
+                    <span style={{ color: '#b91c1c', fontWeight: 900 }}>{money(item.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={styles.section}>
+              <h2 style={styles.sectionTitle}>采购物品 Top 10</h2>
+              <div style={{ marginTop: '0.75rem' }}>
+                {topPurchases.length === 0 ? <div style={styles.muted}>暂无采购</div> : topPurchases.map((item, index) => (
+                  <div key={item.name} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
+                    <span style={{ fontWeight: 800 }}>{item.name}<span style={{ ...styles.muted, marginLeft: 6 }}>x {item.quantity}</span></span>
+                    <span style={{ fontWeight: 900 }}>{money(item.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
-      </div>
 
-      {/* 销售趋势 */}
-      {salesTrend.length > 0 && (
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>📈 销售趋势分析</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>日期</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>营业额</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>订单数</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>堂食</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>外卖</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>利润</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>利润率</th>
-                </tr>
-              </thead>
-              <tbody>
-                {salesTrend.map((day, index) => {
-                  const profitMargin = day.sales > 0 ? (day.profit / day.sales * 100) : 0;
-                  return (
-                    <tr key={index}>
+        {salesTrend.length > 0 && (
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>销售趋势</h2>
+            <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>日期</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>营业额</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>订单</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>堂食</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>Barra</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>Delivery</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>盈亏</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesTrend.map(day => (
+                    <tr key={day.date}>
                       <td style={styles.td}>{day.date}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600' }}>C$ {day.sales.toFixed(2)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 900 }}>{money(day.sales)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{day.orders}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', color: '#f59e0b' }}>C$ {day.dineInSales.toFixed(2)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', color: '#ef4444' }}>C$ {day.takeoutSales.toFixed(2)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 'bold', color: day.profit >= 0 ? '#10b981' : '#ef4444' }}>
-                        C$ {day.profit.toFixed(2)}
-                      </td>
-                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: profitMargin >= 0 ? '#10b981' : '#ef4444' }}>
-                        {profitMargin.toFixed(1)}%
-                      </td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.dineInSales)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.takeoutSales)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.deliverySales)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', color: day.profit >= 0 ? '#047857' : '#b91c1c', fontWeight: 900 }}>{money(day.profit)}</td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* 客户画像 */}
-      <div style={styles.grid2}>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>👥 客户构成</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-            <div style={{ textAlign: 'center', padding: '1.5rem', background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)', borderRadius: '0.75rem' }}>
-              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#3b82f6' }}>{customerProfile.newCustomers}</div>
-              <div style={{ fontSize: '0.875rem', color: '#1e40af', marginTop: '0.5rem', fontWeight: '600' }}>新客户</div>
-              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>占比 {customerProfile.newCustomerRate.toFixed(1)}%</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>客户构成</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
+              <div style={{ background: '#eff6ff', borderRadius: '0.5rem', padding: '0.875rem' }}>
+                <div style={{ ...styles.muted, color: '#1d4ed8' }}>新客户</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#1d4ed8' }}>{customerProfile.newCustomers}</div>
+                <div style={styles.muted}>占比 {pct(customerProfile.newCustomerRate)}</div>
+              </div>
+              <div style={{ background: '#ecfdf5', borderRadius: '0.5rem', padding: '0.875rem' }}>
+                <div style={{ ...styles.muted, color: '#047857' }}>老客户</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#047857' }}>{customerProfile.returningCustomers}</div>
+                <div style={styles.muted}>占比 {pct(100 - customerProfile.newCustomerRate)}</div>
+              </div>
             </div>
-            <div style={{ textAlign: 'center', padding: '1.5rem', background: 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)', borderRadius: '0.75rem' }}>
-              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#10b981' }}>{customerProfile.returningCustomers}</div>
-              <div style={{ fontSize: '0.875rem', color: '#065f46', marginTop: '0.5rem', fontWeight: '600' }}>老客户</div>
-              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>占比 {(100 - customerProfile.newCustomerRate).toFixed(1)}%</div>
+            <div style={{ marginTop: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={styles.muted}>总客户数</span>
+              <strong>{customerProfile.totalCustomers}</strong>
             </div>
-          </div>
-          <div style={{ borderTop: '2px solid #f3f4f6', paddingTop: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <span style={{ color: '#6b7280' }}>总客户数</span>
-              <span style={{ fontWeight: '700', fontSize: '1.125rem' }}>{customerProfile.totalCustomers}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#6b7280' }}>平均消费频次</span>
-              <span style={{ fontWeight: '700', fontSize: '1.125rem', color: '#8b5cf6' }}>{customerProfile.avgOrderFrequency.toFixed(1)} 次</span>
+            <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={styles.muted}>平均消费频次</span>
+              <strong>{customerProfile.avgOrderFrequency.toFixed(1)} 次</strong>
             </div>
           </div>
-        </div>
 
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>⏰ 营业高峰 TOP 5</div>
-          {customerProfile.peakHours.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>暂无数据</div>
-          ) : (
-            <ul style={styles.rankingList}>
-              {customerProfile.peakHours.map((slot, index) => (
-                <li key={index} style={styles.rankingItem(index)}>
-                  <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                    <span style={styles.rankBadge(index)}>{index + 1}</span>
-                    <div>
-                      <div style={{ fontWeight: '600', color: '#1f2937' }}>
-                        {String(slot.hour).padStart(2, '0')}:00 - {String(slot.hour + 1).padStart(2, '0')}:00
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{slot.orderCount} 笔订单</div>
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 'bold', color: '#f59e0b' }}>C$ {slot.revenue.toFixed(2)}</div>
-                  </div>
-                </li>
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>营业高峰 Top 5</h2>
+            <div style={{ marginTop: '0.75rem' }}>
+              {customerProfile.peakHours.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.peakHours.map((slot, index) => (
+                <div key={slot.hour} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                  <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
+                  <span style={{ fontWeight: 800 }}>{String(slot.hour).padStart(2, '0')}:00 - {String(slot.hour + 1).padStart(2, '0')}:00<span style={{ ...styles.muted, marginLeft: 6 }}>{slot.orderCount} 单</span></span>
+                  <span style={{ fontWeight: 900 }}>{money(slot.revenue)}</span>
+                </div>
               ))}
-            </ul>
-          )}
-        </div>
-      </div>
+            </div>
+          </div>
 
-      {/* 品类偏好 & VIP客户 */}
-      <div style={styles.grid2}>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>🍽️ 品类偏好</div>
-          {customerProfile.categoryPreference.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>暂无数据</div>
-          ) : (
-            <div>
-              {customerProfile.categoryPreference.map((cat, index) => (
-                <div key={index} style={{ marginBottom: index < customerProfile.categoryPreference.length - 1 ? '1.25rem' : 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <span style={{ fontWeight: '600', color: '#1f2937' }}>{cat.category}</span>
-                    <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>{cat.orderCount}单 / {cat.percentage.toFixed(1)}%</span>
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>品类偏好</h2>
+            <div style={{ marginTop: '0.75rem' }}>
+              {customerProfile.categoryPreference.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.categoryPreference.slice(0, 8).map(item => (
+                <div key={item.category} style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                    <span style={{ fontWeight: 800 }}>{item.category}</span>
+                    <span style={styles.muted}>{item.orderCount} 份 · {pct(item.percentage)}</span>
                   </div>
-                  <div style={{ height: '10px', background: '#e5e7eb', borderRadius: '5px', overflow: 'hidden' }}>
-                    <div style={styles.progressFill(cat.percentage, ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444'][index % 5])} />
+                  <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: 6, overflow: 'hidden' }}>
+                    <div style={{ width: `${item.percentage}%`, height: '100%', background: '#0f766e' }} />
                   </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>⭐ VIP客户 TOP 10</div>
-          {customerProfile.topCustomers.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>暂无数据</div>
-          ) : (
-            <ul style={styles.rankingList}>
-              {customerProfile.topCustomers.map((customer, index) => (
-                <li key={index} style={styles.rankingItem(index)}>
-                  <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                    <span style={styles.rankBadge(index)}>{index + 1}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: '600', color: '#1f2937' }}>{customer.phone || '散客'}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
-                        {customer.orderCount}次 · 最爱: {customer.favoriteDish || '-'}
-                      </div>
-                    </div>
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>VIP 客户 Top 10</h2>
+            <div style={{ marginTop: '0.75rem' }}>
+              {customerProfile.topCustomers.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.topCustomers.map((customer, index) => (
+                <div key={`${customer.phone || 'guest'}-${index}`} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                  <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
+                  <div>
+                    <div style={{ fontWeight: 800 }}>{customer.phone || '散客'}</div>
+                    <div style={styles.muted}>{customer.orderCount} 次 · 常点 {customer.favoriteDish || '-'}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 'bold', color: '#f59e0b' }}>C$ {customer.totalSpent.toFixed(2)}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{new Date(customer.lastVisit).toLocaleDateString('zh-CN')}</div>
-                  </div>
-                </li>
+                  <span style={{ fontWeight: 900 }}>{money(customer.totalSpent)}</span>
+                </div>
               ))}
-            </ul>
-          )}
+            </div>
+          </div>
         </div>
-      </div>
       </div>
     </div>
   );
