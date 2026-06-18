@@ -651,7 +651,6 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   const kpiCards = [
     { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales },
     { label: '订单数', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount },
-    { label: '客单价', value: money(currentKpis.averageTicket), sub: '按已收款订单计算', comparison: comparisonStats.averageTicket },
     { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment },
     { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment },
     { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit },
