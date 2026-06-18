@@ -2410,6 +2410,9 @@ const POS: React.FC = () => {
   const handlePrintReceipt = () => {
     const tableNumber = selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : '';
     const orderTypeText = posOrderTypeLabels[orderType];
+    const receiptSubtotal = currentItems.reduce((sum, item) => sum + item.subtotal, 0);
+    const receiptTax = taxEnabled ? tax : 0;
+    const receiptServiceFee = serviceFeeEnabled ? serviceFee : 0;
     
     let printContent = `
       <div style="font-family: monospace; padding: 20px; max-width: 300px; margin: 0 auto;">
@@ -2443,9 +2446,15 @@ const POS: React.FC = () => {
         </div>
         
         <div style="border-top: 2px dashed #000; padding-top: 10px; margin-top: 10px;">
-          <div style="display: flex; justify-content: space-between; font-size: 1.2em; font-weight: bold;">
+          <div style="display: flex; justify-content: space-between; margin: 5px 0;">
+            <span>Subtotal:</span>
+            <span>C$${receiptSubtotal.toFixed(2)}</span>
+          </div>
+          ${taxEnabled ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>IVA (15%)</span><span>C$${receiptTax.toFixed(2)}</span></div>` : ''}
+          ${serviceFeeEnabled ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Servicio (10%)</span><span>C$${receiptServiceFee.toFixed(2)}</span></div>` : ''}
+          <div style="display: flex; justify-content: space-between; font-size: 1.2em; font-weight: bold; border-top: 1px solid #000; padding-top: 6px; margin-top: 6px;">
             <span>Total:</span>
-            <span>C$${currentItems.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2)}</span>
+            <span>C$${finalTotal.toFixed(2)}</span>
           </div>
         </div>
         
@@ -3311,8 +3320,8 @@ const POS: React.FC = () => {
                             </>
                           )}
 
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                            <span>时间：</span>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                                <span>Hora:</span>
                             <span style={{ fontWeight: '600' }}>{formatNicaraguaTime(new Date())}</span>
                           </div>
                         </>
@@ -3433,7 +3442,7 @@ const POS: React.FC = () => {
 
                 {/* Cost Details */}
                 <div style={{ borderTop: '2px dashed #d1d5db', paddingTop: '0.5rem' }}>
-                  {/* 鉁?澶栧崠璁㈠崟鏄剧ず娲鹃€佽垂锛堝湪绋庤垂鏈嶅姟璐逛笂闈級 */}
+                  {/* Delivery fee appears above tax and service lines. */}
                   {(() => {
                     const currentOrder = orders.find(o => o.id === selectedOrderId);
                     const displayDeliveryFee = currentOrder?.orderType === 'delivery' ? (currentOrder.deliveryFee || deliveryFee) : 0;
@@ -3450,12 +3459,12 @@ const POS: React.FC = () => {
                   })()}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span style={{ color: '#6b7280' }}>税费 (15%)</span>
+                    <span style={{ color: '#6b7280' }}>IVA (15%)</span>
                     <span style={{ color: '#374151', fontWeight: '600' }}>C${(taxEnabled ? tax : 0).toFixed(2)}</span>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
-                    <span style={{ color: '#6b7280' }}>服务费 (10%)</span>
+                    <span style={{ color: '#6b7280' }}>Servicio (10%)</span>
                     <span style={{ color: '#374151', fontWeight: '600' }}>C${(serviceFeeEnabled ? serviceFee : 0).toFixed(2)}</span>
                   </div>
 
@@ -3996,7 +4005,7 @@ const POS: React.FC = () => {
                           onChange={(e) => setServiceFeeEnabled(e.target.checked)}
                           style={{ marginRight: '0.2rem', width: '12px', height: '12px' }}
                         />
-                        <span>服务费</span>
+                        <span>Servicio</span>
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '0.75rem', flex: 1 }}>
                         <input
@@ -4005,7 +4014,7 @@ const POS: React.FC = () => {
                           onChange={(e) => setTaxEnabled(e.target.checked)}
                           style={{ marginRight: '0.2rem', width: '12px', height: '12px' }}
                         />
-                        <span>税费</span>
+                        <span>IVA</span>
                       </label>
                     </div>
                   </div>

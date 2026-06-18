@@ -1952,4 +1952,46 @@ describe('production data safety guards', () => {
       submitBlock.indexOf("await dataManager.saveData('handovers', newHistory")
     );
   });
+
+  test('POS payment and receipt service and tax labels are Spanish', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const printStart = source.indexOf('const handlePrintReceipt = () => {');
+    const printBlock = source.slice(
+      printStart,
+      source.indexOf('const generateOrderNumber = () => {', printStart)
+    );
+    const paymentStart = source.indexOf('{/* Right: Payment Interface');
+    const paymentBlock = source.slice(
+      paymentStart,
+      source.indexOf('{showCancelModal && renderCancelModal()}', paymentStart)
+    );
+    const orderSummaryStart = source.indexOf('{/* Cost Details */}');
+    const orderSummaryBlock = source.slice(
+      orderSummaryStart,
+      source.indexOf('{discountEnabled && discountAmount > 0', orderSummaryStart)
+    );
+    const orderHeaderStart = source.indexOf('{/* Receipt Header */}');
+    const orderHeaderBlock = source.slice(
+      orderHeaderStart,
+      source.indexOf('{/* Split Bill Notice */}', orderHeaderStart)
+    );
+
+    expect(paymentBlock).toContain('Servicio');
+    expect(paymentBlock).toContain('IVA');
+    expect(orderHeaderBlock).toContain('<span>Hora:</span>');
+    expect(orderSummaryBlock).toContain('Servicio (10%)');
+    expect(orderSummaryBlock).toContain('IVA (15%)');
+    expect(printBlock).toContain('Servicio (10%)');
+    expect(printBlock).toContain('IVA (15%)');
+    expect(printBlock).toContain('finalTotal.toFixed(2)');
+    [paymentBlock, orderHeaderBlock, orderSummaryBlock, printBlock].forEach(block => {
+      expect(block).not.toContain('服务费');
+      expect(block).not.toContain('税费');
+      expect(block).not.toContain('时间');
+      expect(block).not.toContain('鏈嶅姟璐');
+      expect(block).not.toContain('绋庤垂');
+      expect(block).not.toContain('鏃堕棿');
+    });
+  });
 });
