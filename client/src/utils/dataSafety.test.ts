@@ -1294,6 +1294,19 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('if (cloudData && cloudData.length > 0)');
   });
 
+  test('dataManager refuses bare business cache access without store scope', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/dataManager.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+
+    expect(source).toContain('const getStorageKey = (key: keyof DataStore): string | null =>');
+    expect(source).toContain('if (!storeId) {');
+    expect(source).toContain('return null;');
+    expect(source).toContain('if (!primaryKey || !storeId) {');
+    expect(source).toContain('throw new Error(`Missing storeId; refusing to save store-scoped data: ${String(key)}`);');
+    expect(source).not.toContain('const globalKeys: Array<keyof DataStore> = []');
+    expect(source).not.toContain('if (!storeId || globalKeys.includes(key))');
+  });
+
   test('inventory category cloud loads do not merge stale local categories', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');

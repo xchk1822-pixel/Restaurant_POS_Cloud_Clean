@@ -69,13 +69,12 @@ const getCurrentStoreId = (): string | null => {
   }
 };
 
-const getStorageKey = (key: keyof DataStore): string => {
+const getStorageKey = (key: keyof DataStore): string | null => {
   const baseKey = STORAGE_KEY_BY_DATA_KEY[key];
-  const globalKeys: Array<keyof DataStore> = [];
   const storeId = getCurrentStoreId();
 
-  if (!storeId || globalKeys.includes(key)) {
-    return baseKey;
+  if (!storeId) {
+    return null;
   }
 
   return `store_${storeId}_${baseKey}`;
@@ -124,6 +123,10 @@ class DataManager {
   private readStorage(key: keyof DataStore): any[] {
     const primaryKey = getStorageKey(key);
     const storeId = getCurrentStoreId();
+    if (!primaryKey || !storeId) {
+      return [];
+    }
+
     const storageKeys = storeId
       ? [primaryKey]
       : [
@@ -182,6 +185,9 @@ class DataManager {
 
     const { syncFirestore = true, notify = true } = options;
     const storageKey = getStorageKey(key);
+    if (!storageKey) {
+      throw new Error(`Missing storeId; refusing to save store-scoped data: ${String(key)}`);
+    }
 
     try {
       const serializedData = JSON.stringify(data);
@@ -356,7 +362,10 @@ class DataManager {
   clearAll(confirmText: string = '确定要清空所有数据吗？此操作不可恢复！'): boolean {
     if (window.confirm(confirmText)) {
       DATA_STORE_KEYS.forEach(key => {
-        localStorage.removeItem(getStorageKey(key));
+        const scopedKey = getStorageKey(key);
+        if (scopedKey) {
+          localStorage.removeItem(scopedKey);
+        }
         localStorage.removeItem(STORAGE_KEY_BY_DATA_KEY[key]);
         (FALLBACK_STORAGE_KEYS[key] || []).forEach(storageKey => localStorage.removeItem(storageKey));
       });
