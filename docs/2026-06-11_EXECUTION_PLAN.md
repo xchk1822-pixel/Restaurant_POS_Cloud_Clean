@@ -100,6 +100,7 @@ Data isolation rule:
 - POS table background image replacement: table canvas now uses a local generated food-table JPG asset with a readability overlay and grid, replacing the embedded line-art SVG background. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS Spanish staff-facing labels: cashier-facing buttons, filters, statuses, payment labels, customer selector, receipt toolbar, and menu selector were changed to Spanish while preserving all stored business keys. Takeout displays as `Barra`. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS table background final image replacement: the table canvas JPG asset was replaced with the user-provided `1586 x 992` food-table image and compressed to about 264 KB while keeping the existing readability overlay and grid.
+- POS pseudo-3D table layout: tables now persist shape/orientation, merged tables keep directional bounding-box dimensions, horizontal merges render as long horizontal tables, vertical merges render as long vertical tables, and split restores the original table positions/sizes/shapes. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 
 ## Next Session Start
 

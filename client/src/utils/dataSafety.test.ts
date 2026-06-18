@@ -1135,6 +1135,31 @@ describe('production data safety guards', () => {
     expect(splitBlock).toContain('deletedTableIdsRef.current.delete(restoredTable.id)');
   });
 
+  test('POS merged tables keep directional table dimensions for pseudo 3D layout', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const mergeBlock = source.slice(
+      source.indexOf('const handleMergeTables = () => {'),
+      source.indexOf('const handleSplitTable = (tableId: string) => {')
+    );
+    const renderBlock = source.slice(
+      source.indexOf('{tables.map(table => ('),
+      source.indexOf('{isEditMode && table.number.includes', source.indexOf('{tables.map(table => ('))
+    );
+
+    expect(source).toContain("orientation?: 'horizontal' | 'vertical';");
+    expect(source).toContain("shape?: 'round' | 'square' | 'rectangle';");
+    expect(mergeBlock).toContain('const mergedBounds = getMergedTableBounds(mergedFromTables);');
+    expect(mergeBlock).toContain('orientation: mergedBounds.orientation');
+    expect(mergeBlock).toContain('x: mergedBounds.x');
+    expect(mergeBlock).toContain('y: mergedBounds.y');
+    expect(mergeBlock).toContain('width: mergedBounds.width');
+    expect(mergeBlock).toContain('height: mergedBounds.height');
+    expect(renderBlock).toContain('height: `${table.height}px`');
+    expect(renderBlock).not.toContain("height: '92px'");
+    expect(renderBlock).toContain('borderRadius: getTableBorderRadius(table)');
+  });
+
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
     const menuSelectionPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
     const source = fs.readFileSync(menuSelectionPath, 'utf8');

@@ -16,6 +16,8 @@ interface Table {
   y: number;
   width: number;
   height: number;
+  shape?: 'round' | 'square' | 'rectangle';
+  orientation?: 'horizontal' | 'vertical';
   status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
   capacity: number;
   currentOrderId?: string;
@@ -26,6 +28,8 @@ interface Table {
     y: number;
     width: number;
     height: number;
+    shape?: 'round' | 'square' | 'rectangle';
+    orientation?: 'horizontal' | 'vertical';
     capacity: number;
     status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
     currentOrderId?: string;
@@ -293,6 +297,8 @@ const getTablesSignature = (tables: Array<Partial<Table>> = []): string => {
         y: table.y,
         width: table.width,
         height: table.height,
+        shape: table.shape || null,
+        orientation: table.orientation || null,
         status: table.status,
         capacity: table.capacity,
         currentOrderId: table.currentOrderId || null,
@@ -330,10 +336,17 @@ const normalizeTables = (
   rawTables.forEach(table => {
     if (!table || !table.id) return;
 
+    const normalizedWidth = table.width || 110;
+    const normalizedHeight = table.height || 90;
+    const normalizedOrientation = table.orientation || (normalizedWidth >= normalizedHeight ? 'horizontal' : 'vertical');
+    const normalizedShape = table.shape || (Math.abs(normalizedWidth - normalizedHeight) <= 12 ? 'round' : 'rectangle');
+
     const normalizedTable: Table = {
       ...table,
-      width: table.width || 110,
-      height: table.height || 90,
+      width: normalizedWidth,
+      height: normalizedHeight,
+      shape: normalizedShape,
+      orientation: normalizedOrientation,
       status: table.status || 'available',
       capacity: table.capacity || 4,
       number: String(table.number || '').trim() || String(table.id),
@@ -360,6 +373,18 @@ const normalizeTables = (
     tables: Array.from(byKey.values()),
     duplicates
   };
+};
+
+const getMergedTableBounds = (tables: Array<Pick<Table, 'x' | 'y' | 'width' | 'height'>>) => {
+  const minX = Math.min(...tables.map(table => table.x));
+  const minY = Math.min(...tables.map(table => table.y));
+  const maxX = Math.max(...tables.map(table => table.x + (table.width || 110)));
+  const maxY = Math.max(...tables.map(table => table.y + (table.height || 90)));
+  const width = Math.max(110, maxX - minX);
+  const height = Math.max(90, maxY - minY);
+  const orientation: 'horizontal' | 'vertical' = width >= height ? 'horizontal' : 'vertical';
+
+  return { x: minX, y: minY, width, height, orientation };
 };
 
 const getOrderVersion = (order: Partial<Order>): number => {
@@ -2771,17 +2796,25 @@ const POS: React.FC = () => {
         y: t.y,
         width: t.width,
         height: t.height,
+        shape: t.shape,
+        orientation: t.orientation,
         capacity: t.capacity,
         status: t.status,
         currentOrderId: t.currentOrderId
       }));
 
+    const mergedBounds = getMergedTableBounds(mergedFromTables);
+
     const mergedTable: Table = {
       ...firstTable,
       id: `merged-${Date.now()}`,
       number: `${mergedFromTables.map(t => t.number).join('+')}`,
-      width: 110,
-      height: 90,
+      x: mergedBounds.x,
+      y: mergedBounds.y,
+      width: mergedBounds.width,
+      height: mergedBounds.height,
+      shape: 'rectangle',
+      orientation: mergedBounds.orientation,
       mergedFromTables,
       lastModified: Date.now(),
       capacity: mergedFromTables.reduce((sum, t) => sum + (t.capacity || 0), 0)
@@ -2816,6 +2849,8 @@ const POS: React.FC = () => {
         y: original.y,
         width: original.width || 110,
         height: original.height || 90,
+        shape: original.shape || (Math.abs((original.width || 110) - (original.height || 90)) <= 12 ? 'round' as const : 'rectangle' as const),
+        orientation: original.orientation || ((original.width || 110) >= (original.height || 90) ? 'horizontal' as const : 'vertical' as const),
         status: original.status || ('available' as const),
         capacity: original.capacity || Math.floor(table.capacity / numbers.length),
         lastModified: now
@@ -2827,6 +2862,8 @@ const POS: React.FC = () => {
       y: table.y,
       width: 110,
       height: 90,
+      shape: 'rectangle' as const,
+      orientation: 'horizontal' as const,
       status: 'available' as const,
       capacity: Math.floor(table.capacity / numbers.length),
       lastModified: now
@@ -2872,6 +2909,12 @@ const POS: React.FC = () => {
       case 'cancelled': return 'Cancelado';
       default: return status;
     }
+  };
+
+  const getTableBorderRadius = (table: Table) => {
+    if (table.shape === 'round') return '999px';
+    if (table.shape === 'square') return '18px';
+    return table.orientation === 'vertical' ? '22px' : '16px';
   };
 
 
@@ -4069,7 +4112,7 @@ const POS: React.FC = () => {
                     left: table.x,
                     top: table.y,
                     width: `${table.width}px`,
-                    height: '92px',
+                    height: `${table.height}px`,
                     cursor: isEditMode ? (isDragging && draggedTable === table.id ? 'grabbing' : 'grab') : 'pointer',
                     transition: isEditMode ? 'none' : 'transform 0.18s ease, opacity 0.18s ease',
                     opacity: isDragging && draggedTable === table.id ? 0.7 : 1,
@@ -4085,14 +4128,14 @@ const POS: React.FC = () => {
                     right: '-8px',
                     bottom: '-8px',
                     backgroundColor: 'rgba(15, 23, 42, 0.14)',
-                    borderRadius: '16px',
+                    borderRadius: getTableBorderRadius(table),
                     filter: 'blur(8px)'
                   }} />
 
                   <div style={{
                     width: '100%',
-                    height: '76px',
-                    borderRadius: '14px',
+                    height: `${Math.max(52, table.height - 14)}px`,
+                    borderRadius: getTableBorderRadius(table),
                     border: selectedTableId === table.id ? '3px solid #2563eb' : (selectedTables.includes(table.id) ? '3px dashed #7c3aed' : '2px solid rgba(255, 255, 255, 0.92)'),
                     display: 'flex',
                     flexDirection: 'column',
@@ -4103,8 +4146,8 @@ const POS: React.FC = () => {
                       ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
                       : `linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
                     boxShadow: selectedTableId === table.id
-                      ? '0 10px 22px rgba(37, 99, 235, 0.28), inset 0 1px 5px rgba(255, 255, 255, 0.22)'
-                      : '0 7px 14px rgba(15, 23, 42, 0.16), inset 0 1px 5px rgba(255, 255, 255, 0.2)',
+                      ? '0 14px 24px rgba(37, 99, 235, 0.28), inset 0 2px 5px rgba(255, 255, 255, 0.32), inset 0 -8px 12px rgba(15, 23, 42, 0.12)'
+                      : '0 10px 16px rgba(15, 23, 42, 0.18), inset 0 2px 5px rgba(255, 255, 255, 0.28), inset 0 -8px 12px rgba(15, 23, 42, 0.14)',
                     overflow: 'hidden'
                   }}>
                     <div style={{
