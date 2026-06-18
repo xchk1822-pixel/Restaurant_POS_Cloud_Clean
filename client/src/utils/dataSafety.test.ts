@@ -1157,10 +1157,10 @@ describe('production data safety guards', () => {
     expect(mergeBlock).toContain('height: mergedBounds.height');
     expect(renderBlock).toContain('height: `${table.height}px`');
     expect(renderBlock).not.toContain("height: '92px'");
-    expect(renderBlock).toContain('borderRadius: getTableBorderRadius(table)');
+    expect(renderBlock).toContain('height: table.shape === \'rectangle\' ? \'calc(100% + 20px)\' : \'calc(100% + 16px)\'');
   });
 
-  test('POS table visual uses square pseudo 3D tabletops so merged table shapes remain readable', () => {
+  test('POS table visual uses modern image tabletops so merged table shapes remain readable', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
     const renderBlock = source.slice(
@@ -1170,13 +1170,49 @@ describe('production data safety guards', () => {
 
     expect(source).toContain('const inferTableShape =');
     expect(source).toContain("number.includes('+') ? 'rectangle' : 'square'");
-    expect(source).toContain("if (table.shape === 'round') return '14px';");
-    expect(source).toContain("if (table.shape === 'square') return '14px';");
-    expect(source).toContain('const getTableSurfaceTransform =');
-    expect(renderBlock).toContain('radial-gradient(circle at 34% 22%');
-    expect(renderBlock).toContain('transform: getTableSurfaceTransform(table)');
-    expect(renderBlock).toContain('Mesa izquierda');
-    expect(renderBlock).toContain('Mesa derecha');
+    expect(source).toContain('const getTableSprite = (table: Table)');
+    expect(source).toContain('const getTableImageFilter = (table: Table)');
+    expect(source).toContain("return table.orientation === 'vertical' ? tableVerticalModern : tableHorizontalModern;");
+    expect(renderBlock).toContain('src={getTableSprite(table)}');
+    expect(renderBlock).toContain('filter: getTableImageFilter(table)');
+  });
+
+  test('POS table status changes the table image color instead of drawing an outer frame', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const renderBlock = source.slice(
+      source.indexOf('{tables.map(table => ('),
+      source.indexOf('{isEditMode && table.number.includes', source.indexOf('{tables.map(table => ('))
+    );
+
+    expect(source).toContain('const getTableImageFilter = (table: Table)');
+    expect(source).toContain("if (table.status === 'available') {");
+    expect(source).toContain("case 'occupied':");
+    expect(source).toContain("case 'needs_cleaning':");
+    expect(renderBlock).toContain('filter: getTableImageFilter(table)');
+    expect(renderBlock).not.toContain('borderColor: getTableStatusAccent(table)');
+    expect(renderBlock).not.toContain('{shouldShowTableStatusFrame(table) && (');
+  });
+
+  test('POS table visual uses modern table image assets instead of CSS block furniture', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const renderBlock = source.slice(
+      source.indexOf('{tables.map(table => ('),
+      source.indexOf('{isEditMode && table.number.includes', source.indexOf('{tables.map(table => ('))
+    );
+
+    expect(source).toContain("import tableSingleModern from '../../assets/pos/table-single-modern.png';");
+    expect(source).toContain("import tableHorizontalModern from '../../assets/pos/table-horizontal-modern.png';");
+    expect(source).toContain("import tableVerticalModern from '../../assets/pos/table-vertical-modern.png';");
+    expect(source).toContain('const getTableSprite = (table: Table)');
+    expect(source).toContain('const getTableImageFilter = (table: Table)');
+    expect(renderBlock).toContain('src={getTableSprite(table)}');
+    expect(renderBlock).toContain('objectFit: \'contain\'');
+    expect(renderBlock).toContain('filter: getTableImageFilter(table)');
+    expect(renderBlock).not.toContain('Mesa izquierda');
+    expect(renderBlock).not.toContain('Mesa derecha');
+    expect(renderBlock).not.toContain('radial-gradient(circle at 34% 22%');
   });
 
   test('POS table background stays continuous without heavy blur overlay', () => {

@@ -8,6 +8,9 @@ import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTim
 import { dataManager } from '../../services/dataManager';
 import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
 import tableFoodBackground from '../../assets/pos/table-food-background.jpg';
+import tableSingleModern from '../../assets/pos/table-single-modern.png';
+import tableHorizontalModern from '../../assets/pos/table-horizontal-modern.png';
+import tableVerticalModern from '../../assets/pos/table-vertical-modern.png';
 
 interface Table {
   id: string;
@@ -2491,16 +2494,6 @@ const POS: React.FC = () => {
     }
   };
 
-  const getTableColor = (table: Table) => {
-    switch (table.status) {
-      case 'available': return '#10b981'; // 缁胯壊 - 绌洪棽
-      case 'occupied': return '#ef4444'; // 下单未支付：红色
-      case 'reserved': return '#f59e0b'; // 榛勮壊 - 棰勮
-      case 'needs_cleaning': return '#f97316'; // 已支付待清台：橙色
-      default: return '#6b7280';
-    }
-  };
-
   // 鐢熸垚璁㈠崟鍙凤紙鏍煎紡锛歁MDD + 3浣嶅簭鍙凤級
   const generateOrderNumber = () => {
     const now = new Date();
@@ -2926,17 +2919,43 @@ const POS: React.FC = () => {
     }
   };
 
-  const getTableBorderRadius = (table: Table) => {
-    if (table.shape === 'round') return '14px';
-    if (table.shape === 'square') return '14px';
-    return table.orientation === 'vertical' ? '22px' : '16px';
+  const getTableSprite = (table: Table) => {
+    if (table.shape === 'rectangle' || table.number.includes('+')) {
+      return table.orientation === 'vertical' ? tableVerticalModern : tableHorizontalModern;
+    }
+
+    return tableSingleModern;
   };
 
-  const getTableSurfaceTransform = (table: Table) => {
-    if (table.shape === 'round') return 'perspective(520px) rotateX(12deg)';
-    return table.orientation === 'vertical'
-      ? 'perspective(560px) rotateX(8deg)'
-      : 'perspective(560px) rotateX(7deg)';
+  const getTableImageFilter = (table: Table) => {
+    const baseShadow = selectedTableId === table.id
+      ? 'drop-shadow(0 14px 16px rgba(37, 99, 235, 0.20))'
+      : selectedTables.includes(table.id)
+        ? 'drop-shadow(0 14px 16px rgba(124, 58, 237, 0.24))'
+        : 'drop-shadow(0 12px 14px rgba(15, 23, 42, 0.18))';
+
+    if (selectedTables.includes(table.id)) {
+      return `saturate(1.55) hue-rotate(238deg) brightness(0.98) ${baseShadow}`;
+    }
+
+    if (selectedTableId === table.id) {
+      return `saturate(1.35) hue-rotate(205deg) brightness(1.02) ${baseShadow}`;
+    }
+
+    if (table.status === 'available') {
+      return baseShadow;
+    }
+
+    switch (table.status) {
+      case 'occupied':
+        return `sepia(0.42) saturate(2.65) hue-rotate(318deg) brightness(0.94) ${baseShadow}`;
+      case 'needs_cleaning':
+        return `sepia(0.34) saturate(2.25) hue-rotate(342deg) brightness(1.06) ${baseShadow}`;
+      case 'reserved':
+        return `sepia(0.38) saturate(1.95) hue-rotate(356deg) brightness(1.04) ${baseShadow}`;
+      default:
+        return baseShadow;
+    }
   };
 
 
@@ -4144,60 +4163,37 @@ const POS: React.FC = () => {
                     userSelect: 'none'
                   }}
                 >
+                  <img
+                    src={getTableSprite(table)}
+                    alt=""
+                    draggable={false}
+                    style={{
+                      position: 'absolute',
+                      inset: table.shape === 'rectangle' ? '-10px' : '-8px',
+                      width: table.shape === 'rectangle' ? 'calc(100% + 20px)' : 'calc(100% + 16px)',
+                      height: table.shape === 'rectangle' ? 'calc(100% + 20px)' : 'calc(100% + 16px)',
+                      objectFit: 'contain',
+                      pointerEvents: 'none',
+                      filter: getTableImageFilter(table)
+                    }}
+                  />
+
                   <div style={{
                     position: 'absolute',
-                    left: '10%',
-                    right: '10%',
-                    bottom: '-5px',
-                    height: '18px',
-                    backgroundColor: 'rgba(15, 23, 42, 0.18)',
-                    borderRadius: '999px',
-                    filter: 'blur(9px)'
-                  }} />
-
-                  {[
-                    { label: 'Mesa izquierda', left: '21%' },
-                    { label: 'Mesa derecha', right: '21%' }
-                  ].map(leg => (
-                    <div
-                      key={leg.label}
-                      aria-label={leg.label}
-                      style={{
-                        position: 'absolute',
-                        bottom: '2px',
-                        left: leg.left,
-                        right: leg.right,
-                        width: '8px',
-                        height: `${Math.max(16, Math.min(24, table.height * 0.28))}px`,
-                        borderRadius: '999px',
-                        background: 'linear-gradient(180deg, rgba(71, 85, 105, 0.72), rgba(30, 41, 59, 0.92))',
-                        boxShadow: '0 4px 8px rgba(15, 23, 42, 0.22)'
-                      }}
-                    />
-                  ))}
-
-                  <div style={{
-                    width: '100%',
-                    height: `${Math.max(52, table.height - 14)}px`,
-                    borderRadius: getTableBorderRadius(table),
-                    border: selectedTableId === table.id ? '3px solid #2563eb' : (selectedTables.includes(table.id) ? '3px dashed #7c3aed' : '2px solid rgba(255, 255, 255, 0.92)'),
+                    inset: 0,
+                    width: 'auto',
+                    height: 'auto',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    position: 'relative',
-                    transform: getTableSurfaceTransform(table),
-                    transformOrigin: 'center bottom',
-                    background: selectedTables.includes(table.id)
-                      ? 'radial-gradient(circle at 34% 22%, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.14) 32%, rgba(255,255,255,0) 56%), linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                      : `radial-gradient(circle at 34% 22%, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.14) 32%, rgba(255,255,255,0) 56%), linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
-                    boxShadow: selectedTableId === table.id
-                      ? '0 15px 24px rgba(37, 99, 235, 0.30), inset 0 3px 6px rgba(255, 255, 255, 0.34), inset 0 -10px 14px rgba(15, 23, 42, 0.16)'
-                      : '0 12px 17px rgba(15, 23, 42, 0.20), inset 0 3px 6px rgba(255, 255, 255, 0.30), inset 0 -10px 14px rgba(15, 23, 42, 0.16)',
-                    overflow: 'hidden'
+                    background: 'transparent',
+                    overflow: 'visible',
+                    pointerEvents: 'none'
                   }}>
                     <div style={{
                       position: 'absolute',
+                      display: 'none',
                       top: 0,
                       left: 0,
                       right: 0,
@@ -4207,11 +4203,20 @@ const POS: React.FC = () => {
                     }} />
 
                     <div style={{
-                      fontSize: '1.2rem',
-                      fontWeight: 'bold',
+                      minWidth: '2.65rem',
+                      maxWidth: 'calc(100% - 12px)',
+                      padding: '0.2rem 0.48rem',
+                      borderRadius: '999px',
+                      backgroundColor: 'rgba(17, 24, 39, 0.76)',
+                      border: '1px solid rgba(255, 255, 255, 0.82)',
+                      fontSize: table.number.length > 5 ? '0.88rem' : '1rem',
+                      fontWeight: 800,
                       color: 'white',
-                      textShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                      zIndex: 1
+                      lineHeight: 1.15,
+                      textAlign: 'center',
+                      textShadow: '0 1px 2px rgba(0, 0, 0, 0.32)',
+                      boxShadow: '0 6px 12px rgba(15, 23, 42, 0.18)',
+                      zIndex: 2
                     }}>
                       {table.number}
                     </div>

@@ -103,6 +103,7 @@ Data isolation rule:
 - POS pseudo-3D table layout: tables now persist shape/orientation, merged tables keep directional bounding-box dimensions, horizontal merges render as long horizontal tables, vertical merges render as long vertical tables, and split restores the original table positions/sizes/shapes. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS table visual correction: single tables now default to oval pseudo-3D tabletops with perspective, highlights, shadows, and table legs; merged tables keep directional long-table shapes; the POS food background overlay was reduced and no longer uses stretched `cover`. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS square-table correction: single tables now default to square pseudo-3D tabletops so future table merges preserve obvious horizontal/vertical shape meaning, stale `round` cache is normalized away, and the POS food background uses continuous cover sizing to avoid top/bottom seams. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
+- POS modern table asset correction: the selected modern wood-table direction is now implemented with lightweight PNG assets for single, horizontal merged, and vertical merged tables. Available tables keep natural image color, while occupied/cleaning states tint the table image itself without outer frames. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 
 ## Next Session Start
 
