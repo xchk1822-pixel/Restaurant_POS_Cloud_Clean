@@ -324,14 +324,14 @@ const inferTableShape = (
   width: number,
   height: number
 ): 'round' | 'square' | 'rectangle' => {
-  if (table.shape) return table.shape;
+  if (table.shape && table.shape !== 'round') return table.shape;
 
   const number = String(table.number || '');
   if (width > height * 1.75 || height > width * 1.75) {
     return 'rectangle';
   }
 
-  return number.includes('+') ? 'rectangle' : 'round';
+  return number.includes('+') ? 'rectangle' : 'square';
 };
 
 const normalizeTables = (
@@ -2927,8 +2927,8 @@ const POS: React.FC = () => {
   };
 
   const getTableBorderRadius = (table: Table) => {
-    if (table.shape === 'round') return '50% / 44%';
-    if (table.shape === 'square') return '18px';
+    if (table.shape === 'round') return '14px';
+    if (table.shape === 'square') return '14px';
     return table.orientation === 'vertical' ? '22px' : '16px';
   };
 
@@ -4109,8 +4109,9 @@ const POS: React.FC = () => {
                 backgroundColor: '#f8fafc',
                 overflow: 'hidden',
                 backgroundImage: tableCanvasFoodPattern,
-                backgroundSize: '100% 100%, min(100%, 1586px) auto, 28px 28px, 28px 28px',
-                backgroundPosition: 'center, center, 0 0, 0 0'
+                backgroundSize: '100% 100%, cover, 28px 28px, 28px 28px',
+                backgroundPosition: 'center, center, 0 0, 0 0',
+                backgroundRepeat: 'no-repeat, no-repeat, repeat, repeat'
               }}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -4188,8 +4189,8 @@ const POS: React.FC = () => {
                     transform: getTableSurfaceTransform(table),
                     transformOrigin: 'center bottom',
                     background: selectedTables.includes(table.id)
-                      ? 'radial-gradient(ellipse at 35% 22%, rgba(255,255,255,0.48) 0%, rgba(255,255,255,0.16) 34%, rgba(255,255,255,0) 58%), linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                      : `radial-gradient(ellipse at 35% 22%, rgba(255,255,255,0.48) 0%, rgba(255,255,255,0.16) 34%, rgba(255,255,255,0) 58%), linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
+                      ? 'radial-gradient(circle at 34% 22%, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.14) 32%, rgba(255,255,255,0) 56%), linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                      : `radial-gradient(circle at 34% 22%, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.14) 32%, rgba(255,255,255,0) 56%), linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
                     boxShadow: selectedTableId === table.id
                       ? '0 15px 24px rgba(37, 99, 235, 0.30), inset 0 3px 6px rgba(255, 255, 255, 0.34), inset 0 -10px 14px rgba(15, 23, 42, 0.16)'
                       : '0 12px 17px rgba(15, 23, 42, 0.20), inset 0 3px 6px rgba(255, 255, 255, 0.30), inset 0 -10px 14px rgba(15, 23, 42, 0.16)',

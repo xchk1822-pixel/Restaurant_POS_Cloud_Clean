@@ -1160,7 +1160,7 @@ describe('production data safety guards', () => {
     expect(renderBlock).toContain('borderRadius: getTableBorderRadius(table)');
   });
 
-  test('POS table visual uses an oval pseudo 3D tabletop instead of a flat square block', () => {
+  test('POS table visual uses square pseudo 3D tabletops so merged table shapes remain readable', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
     const renderBlock = source.slice(
@@ -1169,22 +1169,25 @@ describe('production data safety guards', () => {
     );
 
     expect(source).toContain('const inferTableShape =');
-    expect(source).toContain("number.includes('+') ? 'rectangle' : 'round'");
+    expect(source).toContain("number.includes('+') ? 'rectangle' : 'square'");
+    expect(source).toContain("if (table.shape === 'round') return '14px';");
+    expect(source).toContain("if (table.shape === 'square') return '14px';");
     expect(source).toContain('const getTableSurfaceTransform =');
-    expect(renderBlock).toContain('radial-gradient(ellipse at 35% 22%');
+    expect(renderBlock).toContain('radial-gradient(circle at 34% 22%');
     expect(renderBlock).toContain('transform: getTableSurfaceTransform(table)');
     expect(renderBlock).toContain('Mesa izquierda');
     expect(renderBlock).toContain('Mesa derecha');
   });
 
-  test('POS table background keeps the food image sharp instead of hiding it under a heavy cover overlay', () => {
+  test('POS table background stays continuous without heavy blur overlay', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
 
     expect(source).toContain('linear-gradient(rgba(248,250,252,0.34), rgba(248,250,252,0.42))');
-    expect(source).toContain("backgroundSize: '100% 100%, min(100%, 1586px) auto, 28px 28px, 28px 28px'");
+    expect(source).toContain("backgroundSize: '100% 100%, cover, 28px 28px, 28px 28px'");
+    expect(source).toContain("backgroundRepeat: 'no-repeat, no-repeat, repeat, repeat'");
     expect(source).not.toContain('linear-gradient(rgba(248,250,252,0.76), rgba(248,250,252,0.84))');
-    expect(source).not.toContain("backgroundSize: 'cover, cover, 28px 28px, 28px 28px'");
+    expect(source).not.toContain("backgroundSize: '100% 100%, min(100%, 1586px) auto, 28px 28px, 28px 28px'");
   });
 
   test('POS menu category selector is fixed visible and grows with wrapped content', () => {
