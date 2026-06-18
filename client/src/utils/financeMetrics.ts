@@ -1,5 +1,6 @@
 import { getLocalDateString } from './exchangeRate';
 import { toTimestampMillis } from './localTime';
+import { getExpenseCategoryPath, normalizeExpenseCategories } from './expenseCategories';
 
 export const isPurchaseRelatedExpense = (expense: any): boolean => {
   return expense?.relatedType === 'purchase' ||
@@ -20,7 +21,9 @@ export interface ExpenseReportDetail {
   dateKey: string;
   type: 'purchase' | 'operating';
   typeLabel: string;
+  parentCategory?: string;
   category: string;
+  fullCategory?: string;
   description: string;
   amount: number;
   createdAt: string;
@@ -33,7 +36,9 @@ export interface ExpenseReportDetail {
 export interface ExpenseReportSummary {
   type: 'purchase' | 'operating';
   typeLabel: string;
+  parentCategory?: string;
   category: string;
+  fullCategory?: string;
   count: number;
   amount: number;
 }
@@ -86,6 +91,25 @@ const getExpenseCategoryLabel = (
   return getExpenseTypeLabel(type);
 };
 
+const getExpenseCategoryLabels = (
+  expense: any,
+  type: 'purchase' | 'operating',
+  categories: any[]
+): { parentCategory?: string; category: string; fullCategory?: string } => {
+  if (type === 'purchase') {
+    const category = getExpenseCategoryLabel(expense, type, categories);
+    return { parentCategory: getExpenseTypeLabel(type), category, fullCategory: category };
+  }
+
+  const normalizedCategories = normalizeExpenseCategories(categories);
+  const path = getExpenseCategoryPath(String(expense?.categoryId || ''), normalizedCategories, expense);
+  return {
+    parentCategory: path.parentName,
+    category: path.categoryName,
+    fullCategory: path.fullName,
+  };
+};
+
 const normalizeText = (value: any): string => String(value || '').trim();
 
 const findMatchingPurchaseOrder = (expense: any, purchaseOrders: any[]): any | undefined => {
@@ -113,7 +137,7 @@ const buildExpenseDetailRows = (
   date: string,
   type: 'purchase' | 'operating',
   typeLabel: string,
-  category: string,
+  labels: { parentCategory?: string; category: string; fullCategory?: string },
   purchaseOrders: any[]
 ): ExpenseReportDetail[] => {
   const baseDetail = {
@@ -121,7 +145,9 @@ const buildExpenseDetailRows = (
     dateKey: date,
     type,
     typeLabel,
-    category,
+    parentCategory: labels.parentCategory,
+    category: labels.category,
+    fullCategory: labels.fullCategory,
     createdAt: String(expense?.createdAt || expense?.updatedAt || expense?.date || expense?.id || ''),
     supplierName: normalizeText(expense?.supplierName) || undefined,
     orderNumber: normalizeText(expense?.orderNumber || expense?.invoiceNumber) || undefined,
@@ -135,6 +161,7 @@ const buildExpenseDetailRows = (
         ...baseDetail,
         id: `${baseDetail.id || order?.id || 'purchase'}-${index}`,
         category: getExpenseCategoryLabel({ ...expense, supplierName: order?.supplierName || expense?.supplierName, orderNumber: order?.orderNumber || expense?.orderNumber }, type, []),
+        fullCategory: getExpenseCategoryLabel({ ...expense, supplierName: order?.supplierName || expense?.supplierName, orderNumber: order?.orderNumber || expense?.orderNumber }, type, []),
         description: String(item?.itemName || item?.name || '-'),
         amount: toMoneyNumber(item?.subtotal ?? (toMoneyNumber(item?.quantity) * toMoneyNumber(item?.unitPrice))),
         supplierName: normalizeText(order?.supplierName || expense?.supplierName) || undefined,
@@ -163,8 +190,8 @@ export const buildDailyExpenseBreakdown = (
     .flatMap((expense: any): ExpenseReportDetail[] => {
       const type = getExpenseType(expense);
       const typeLabel = getExpenseTypeLabel(type);
-      const category = getExpenseCategoryLabel(expense, type, categories);
-      return buildExpenseDetailRows(expense, date, type, typeLabel, category, purchaseOrders);
+      const labels = getExpenseCategoryLabels(expense, type, categories);
+      return buildExpenseDetailRows(expense, date, type, typeLabel, labels, purchaseOrders);
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
@@ -172,12 +199,14 @@ export const buildDailyExpenseBreakdown = (
   filteredExpenses.forEach(expense => {
     const type = getExpenseType(expense);
     const typeLabel = getExpenseTypeLabel(type);
-    const category = getExpenseCategoryLabel(expense, type, categories);
-    const key = `${type}|${category}`;
+    const labels = getExpenseCategoryLabels(expense, type, categories);
+    const key = `${type}|${labels.fullCategory || labels.category}`;
     const current = summaryMap.get(key) || {
       type,
       typeLabel,
-      category,
+      parentCategory: labels.parentCategory,
+      category: labels.category,
+      fullCategory: labels.fullCategory,
       count: 0,
       amount: 0,
     };
@@ -189,12 +218,12 @@ export const buildDailyExpenseBreakdown = (
 
   const summaries = Array.from(summaryMap.values()).sort((a, b) => {
     if (a.type !== b.type) return a.type === 'purchase' ? -1 : 1;
-    return a.category.localeCompare(b.category);
+    return String(a.parentCategory || '').localeCompare(String(b.parentCategory || '')) || a.category.localeCompare(b.category);
   });
   const groups = summaries.map(summary => ({
     ...summary,
-    title: summary.category,
-    details: details.filter(detail => detail.type === summary.type && detail.category === summary.category),
+    title: summary.fullCategory || summary.category,
+    details: details.filter(detail => detail.type === summary.type && (detail.fullCategory || detail.category) === (summary.fullCategory || summary.category)),
   }));
 
   return { summaries, details, groups };

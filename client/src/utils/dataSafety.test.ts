@@ -538,10 +538,10 @@ describe('production data safety guards', () => {
       deleteBlock.indexOf('setExpenses(nextExpenses)')
     );
     expect(addCategoryBlock.indexOf("await smartSetDocument('expense_categories', newCat.id, newCat)")).toBeLessThan(
-      addCategoryBlock.indexOf('setCategories(nextCategories)')
+      addCategoryBlock.indexOf('setCategoriesCache(nextCategories)')
     );
     expect(deleteCategoryBlock.indexOf("await smartDeleteDocument('expense_categories', id)")).toBeLessThan(
-      deleteCategoryBlock.indexOf('setCategories(nextCategories)')
+      deleteCategoryBlock.indexOf('setCategoriesCache(nextCategories)')
     );
     expect(receiptBlock.indexOf("await smartSetDocument('expenses', updatedExpense.id, updatedExpense)")).toBeLessThan(
       receiptBlock.indexOf('setExpenses(updatedExpenses)')
@@ -557,6 +557,30 @@ describe('production data safety guards', () => {
     expect(source).toContain('localStorage.setItem(expenseCategoryStorageKey');
     expect(source).not.toContain("localStorage.getItem('expense_categories')");
     expect(source).not.toContain("localStorage.setItem('expense_categories'");
+  });
+
+  test('expense categories use parent child hierarchy and keep legacy records readable', () => {
+    const expensePath = path.join(process.cwd(), 'src/pages/Manager/ExpenseRecords.tsx');
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const metricsPath = path.join(process.cwd(), 'src/utils/financeMetrics.ts');
+    const categoryPath = path.join(process.cwd(), 'src/utils/expenseCategories.ts');
+    const expenseSource = fs.readFileSync(expensePath, 'utf8');
+    const reportsSource = fs.readFileSync(reportsPath, 'utf8');
+    const metricsSource = fs.readFileSync(metricsPath, 'utf8');
+    const categorySource = fs.readFileSync(categoryPath, 'utf8');
+
+    expect(expenseSource).toContain('normalizeExpenseCategories');
+    expect(expenseSource).toContain('parentCategoryId');
+    expect(expenseSource).toContain('categoryName');
+    expect(expenseSource).toContain('getExpenseChildCategories(categories, formData.parentCategoryId)');
+    expect(expenseSource).toContain('canDeleteExpenseCategory(id, categories, expenses)');
+    expect(categorySource).toContain('DEFAULT_EXPENSE_PARENT_IDS');
+    expect(categorySource).toContain("level: 'parent'");
+    expect(categorySource).toContain("level: 'child'");
+    expect(metricsSource).toContain('getExpenseCategoryPath');
+    expect(metricsSource).toContain('parentCategory?: string');
+    expect(reportsSource).toContain('group.title');
+    expect(expenseSource).not.toContain('categories.map(cat => (\\n            <option key={cat.id} value={cat.id}>{cat.name}</option>');
   });
 
   test('expense receipt removal waits for cloud write before local state update', () => {

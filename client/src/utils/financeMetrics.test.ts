@@ -255,8 +255,8 @@ describe('finance metrics helpers', () => {
     ]);
 
     expect(breakdown.summaries).toEqual([
-      { type: 'purchase', typeLabel: '采购付款', category: 'A供应商饮料 - 单号 INV-001', count: 1, amount: 100 },
-      { type: 'operating', typeLabel: '日常开支', category: '租金', count: 2, amount: 50 },
+      expect.objectContaining({ type: 'purchase', typeLabel: '采购付款', category: 'A供应商饮料 - 单号 INV-001', count: 1, amount: 100 }),
+      expect.objectContaining({ type: 'operating', typeLabel: '日常开支', parentCategory: '房租水电', category: '租金', count: 2, amount: 50 }),
     ]);
     expect(breakdown.groups.map(group => ({
       title: group.title,
@@ -264,7 +264,7 @@ describe('finance metrics helpers', () => {
       descriptions: group.details.map(detail => detail.description),
     }))).toEqual([
       { title: 'A供应商饮料 - 单号 INV-001', amount: 100, descriptions: ['Coca Cola', 'Toña'] },
-      { title: '租金', amount: 50, descriptions: ['追加', '店租'] },
+      { title: '房租水电 / 租金', amount: 50, descriptions: ['追加', '店租'] },
     ]);
     expect(breakdown.details.map(detail => detail.description)).toEqual(['追加', '店租', 'Coca Cola', 'Toña']);
     expect(breakdown.details.map(detail => detail.category)).not.toContain('cat-rent');
@@ -276,6 +276,51 @@ describe('finance metrics helpers', () => {
     }))).toEqual([
       { orderNumber: 'INV-001', quantity: 2, unitPrice: 35, amount: 70 },
       { orderNumber: 'INV-001', quantity: 1, unitPrice: 30, amount: 30 },
+    ]);
+  });
+
+  test('builds daily expense groups with parent and child category labels', () => {
+    const breakdown = buildDailyExpenseBreakdown([
+      {
+        id: 'exp-utilities-1',
+        date: '2026-06-12',
+        amount: 80,
+        parentCategoryId: 'parent-utilities',
+        categoryId: 'child-electric',
+        description: '六月电费',
+        createdAt: '2026-06-12T12:00:00.000-06:00',
+      },
+      {
+        id: 'exp-utilities-2',
+        date: '2026-06-12',
+        amount: 20,
+        parentCategoryId: 'parent-utilities',
+        categoryId: 'child-water',
+        description: '六月水费',
+        createdAt: '2026-06-12T13:00:00.000-06:00',
+      },
+    ], '2026-06-12', [
+      { id: 'parent-utilities', name: '房租水电', level: 'parent' },
+      { id: 'child-electric', name: '电费', level: 'child', parentId: 'parent-utilities' },
+      { id: 'child-water', name: '水费', level: 'child', parentId: 'parent-utilities' },
+    ]);
+
+    expect(breakdown.groups.map(group => ({
+      parentCategory: group.parentCategory,
+      category: group.category,
+      title: group.title,
+      amount: group.amount,
+    }))).toEqual([
+      { parentCategory: '房租水电', category: '电费', title: '房租水电 / 电费', amount: 80 },
+      { parentCategory: '房租水电', category: '水费', title: '房租水电 / 水费', amount: 20 },
+    ]);
+    expect(breakdown.details.map(detail => ({
+      parentCategory: detail.parentCategory,
+      category: detail.category,
+      description: detail.description,
+    }))).toEqual([
+      { parentCategory: '房租水电', category: '水费', description: '六月水费' },
+      { parentCategory: '房租水电', category: '电费', description: '六月电费' },
     ]);
   });
 });

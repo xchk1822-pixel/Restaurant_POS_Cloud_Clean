@@ -3,12 +3,14 @@ import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-
-interface ExpenseCategory {
-  id: string;
-  name: string;
-  code: string;
-}
+import {
+  canDeleteExpenseCategory,
+  getExpenseCategoryPath,
+  getExpenseChildCategories,
+  getExpenseParentCategories,
+  normalizeExpenseCategories,
+  type ExpenseCategory,
+} from '../../utils/expenseCategories';
 
 interface ExpenseRecordsProps {
   embedded?: boolean; // 是否嵌入模式
@@ -22,12 +24,12 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     return dataManager.getData('expenses');
   });
 
-  const [categories, setCategories] = useState<any[]>(() => {
+  const [categories, setCategories] = useState<ExpenseCategory[]>(() => {
     const saved = localStorage.getItem(expenseCategoryStorageKey);
     if (saved) {
-      return JSON.parse(saved);
+      return normalizeExpenseCategories(JSON.parse(saved));
     }
-    return [
+    return normalizeExpenseCategories([
       { id: 'cat-1', name: '水电费', code: 'UTILITIES' },
       { id: 'cat-2', name: '房租', code: 'RENT' },
       { id: 'cat-3', name: '维修费', code: 'MAINTENANCE' },
@@ -39,26 +41,53 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       { id: 'employee_salary', name: '员工薪资', code: 'EMPLOYEE_SALARY' }, // ✅ 员工薪资
       { id: 'supplier_payment', name: '供应商货款', code: 'SUPPLIER_PAYMENT' }, // ✅ 供应商货款
       { id: 'cat-7', name: '其他', code: 'OTHER' }
-    ];
+    ]);
   });
+  const initialParentId = getExpenseParentCategories(categories)[0]?.id || '';
+  const initialChildId = getExpenseChildCategories(categories, initialParentId)[0]?.id || '';
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState<string>(initialParentId);
+  const [filterParentCategory, setFilterParentCategory] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>(getLocalDateString()); // ✅ 默认显示当天开支
 
   // 表单数据
   const [formData, setFormData] = useState({
-    categoryId: categories[0]?.id || '',
+    parentCategoryId: initialParentId,
+    categoryId: initialChildId,
     description: '',
     amount: '',
     date: getLocalDateString(), // 🔥 使用本地时间
   });
 
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
+  const [newParentCategoryName, setNewParentCategoryName] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const parentCategories = React.useMemo(() => getExpenseParentCategories(categories), [categories]);
+  const selectedParentChildren = React.useMemo(
+    () => getExpenseChildCategories(categories, selectedParentCategoryId || parentCategories[0]?.id || ''),
+    [categories, parentCategories, selectedParentCategoryId]
+  );
+  const formChildCategories = React.useMemo(
+    () => getExpenseChildCategories(categories, formData.parentCategoryId),
+    [categories, formData.parentCategoryId]
+  );
+
+  const setCategoriesCache = React.useCallback((nextCategories: ExpenseCategory[]) => {
+    setCategories(nextCategories);
+    localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
+  }, [expenseCategoryStorageKey]);
+
+  const makeCategoryCode = (name: string): string => name.trim().toUpperCase().replace(/\s+/g, '_');
+
+  const getExpenseCategoryDisplay = React.useCallback((expense: any) => {
+    return getExpenseCategoryPath(String(expense.categoryId || ''), categories, expense);
+  }, [categories]);
 
   // ✅ 监听数据变化（确保与其他模块同步）
   const refreshExpenseData = React.useCallback(async () => {
@@ -73,10 +102,8 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       dataManager.clearCache('expenses');
       setExpenses(cloudExpenses);
 
-      if (cloudCategories.length > 0) {
-        setCategories(cloudCategories);
-        localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudCategories));
-      }
+      const normalizedCloudCategories = normalizeExpenseCategories(cloudCategories);
+      setCategoriesCache(normalizedCloudCategories);
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u5f00\u652f\u8bb0\u5f55\u5931\u8d25:', error);
@@ -84,11 +111,20 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     } finally {
       setIsRefreshing(false);
     }
-  }, [expenseCategoryStorageKey]);
+  }, [setCategoriesCache]);
 
   useEffect(() => {
     refreshExpenseData();
   }, [refreshExpenseData]);
+
+  useEffect(() => {
+    const firstParent = parentCategories[0]?.id || '';
+    if (!selectedParentCategoryId && firstParent) setSelectedParentCategoryId(firstParent);
+    if (!formData.parentCategoryId && firstParent) {
+      const firstChild = getExpenseChildCategories(categories, firstParent)[0]?.id || '';
+      setFormData(current => ({ ...current, parentCategoryId: firstParent, categoryId: firstChild }));
+    }
+  }, [categories, formData.parentCategoryId, parentCategories, selectedParentCategoryId]);
 
   // ✅ 添加开支 - 使用 dataManager 统一保存
   const handleAddExpense = async () => {
@@ -97,10 +133,17 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       return;
     }
 
+    const categoryPath = getExpenseCategoryPath(formData.categoryId, categories, {
+      parentCategoryId: formData.parentCategoryId,
+    });
+
     const newExpense = {
       id: `exp-${Date.now()}`,
       date: formData.date,
+      parentCategoryId: categoryPath.parentId,
+      parentCategoryName: categoryPath.parentName,
       categoryId: formData.categoryId,
+      categoryName: categoryPath.categoryName,
       description: formData.description,
       amount: parseFloat(formData.amount),
       receipt: receiptImage || undefined,
@@ -120,7 +163,8 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
 
     setFormData({
-      categoryId: categories[0]?.id || '',
+      parentCategoryId: parentCategories[0]?.id || '',
+      categoryId: getExpenseChildCategories(categories, parentCategories[0]?.id || '')[0]?.id || '',
       description: '',
       amount: '',
       date: getLocalDateString(), // 🔥 使用本地时间
@@ -176,11 +220,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   // 添加类别
   const handleAddCategory = async () => {
-    if (!newCategoryName.trim()) return;
+    if (!newCategoryName.trim() || !selectedParentCategoryId) return;
     const newCat: ExpenseCategory = {
       id: `cat-${Date.now()}`,
       name: newCategoryName.trim(),
-      code: newCategoryName.trim().toUpperCase().replace(/\s+/g, '_')
+      code: makeCategoryCode(newCategoryName),
+      level: 'child',
+      parentId: selectedParentCategoryId,
+      sortOrder: selectedParentChildren.length + 100,
     };
     const nextCategories = [...categories, newCat];
     try {
@@ -190,18 +237,41 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       alert('保存开支类别失败，请检查网络后重试');
       return;
     }
-    setCategories(nextCategories);
-    localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
+    setCategoriesCache(nextCategories);
     setNewCategoryName('');
+  };
+
+  const handleAddParentCategory = async () => {
+    if (!newParentCategoryName.trim()) return;
+    const newParent: ExpenseCategory = {
+      id: `parent-${Date.now()}`,
+      name: newParentCategoryName.trim(),
+      code: makeCategoryCode(newParentCategoryName),
+      level: 'parent',
+      parentId: null,
+      sortOrder: parentCategories.length + 100,
+    };
+    const nextCategories = [...categories, newParent];
+    try {
+      await smartSetDocument('expense_categories', newParent.id, newParent);
+    } catch (error) {
+      console.error('保存开支父类失败:', error);
+      alert('保存开支父类失败，请检查网络后重试');
+      return;
+    }
+    setCategoriesCache(nextCategories);
+    setSelectedParentCategoryId(newParent.id);
+    setNewParentCategoryName('');
   };
 
   // 删除类别
   const handleDeleteCategory = async (id: string) => {
-    if (categories.length <= 1) {
-      alert('至少保留一个开支类别');
+    const deleteCheck = canDeleteExpenseCategory(id, categories, expenses);
+    if (!deleteCheck.allowed) {
+      alert(deleteCheck.reason || '该类别不能删除');
       return;
     }
-    if (window.confirm('删除类别后，相关记录的类别将失效，确定删除吗？')) {
+    if (window.confirm('删除类别后不可恢复，确定删除吗？')) {
       const nextCategories = categories.filter(cat => cat.id !== id);
       try {
         await smartDeleteDocument('expense_categories', id);
@@ -210,8 +280,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         alert('删除开支类别失败，请检查网络后重试');
         return;
       }
-      setCategories(nextCategories);
-      localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
+      setCategoriesCache(nextCategories);
+      if (selectedParentCategoryId === id) {
+        setSelectedParentCategoryId(getExpenseParentCategories(nextCategories)[0]?.id || '');
+      }
     }
   };
 
@@ -270,6 +342,8 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   const filteredExpenses = expenses
     .filter(exp => {
+      const categoryPath = getExpenseCategoryDisplay(exp);
+      if (filterParentCategory !== 'all' && categoryPath.parentId !== filterParentCategory) return false;
       if (filterCategory !== 'all' && exp.categoryId !== filterCategory) return false;
       if (filterDate && exp.date !== filterDate) return false;
       return true;
@@ -463,47 +537,98 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {showCategoryManager && (
         <div style={styles.card}>
           <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>⚙️ 管理开支类别</h3>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-            <input
-              type="text"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              placeholder="新类别名称"
-              onKeyPress={(e) => e.key === 'Enter' && handleAddCategory()}
-              style={{ ...styles.input, flex: 1 }}
-            />
-            <button onClick={handleAddCategory} style={styles.btn('#10b981', 'white')}>
-              添加
-            </button>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {categories.map(cat => (
-              <div
-                key={cat.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.5rem 0.75rem',
-                  background: '#f3f4f6',
-                  borderRadius: '0.375rem',
-                }}
-              >
-                <span>{cat.name}</span>
-                <button
-                  onClick={() => handleDeleteCategory(cat.id)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#ef4444',
-                    cursor: 'pointer',
-                    fontSize: '1rem',
-                  }}
-                >
-                  ×
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.8fr) minmax(280px, 1.2fr)', gap: '1rem' }}>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>父类</div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <input
+                  type="text"
+                  value={newParentCategoryName}
+                  onChange={(e) => setNewParentCategoryName(e.target.value)}
+                  placeholder="新父类名称"
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddParentCategory()}
+                  style={{ ...styles.input, flex: 1 }}
+                />
+                <button onClick={handleAddParentCategory} style={styles.btn('#0f766e', 'white')}>
+                  添加
                 </button>
               </div>
-            ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {parentCategories.map(parent => (
+                  <div
+                    key={parent.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '0.5rem',
+                      padding: '0.625rem 0.75rem',
+                      background: selectedParentCategoryId === parent.id ? '#dbeafe' : '#f9fafb',
+                      border: selectedParentCategoryId === parent.id ? '1px solid #3b82f6' : '1px solid #e5e7eb',
+                      borderRadius: '0.375rem',
+                    }}
+                  >
+                    <button
+                      onClick={() => setSelectedParentCategoryId(parent.id)}
+                      style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#1f2937' }}
+                    >
+                      {parent.name}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCategory(parent.id)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>
+                子类：{parentCategories.find(parent => parent.id === selectedParentCategoryId)?.name || '请选择父类'}
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  placeholder="新子类名称"
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                  style={{ ...styles.input, flex: 1 }}
+                />
+                <button onClick={handleAddCategory} style={styles.btn('#10b981', 'white')}>
+                  添加
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {selectedParentChildren.map(cat => (
+                  <div
+                    key={cat.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      background: '#f3f4f6',
+                      borderRadius: '0.375rem',
+                    }}
+                  >
+                    <span>{cat.name}</span>
+                    <button
+                      onClick={() => handleDeleteCategory(cat.id)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {selectedParentChildren.length === 0 && (
+                  <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>该父类下暂无子类</div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -523,13 +648,29 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               />
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>类别</label>
+              <label style={styles.label}>父类</label>
+              <select
+                value={formData.parentCategoryId}
+                onChange={(e) => {
+                  const nextParentId = e.target.value;
+                  const nextChildId = getExpenseChildCategories(categories, nextParentId)[0]?.id || '';
+                  setFormData({ ...formData, parentCategoryId: nextParentId, categoryId: nextChildId });
+                }}
+                style={{ ...styles.select, width: '100%' }}
+              >
+                {parentCategories.map(parent => (
+                  <option key={parent.id} value={parent.id}>{parent.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>子类</label>
               <select
                 value={formData.categoryId}
                 onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
                 style={{ ...styles.select, width: '100%' }}
               >
-                {categories.map(cat => (
+                {formChildCategories.map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
@@ -626,12 +767,28 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {/* 筛选工具栏 */}
       <div style={styles.toolbar}>
         <select
+          value={filterParentCategory}
+          onChange={(e) => {
+            setFilterParentCategory(e.target.value);
+            setFilterCategory('all');
+          }}
+          style={styles.select}
+        >
+          <option value="all">全部父类</option>
+          {parentCategories.map(parent => (
+            <option key={parent.id} value={parent.id}>{parent.name}</option>
+          ))}
+        </select>
+        <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
           style={styles.select}
         >
-          <option value="all">全部类别</option>
-          {categories.map(cat => (
+          <option value="all">全部子类</option>
+          {(filterParentCategory === 'all'
+            ? categories.filter(category => category.level === 'child')
+            : getExpenseChildCategories(categories, filterParentCategory)
+          ).map(cat => (
             <option key={cat.id} value={cat.id}>{cat.name}</option>
           ))}
         </select>
@@ -642,13 +799,13 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           style={styles.input}
         />
         <button
-          onClick={() => { setFilterCategory('all'); setFilterDate(getLocalDateString()); }}
+          onClick={() => { setFilterParentCategory('all'); setFilterCategory('all'); setFilterDate(getLocalDateString()); }}
           style={styles.btn('#6b7280', 'white')}
         >
           📅 今天
         </button>
         <button
-          onClick={() => { setFilterCategory('all'); setFilterDate(''); }}
+          onClick={() => { setFilterParentCategory('all'); setFilterCategory('all'); setFilterDate(''); }}
           style={styles.btn('#3b82f6', 'white')}
         >
           📋 全部
@@ -677,7 +834,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               </thead>
               <tbody>
                 {filteredExpenses.map(exp => {
-                  const category = categories.find(c => c.id === exp.categoryId);
+                  const categoryPath = getExpenseCategoryDisplay(exp);
                   return (
                     <tr key={exp.id}>
                       <td style={{ ...styles.td, width: '100px' }}>{exp.date}</td>
@@ -689,7 +846,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                             color: '#1e40af',
                           }}
                         >
-                          {category?.name || '未知'}
+                          {categoryPath.fullName}
                         </span>
                       </td>
                       <td style={styles.td}>{exp.description || '-'}</td>
