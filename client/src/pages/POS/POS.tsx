@@ -468,6 +468,12 @@ const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Or
   return Array.from(merged.values());
 };
 
+const tableCanvasFoodPattern = [
+  'url("data:image/svg+xml,%3Csvg width=\'180\' height=\'140\' viewBox=\'0 0 180 140\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' stroke=\'%23cbd5e1\' stroke-width=\'3\' stroke-linecap=\'round\' stroke-linejoin=\'round\' opacity=\'0.38\'%3E%3Cellipse cx=\'58\' cy=\'54\' rx=\'34\' ry=\'18\'/%3E%3Cpath d=\'M24 54c6 23 61 23 68 0\'/%3E%3Cpath d=\'M28 82h58\'/%3E%3Cpath d=\'M118 31v58\'/%3E%3Cpath d=\'M130 31v58\'/%3E%3Cpath d=\'M112 48h24\'/%3E%3Ccircle cx=\'142\' cy=\'84\' r=\'22\'/%3E%3Ccircle cx=\'142\' cy=\'84\' r=\'10\'/%3E%3C/g%3E%3C/svg%3E")',
+  'linear-gradient(rgba(226,232,240,0.72) 1px, transparent 1px)',
+  'linear-gradient(90deg, rgba(226,232,240,0.72) 1px, transparent 1px)',
+].join(', ');
+
 const POS: React.FC = () => {
   const { deductStock, orders: appOrders, setOrders: setAppOrders } = useAppContext();
   const localOrdersSignatureRef = useRef('');
@@ -500,6 +506,14 @@ const POS: React.FC = () => {
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
       throw error;
     }
+  };
+
+  const queueOrderPublish = (order: Order) => {
+    pendingOrderSyncIdsRef.current.add(order.id);
+    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+    publishOrderImmediately(order).catch(error => {
+      console.error('queued POS order sync failed:', order.id, error);
+    });
   };
 
   // 绂佹椤甸潰鏁翠綋婊氬姩
@@ -1896,8 +1910,6 @@ const POS: React.FC = () => {
       lastModified: Date.now()
     });
 
-    await publishOrderImmediately(completedOrder);
-
     setOrders(prevOrders => prevOrders.map(o =>
       o.id === order.id ? completedOrder : o
     ));
@@ -1936,6 +1948,8 @@ const POS: React.FC = () => {
           : t
       ));
     }
+
+    queueOrderPublish(completedOrder);
 
     return completedOrder;
   };
@@ -3910,11 +3924,11 @@ const POS: React.FC = () => {
   // Overview View
   return (
     <>
-      <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', overflow: 'hidden' }}>
-        <div style={{ flex: 1, display: 'flex', gap: '1rem', overflow: 'hidden' }}>
+      <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', overflow: 'hidden', backgroundColor: '#eef2f7' }}>
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 430px', gap: '1rem', overflow: 'hidden' }}>
           {/* Left: Table Layout */}
-          <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '0.75rem', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ minWidth: 0, backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ffffff' }}>
               <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0 }}>🪑 桌台布局</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
@@ -4011,10 +4025,11 @@ const POS: React.FC = () => {
               style={{
                 flex: 1,
                 position: 'relative',
-                backgroundColor: '#f3f4f6',
+                backgroundColor: '#f8fafc',
                 overflow: 'hidden',
-                backgroundImage: 'radial-gradient(#d1d5db 1px, transparent 1px)',
-                backgroundSize: '20px 20px'
+                backgroundImage: tableCanvasFoodPattern,
+                backgroundSize: '180px 140px, 28px 28px, 28px 28px',
+                backgroundPosition: '22px 24px, 0 0, 0 0'
               }}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -4038,9 +4053,9 @@ const POS: React.FC = () => {
                     left: table.x,
                     top: table.y,
                     width: `${table.width}px`,
-                    height: '90px',
+                    height: '92px',
                     cursor: isEditMode ? (isDragging && draggedTable === table.id ? 'grabbing' : 'grab') : 'pointer',
-                    transition: isEditMode ? 'none' : 'all 0.3s ease',
+                    transition: isEditMode ? 'none' : 'transform 0.18s ease, opacity 0.18s ease',
                     opacity: isDragging && draggedTable === table.id ? 0.7 : 1,
                     transform: isDragging && draggedTable === table.id ? 'scale(1.08)' : 'scale(1)',
                     zIndex: isDragging && draggedTable === table.id ? 1000 : 1,
@@ -4049,20 +4064,20 @@ const POS: React.FC = () => {
                 >
                   <div style={{
                     position: 'absolute',
-                    top: '6px',
-                    left: '6px',
-                    right: '-6px',
-                    bottom: '-6px',
-                    backgroundColor: 'rgba(0, 0, 0, 0.15)',
-                    borderRadius: '18px',
-                    filter: 'blur(6px)'
+                    top: '8px',
+                    left: '8px',
+                    right: '-8px',
+                    bottom: '-8px',
+                    backgroundColor: 'rgba(15, 23, 42, 0.14)',
+                    borderRadius: '16px',
+                    filter: 'blur(8px)'
                   }} />
 
                   <div style={{
                     width: '100%',
-                    height: '75px',
-                    borderRadius: '18px',
-                    border: selectedTableId === table.id ? '3px solid #3b82f6' : (selectedTables.includes(table.id) ? '3px dashed #7c3aed' : '2px solid rgba(255, 255, 255, 0.8)'),
+                    height: '76px',
+                    borderRadius: '14px',
+                    border: selectedTableId === table.id ? '3px solid #2563eb' : (selectedTables.includes(table.id) ? '3px dashed #7c3aed' : '2px solid rgba(255, 255, 255, 0.92)'),
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
@@ -4072,8 +4087,8 @@ const POS: React.FC = () => {
                       ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
                       : `linear-gradient(135deg, ${getTableColor(table)} 0%, ${getTableColor(table)}dd 100%)`,
                     boxShadow: selectedTableId === table.id
-                      ? '0 6px 12px rgba(59, 130, 246, 0.4), inset 0 2px 6px rgba(255, 255, 255, 0.3)'
-                      : '0 4px 8px rgba(0, 0, 0, 0.15), inset 0 2px 6px rgba(255, 255, 255, 0.3)',
+                      ? '0 10px 22px rgba(37, 99, 235, 0.28), inset 0 1px 5px rgba(255, 255, 255, 0.22)'
+                      : '0 7px 14px rgba(15, 23, 42, 0.16), inset 0 1px 5px rgba(255, 255, 255, 0.2)',
                     overflow: 'hidden'
                   }}>
                     <div style={{
@@ -4315,36 +4330,38 @@ const POS: React.FC = () => {
           </div>
 
           {/* Right: Order List */}
-          <div style={{ width: '400px', backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '0.75rem', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0, marginBottom: '0.75rem' }}>📋 订单列表</h3>
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
+          <div style={{ width: '430px', backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', flexShrink: 0, backgroundColor: '#ffffff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#111827', margin: 0 }}>📋 订单列表</h3>
                 <button
                   onClick={() => setOrderTypeFilter('all')}
                   style={{
-                    flex: 1,
-                    padding: '0.4rem',
-                    backgroundColor: orderTypeFilter === 'all' ? '#3b82f6' : '#f3f4f6',
-                    color: orderTypeFilter === 'all' ? 'white' : '#374151',
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    fontWeight: '600',
+                    padding: '0.44rem 0.85rem',
+                    backgroundColor: orderTypeFilter === 'all' ? '#2563eb' : '#f8fafc',
+                    color: orderTypeFilter === 'all' ? 'white' : '#334155',
+                    border: orderTypeFilter === 'all' ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                    borderRadius: '999px',
+                    fontWeight: '800',
                     cursor: 'pointer',
-                    fontSize: '0.75rem'
+                    fontSize: '0.75rem',
+                    boxShadow: orderTypeFilter === 'all' ? '0 6px 14px rgba(37,99,235,0.22)' : 'none'
                   }}
                 >
                   全部
                 </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.45rem' }}>
                 <button
                   onClick={() => setOrderTypeFilter('dine_in')}
                   style={{
                     flex: 1,
-                    padding: '0.4rem',
-                    backgroundColor: orderTypeFilter === 'dine_in' ? '#10b981' : '#f3f4f6',
-                    color: orderTypeFilter === 'dine_in' ? 'white' : '#374151',
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    fontWeight: '600',
+                    padding: '0.55rem 0.35rem',
+                    backgroundColor: orderTypeFilter === 'dine_in' ? '#059669' : '#f8fafc',
+                    color: orderTypeFilter === 'dine_in' ? 'white' : '#334155',
+                    border: orderTypeFilter === 'dine_in' ? '1px solid #059669' : '1px solid #cbd5e1',
+                    borderRadius: '0.5rem',
+                    fontWeight: '700',
                     cursor: 'pointer',
                     fontSize: '0.75rem'
                   }}
@@ -4355,12 +4372,12 @@ const POS: React.FC = () => {
                   onClick={() => setOrderTypeFilter('takeout')}
                   style={{
                     flex: 1,
-                    padding: '0.4rem',
-                    backgroundColor: orderTypeFilter === 'takeout' ? '#f59e0b' : '#f3f4f6',
-                    color: orderTypeFilter === 'takeout' ? 'white' : '#374151',
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    fontWeight: '600',
+                    padding: '0.55rem 0.35rem',
+                    backgroundColor: orderTypeFilter === 'takeout' ? '#d97706' : '#f8fafc',
+                    color: orderTypeFilter === 'takeout' ? 'white' : '#334155',
+                    border: orderTypeFilter === 'takeout' ? '1px solid #d97706' : '1px solid #cbd5e1',
+                    borderRadius: '0.5rem',
+                    fontWeight: '700',
                     cursor: 'pointer',
                     fontSize: '0.75rem'
                   }}
@@ -4371,12 +4388,12 @@ const POS: React.FC = () => {
                   onClick={() => setOrderTypeFilter('delivery')}
                   style={{
                     flex: 1,
-                    padding: '0.4rem',
-                    backgroundColor: orderTypeFilter === 'delivery' ? '#8b5cf6' : '#f3f4f6',
-                    color: orderTypeFilter === 'delivery' ? 'white' : '#374151',
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    fontWeight: '600',
+                    padding: '0.55rem 0.35rem',
+                    backgroundColor: orderTypeFilter === 'delivery' ? '#7c3aed' : '#f8fafc',
+                    color: orderTypeFilter === 'delivery' ? 'white' : '#334155',
+                    border: orderTypeFilter === 'delivery' ? '1px solid #7c3aed' : '1px solid #cbd5e1',
+                    borderRadius: '0.5rem',
+                    fontWeight: '700',
                     cursor: 'pointer',
                     fontSize: '0.75rem'
                   }}
@@ -4385,7 +4402,7 @@ const POS: React.FC = () => {
                 </button>
               </div>
 
-              <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: '#f9fafb', borderRadius: '0.375rem' }}>
+              <div style={{ marginTop: '0.85rem', padding: '0.85rem', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.65rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>订单总数：</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#374151' }}>{filteredOrders.length} 单</span>
@@ -4435,22 +4452,23 @@ const POS: React.FC = () => {
                 }}
                 style={{
                   width: '100%',
-                  padding: '0.6rem',
-                  backgroundColor: '#3b82f6',
+                  padding: '0.72rem',
+                  backgroundColor: '#2563eb',
                   color: 'white',
                   border: 'none',
-                  borderRadius: '0.25rem',
-                  fontWeight: '600',
+                  borderRadius: '0.6rem',
+                  fontWeight: '800',
                   cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  marginTop: '0.5rem'
+                  fontSize: '0.92rem',
+                  marginTop: '0.65rem',
+                  boxShadow: '0 8px 18px rgba(37, 99, 235, 0.22)'
                 }}
               >
                 ➕ 新建{orderTypeFilter === 'all' ? '订单' : orderTypeFilter === 'dine_in' ? '堂食订单' : orderTypeFilter === 'takeout' ? '打包订单' : '外卖订单'}
               </button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0.85rem', backgroundColor: '#f8fafc' }}>
               {filteredOrders.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
                   暂无订单
@@ -4462,18 +4480,22 @@ const POS: React.FC = () => {
                     onClick={() => handleOrderClick(order)}
                     style={{
                       backgroundColor: getStatusColor(order.status, order.paymentStatus, order.clearedAt),
-                      border: '2px solid #e5e7eb',
-                      borderRadius: '0.5rem',
-                      padding: '0.75rem',
-                      marginBottom: '0.75rem',
+                      border: pendingOrderSyncIdsRef.current.has(order.id) ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+                      borderRadius: '0.75rem',
+                      padding: '0.85rem',
+                      marginBottom: '0.85rem',
                       cursor: 'pointer',
-                      transition: 'all 0.2s'
+                      transition: 'transform 0.16s ease, box-shadow 0.16s ease',
+                      boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)'
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                       <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         #{order.orderNumber || 'N/A'}
                         {/* 鉁?鏀粯鐘舵€佹爣璇?*/}
+                        {pendingOrderSyncIdsRef.current.has(order.id) && (
+                          <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>待同步</span>
+                        )}
                         {order.paymentStatus === 'paid' && order.status !== 'completed' && (
                           <span style={{ fontSize: '1rem', color: '#10b981' }}>$</span>
                         )}
@@ -4484,7 +4506,7 @@ const POS: React.FC = () => {
                       <div style={{
                         padding: '0.25rem 0.5rem',
                         backgroundColor: 'white',
-                        borderRadius: '0.25rem',
+                        borderRadius: '999px',
                         fontSize: '0.75rem',
                         fontWeight: '600',
                         color: '#374151'
@@ -4547,18 +4569,18 @@ const POS: React.FC = () => {
                         disabled={completingOrderIds.has(order.id)}
                         style={{
                           width: '100%',
-                          padding: '0.55rem 0.75rem',
-                          margin: '0.45rem 0 0.6rem 0',
+                          padding: '0.68rem 0.75rem',
+                          margin: '0.5rem 0 0.7rem 0',
                           backgroundColor: completingOrderIds.has(order.id)
                             ? '#9ca3af'
                             : order.paymentStatus === 'paid' || order.status === 'served' ? '#16a34a' : '#f59e0b',
                           color: 'white',
                           border: 'none',
-                          borderRadius: '0.375rem',
+                          borderRadius: '0.6rem',
                           cursor: completingOrderIds.has(order.id) ? 'not-allowed' : 'pointer',
                           fontSize: '0.9rem',
                           fontWeight: '700',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.12)'
+                          boxShadow: completingOrderIds.has(order.id) ? 'none' : '0 8px 18px rgba(22, 163, 74, 0.22)'
                         }}
                       >
                         {completingOrderIds.has(order.id) ? '处理中...' :

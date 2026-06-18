@@ -193,11 +193,33 @@ describe('production data safety guards', () => {
     );
 
     expect(source).toContain('const publishOrderImmediately = async (order: Order) => {');
+    expect(source).toContain('const queueOrderPublish = (order: Order) => {');
     expect(source).toContain("await smartUpdateDocument('pos_orders', order.id, serializeOrderForFirestore(order))");
-    expect(completeBlock).toContain('await publishOrderImmediately(completedOrder)');
+    expect(completeBlock).toContain('queueOrderPublish(completedOrder)');
+    expect(completeBlock).not.toContain('await publishOrderImmediately(completedOrder)');
     expect(cancelBlock).toContain('await publishOrderImmediately(cancelledOrder)');
     expect(cancelBlock.indexOf('await publishOrderImmediately(cancelledOrder)')).toBeLessThan(
       cancelBlock.indexOf('setOrders(prevOrders => prevOrders.map(o =>')
+    );
+  });
+
+  test('POS overview keeps the order filters compact and uses lightweight table background artwork', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const orderPanelBlock = source.slice(
+      source.indexOf('{/* Right: Order List */}'),
+      source.indexOf("<div style={{ marginTop: '0.85rem'")
+    );
+
+    expect(source).toContain('const tableCanvasFoodPattern = [');
+    expect(source).toContain('backgroundImage: tableCanvasFoodPattern');
+    expect(orderPanelBlock).toContain("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'");
+    expect(orderPanelBlock).not.toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'");
+    expect(orderPanelBlock.indexOf('📋 订单列表')).toBeLessThan(
+      orderPanelBlock.indexOf("setOrderTypeFilter('all')")
+    );
+    expect(orderPanelBlock.indexOf("setOrderTypeFilter('all')")).toBeLessThan(
+      orderPanelBlock.indexOf("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'")
     );
   });
 
