@@ -636,8 +636,10 @@ describe('production data safety guards', () => {
     const source = fs.readFileSync(kitchenPath, 'utf8');
 
     expect(source).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
+    expect(source).toContain("return dataManager.saveData('orders', nextAllOrders, { syncFirestore: false }).then(() =>");
     expect(source).toContain("status !== 'served'");
     expect(source).toContain("status: 'served'");
+    expect(source).not.toContain("dataManager.saveData('orders', nextAllOrders, { syncFirestore: false });");
     expect(source).not.toContain('console.log');
   });
 

@@ -34,6 +34,7 @@ Data isolation rule:
 - Smart sync blocks global Firestore/localStorage fallback for store business collections when `storeId` is missing.
 - Login store sync now treats Firestore as the source of truth and clears stale local store caches when a cloud collection is empty.
 - POS table layout cloud persistence is hardened: empty cloud tables clear stale local caches, table edit updates existing records, waiter/tablet devices remain read-only for `pos_tables`, and split merged tables restore the original table positions.
+- Kitchen status write-back now sequences local order-cache save before shared `pos_orders` writes, so kitchen item status and served-state updates do not run as independent background writes.
 - Legacy global sync entry points `services/dataSync.ts` and `hooks/useFirestoreData.ts` were unused and have been deleted so root collection CRUD and non-store-scoped realtime hooks cannot be accidentally reconnected.
 - Confirmed-unused legacy UI leftovers were deleted after import and route checks: `components/OrderDetails.tsx`, `components/OrderList.tsx`, `components/Payment.tsx`, old `pages/Dashboard/Dashboard.tsx`, old `pages/Reports/Reports.tsx`, `pages/Manager/ManagerDashboard.tsx`, `pages/Manager/ShiftHandoverEmbedded.tsx`, and `utils/storeDataIsolation.ts`.
 - Backup export is Firestore-only and read-only; it no longer scans browser `localStorage` or includes `localCache` in the backup JSON.

@@ -146,8 +146,9 @@ const KitchenDisplay: React.FC = () => {
     };
 
     const nextAllOrders = allOrders.map(order => order.id === orderId ? updatedOrder : order);
-    dataManager.saveData('orders', nextAllOrders, { syncFirestore: false });
-    smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
+    return dataManager.saveData('orders', nextAllOrders, { syncFirestore: false }).then(() =>
+      smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder))
+    ).catch(error => {
       console.error('厨房状态同步到 POS 失败:', updatedOrder.id, error);
     });
   };
@@ -173,8 +174,9 @@ const KitchenDisplay: React.FC = () => {
       updatedAt: new Date()
     };
     const nextAllOrders = allOrders.map(order => order.id === orderId ? updatedOrder : order);
-    dataManager.saveData('orders', nextAllOrders, { syncFirestore: false });
-    smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
+    return dataManager.saveData('orders', nextAllOrders, { syncFirestore: false }).then(() =>
+      smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder))
+    ).catch(error => {
       console.error('厨房出餐完成同步到 POS 失败:', updatedOrder.id, error);
     });
   };
