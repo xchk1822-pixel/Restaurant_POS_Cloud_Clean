@@ -99,6 +99,7 @@ Data isolation rule:
 - POS frontend experience pass: completed orders now publish to cloud in the background after local completion state, the order card can show pending sync, table canvas uses lightweight local food-style artwork, and the right order filters were rearranged per the latest POS layout request. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS table background image replacement: table canvas now uses a local generated food-table JPG asset with a readability overlay and grid, replacing the embedded line-art SVG background. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS Spanish staff-facing labels: cashier-facing buttons, filters, statuses, payment labels, customer selector, receipt toolbar, and menu selector were changed to Spanish while preserving all stored business keys. Takeout displays as `Barra`. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
+- POS table background final image replacement: the table canvas JPG asset was replaced with the user-provided `1586 x 992` food-table image and compressed to about 264 KB while keeping the existing readability overlay and grid.
 
 ## Next Session Start
 
