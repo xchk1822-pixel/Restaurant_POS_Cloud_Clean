@@ -211,8 +211,10 @@ describe('production data safety guards', () => {
       source.indexOf("<div style={{ marginTop: '0.85rem'")
     );
 
+    expect(source).toContain("import tableFoodBackground from '../../assets/pos/table-food-background.jpg';");
     expect(source).toContain('const tableCanvasFoodPattern = [');
     expect(source).toContain('backgroundImage: tableCanvasFoodPattern');
+    expect(source).not.toContain('data:image/svg+xml');
     expect(orderPanelBlock).toContain("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'");
     expect(orderPanelBlock).not.toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'");
     expect(orderPanelBlock.indexOf('📋 订单列表')).toBeLessThan(

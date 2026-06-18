@@ -7,6 +7,7 @@ import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTim
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
 import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
+import tableFoodBackground from '../../assets/pos/table-food-background.jpg';
 
 interface Table {
   id: string;
@@ -469,9 +470,10 @@ const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Or
 };
 
 const tableCanvasFoodPattern = [
-  'url("data:image/svg+xml,%3Csvg width=\'180\' height=\'140\' viewBox=\'0 0 180 140\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' stroke=\'%23cbd5e1\' stroke-width=\'3\' stroke-linecap=\'round\' stroke-linejoin=\'round\' opacity=\'0.38\'%3E%3Cellipse cx=\'58\' cy=\'54\' rx=\'34\' ry=\'18\'/%3E%3Cpath d=\'M24 54c6 23 61 23 68 0\'/%3E%3Cpath d=\'M28 82h58\'/%3E%3Cpath d=\'M118 31v58\'/%3E%3Cpath d=\'M130 31v58\'/%3E%3Cpath d=\'M112 48h24\'/%3E%3Ccircle cx=\'142\' cy=\'84\' r=\'22\'/%3E%3Ccircle cx=\'142\' cy=\'84\' r=\'10\'/%3E%3C/g%3E%3C/svg%3E")',
-  'linear-gradient(rgba(226,232,240,0.72) 1px, transparent 1px)',
-  'linear-gradient(90deg, rgba(226,232,240,0.72) 1px, transparent 1px)',
+  'linear-gradient(rgba(248,250,252,0.76), rgba(248,250,252,0.84))',
+  `url(${tableFoodBackground})`,
+  'linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)',
+  'linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px)',
 ].join(', ');
 
 const POS: React.FC = () => {
@@ -4028,8 +4030,8 @@ const POS: React.FC = () => {
                 backgroundColor: '#f8fafc',
                 overflow: 'hidden',
                 backgroundImage: tableCanvasFoodPattern,
-                backgroundSize: '180px 140px, 28px 28px, 28px 28px',
-                backgroundPosition: '22px 24px, 0 0, 0 0'
+                backgroundSize: 'cover, cover, 28px 28px, 28px 28px',
+                backgroundPosition: 'center, center, 0 0, 0 0'
               }}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}

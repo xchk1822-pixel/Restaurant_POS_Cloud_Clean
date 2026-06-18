@@ -97,6 +97,7 @@ Data isolation rule:
 - System settings were verified in order: store management, exchange-rate settings, permission management, and backup export. Store/account/role/exchange saves now write through cloud paths before local UI/cache mutation. Exchange-rate settings are store-scoped with an admin store selector, and backup export keeps `exchange_rate` under store business data only. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS completion responsiveness hotfix: clear-table and takeout/delivery complete buttons now show immediate processing feedback, block duplicate clicks, yield a browser frame before stock/cloud work, and avoid a duplicate stale-table overwrite during clear-table. Deployed to Firebase Hosting; details are recorded in `docs/2026-06-15_PROGRESS.md`.
 - POS frontend experience pass: completed orders now publish to cloud in the background after local completion state, the order card can show pending sync, table canvas uses lightweight local food-style artwork, and the right order filters were rearranged per the latest POS layout request. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
+- POS table background image replacement: table canvas now uses a local generated food-table JPG asset with a readability overlay and grid, replacing the embedded line-art SVG background. Verification passed locally and details are recorded in `docs/2026-06-15_PROGRESS.md`.
 
 ## Next Session Start
 
