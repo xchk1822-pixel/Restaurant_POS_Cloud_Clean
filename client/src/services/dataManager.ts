@@ -218,16 +218,15 @@ class DataManager {
 
       const collectionName = firestoreCollectionMap[key];
       if (syncFirestore && collectionName) {
-        // 异步同步到 Firestore（不阻塞主流程）
-        data.forEach(async (item) => {
+        const syncTasks = data.filter(item => item.id).map(async (item) => {
           try {
-            if (item.id) {
-              await smartUpdateDocument(collectionName, item.id, item);
-            }
+            await smartUpdateDocument(collectionName, item.id, item);
           } catch (error) {
             console.error(`❌ 同步 ${key} 到 Firestore 失败:`, error);
+            throw error;
           }
         });
+        await Promise.all(syncTasks);
       }
 
       // 4. 触发自定义事件（供其他模块监听）

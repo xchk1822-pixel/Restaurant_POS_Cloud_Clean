@@ -1307,6 +1307,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('if (!storeId || globalKeys.includes(key))');
   });
 
+  test('dataManager awaited saves wait for Firestore sync before notifying modules', () => {
+    const servicePath = path.join(process.cwd(), 'src/services/dataManager.ts');
+    const source = fs.readFileSync(servicePath, 'utf8');
+    const syncBlock = source.slice(
+      source.indexOf('if (syncFirestore && collectionName) {'),
+      source.indexOf('// 4. ', source.indexOf('if (syncFirestore && collectionName) {'))
+    );
+
+    expect(syncBlock).toContain('const syncTasks = data.filter(item => item.id).map(async (item) =>');
+    expect(syncBlock).toContain('await smartUpdateDocument(collectionName, item.id, item)');
+    expect(syncBlock).toContain('throw error;');
+    expect(syncBlock).toContain('await Promise.all(syncTasks);');
+    expect(syncBlock).not.toContain('data.forEach(async');
+  });
+
   test('inventory category cloud loads do not merge stale local categories', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');
