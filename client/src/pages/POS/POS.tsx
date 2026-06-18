@@ -476,6 +476,20 @@ const tableCanvasFoodPattern = [
   'linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px)',
 ].join(', ');
 
+const posOrderTypeLabels: Record<'dine_in' | 'takeout' | 'delivery', string> = {
+  dine_in: 'Mesa',
+  takeout: 'Barra',
+  delivery: 'Delivery',
+};
+
+const posOrderTypeIcons: Record<'dine_in' | 'takeout' | 'delivery', string> = {
+  dine_in: '🍽️',
+  takeout: '🥡',
+  delivery: '🚚',
+};
+
+const formatPosOrderType = (type: 'dine_in' | 'takeout' | 'delivery') => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
+
 const POS: React.FC = () => {
   const { deductStock, orders: appOrders, setOrders: setAppOrders } = useAppContext();
   const localOrdersSignatureRef = useRef('');
@@ -1241,7 +1255,7 @@ const POS: React.FC = () => {
 
   const handleCreateCustomer = async () => {
     if (!newCustomerName.trim()) {
-      alert('请输入顾客姓名');
+      alert('Ingrese el nombre del cliente');
       return;
     }
 
@@ -1266,7 +1280,7 @@ const POS: React.FC = () => {
     setNewCustomerPhone('');
     setShowNewCustomerForm(false);
     setShowCustomerModal(false);
-    alert('顾客 ' + newCustomer.name + ' 创建成功');
+      alert('Cliente ' + newCustomer.name + ' creado');
     // 鍒涘缓椤惧鍚庯紝璺宠浆鍒扮偣椁愮晫闈?
     setViewMode('order');
   };
@@ -1463,7 +1477,7 @@ const POS: React.FC = () => {
 
   const handleHoldOrder = () => {
     if (currentItems.length === 0) {
-      alert('当前没有商品，无法挂单');
+      alert('No hay productos para retener');
       return;
     }
 
@@ -1538,7 +1552,7 @@ const POS: React.FC = () => {
 
   const handleRetrieveOrder = (heldOrder: HeldOrder) => {
     if (currentItems.length > 0) {
-      if (!window.confirm('当前有未完成的订单，是否覆盖？')) {
+    if (!window.confirm('Hay un pedido sin terminar. ¿Desea reemplazarlo?')) {
         return;
       }
     }
@@ -1560,7 +1574,7 @@ const POS: React.FC = () => {
 
     setViewMode('order');
 
-    alert(`✅ 已恢复订单\n\n桌号：${heldOrder.tableNumber}\n商品数：${heldOrder.items.length} 个`);
+    alert(`✅ Pedido recuperado\n\nMesa: ${heldOrder.tableNumber}\nProductos: ${heldOrder.items.length}`);
   };
 
   // 鉁?鍒涘缓澶栨淳璁㈠崟鐨勫紑鏀褰?
@@ -1620,7 +1634,7 @@ const POS: React.FC = () => {
         await completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
       } catch (error) {
         console.error('complete order sync failed:', orderToClear.id, error);
-        alert('完成订单同步失败，请检查网络后重试');
+      alert('No se pudo sincronizar. Revise la red e intente de nuevo.');
         return;
       } finally {
         setClearingOrderId(null);
@@ -2133,7 +2147,7 @@ const POS: React.FC = () => {
 
   const confirmCancelOrder = async () => {
     if (!managerAuthorizationPasswords.includes(cancelPassword.trim())) {
-      alert('密码错误：请输入老板密码 admin123 或店长密码 123456 授权');
+      alert('Clave incorrecta. Ingrese clave autorizada.');
       return;
     }
 
@@ -2169,7 +2183,7 @@ const POS: React.FC = () => {
               : i
           ));
 
-          alert(`✅ 已减少 1 个 ${item.name}`);
+        alert(`✅ Se redujo 1 ${item.name}`);
         } else if (cancelAction === 'add') {
           const newQuantity = item.quantity + 1;
 
@@ -2194,7 +2208,7 @@ const POS: React.FC = () => {
               : i
           ));
 
-          alert(`✅ 已增加 1 个 ${item.name}（需通知厨房）`);
+      alert(`✅ Se agregó 1 ${item.name}. Avise a cocina.`);
         } else {
           const cancelRecord: CancelRecord = {
             id: `cancel-${Date.now()}`,
@@ -2212,7 +2226,7 @@ const POS: React.FC = () => {
           setCancelRecords([...cancelRecords, cancelRecord]);
           setCurrentItems(currentItems.filter(i => i.id !== itemToDelete));
 
-          alert('✅ 商品已取消（需通知厨房）');
+      alert('✅ Producto cancelado. Avise a cocina.');
         }
       }
 
@@ -2228,7 +2242,7 @@ const POS: React.FC = () => {
         const order = orders.find(o => o.id === selectedOrderId);
 
         if (!order) {
-          alert('未找到当前订单，请刷新后重试');
+      alert('No se encontró el pedido. Actualice e intente de nuevo.');
           return;
         }
 
@@ -2245,7 +2259,7 @@ const POS: React.FC = () => {
           await publishOrderImmediately(cancelledOrder);
         } catch (error) {
           console.error('cancel order sync failed:', cancelledOrder.id, error);
-          alert('取消订单同步失败，请检查网络后重试');
+      alert('No se pudo sincronizar la cancelación. Revise la red e intente de nuevo.');
           return;
         }
 
@@ -2289,7 +2303,7 @@ const POS: React.FC = () => {
       setSelectedOrderId(null);
       setSelectedTableId(null);
 
-      alert('✅ 订单已取消');
+    alert('✅ Pedido cancelado');
     }
   };
 
@@ -2344,37 +2358,37 @@ const POS: React.FC = () => {
       ));
     }
 
-    alert(`✅ 账单已拆分为 ${splitBills.length} 份\n` + 
-      splitBills.map(bill => `${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? '已付' : '未付'})`).join('\n') +
-      `\n\n总计: C$${totalAmount.toFixed(2)}`);
+    alert(`✅ Cuenta dividida en ${splitBills.length}\n` +
+      splitBills.map(bill => `${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? 'Pagado' : 'Pendiente'})`).join('\n') +
+      `\n\nTotal: C$${totalAmount.toFixed(2)}`);
   };
   
   // 打印小票功能
   const handlePrintReceipt = () => {
     const tableNumber = selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : '';
-    const orderTypeText = orderType === 'dine_in' ? '堂食' : orderType === 'takeout' ? '打包' : '外卖';
+    const orderTypeText = posOrderTypeLabels[orderType];
     
     let printContent = `
       <div style="font-family: monospace; padding: 20px; max-width: 300px; margin: 0 auto;">
         <h2 style="text-align: center; margin-bottom: 10px;">🍜 Restaurante Chino</h2>
         <div style="border-top: 2px dashed #000; border-bottom: 2px dashed #000; padding: 10px 0; margin: 10px 0;">
           <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-            <span>订单类型：</span>
+            <span>Tipo:</span>
             <span>${orderTypeText}</span>
           </div>
-          ${tableNumber ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>桌号：</span><span>桌${tableNumber}</span></div>` : ''}
+          ${tableNumber ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Mesa:</span><span>${tableNumber}</span></div>` : ''}
           <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-            <span>时间：</span>
-            <span>${new Date().toLocaleString('zh-CN')}</span>
+            <span>Hora:</span>
+            <span>${new Date().toLocaleString('es-NI')}</span>
           </div>
-          ${selectedOrderId ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>订单号：</span><span>${selectedOrderId.slice(-6)}</span></div>` : ''}
+          ${selectedOrderId ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Pedido:</span><span>${selectedOrderId.slice(-6)}</span></div>` : ''}
         </div>
         
         <div style="margin: 15px 0;">
           <div style="display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px;">
-            <span style="flex: 2;">商品</span>
-            <span style="flex: 1; text-align: center;">数量</span>
-            <span style="flex: 1; text-align: right;">金额</span>
+            <span style="flex: 2;">Producto</span>
+            <span style="flex: 1; text-align: center;">Cant.</span>
+            <span style="flex: 1; text-align: right;">Importe</span>
           </div>
           ${currentItems.map(item => `
             <div style="display: flex; justify-content: space-between; margin: 8px 0;">
@@ -2387,7 +2401,7 @@ const POS: React.FC = () => {
         
         <div style="border-top: 2px dashed #000; padding-top: 10px; margin-top: 10px;">
           <div style="display: flex; justify-content: space-between; font-size: 1.2em; font-weight: bold;">
-            <span>总计：</span>
+            <span>Total:</span>
             <span>C$${currentItems.reduce((sum, item) => sum + item.subtotal, 0).toFixed(2)}</span>
           </div>
         </div>
@@ -2396,23 +2410,23 @@ const POS: React.FC = () => {
           const currentOrder = orders.find(o => o.id === selectedOrderId);
           if (currentOrder?.splitBills && currentOrder.splitBills.length > 0) {
             return `<div style="margin-top: 15px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;">
-              <div style="font-weight: bold; margin-bottom: 5px;">🔀 已拆分为 ${currentOrder.splitBills.length} 份</div>
-              ${currentOrder.splitBills.map(bill => `<div style="margin: 5px 0;">${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? '✅ 已付' : '⏳ 未付'})</div>`).join('')}
+              <div style="font-weight: bold; margin-bottom: 5px;">🔀 Dividido en ${currentOrder.splitBills.length}</div>
+              ${currentOrder.splitBills.map(bill => `<div style="margin: 5px 0;">${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? '✅ Pagado' : '⏳ Pendiente'})</div>`).join('')}
             </div>`;
           }
           return '';
         })()}
         
         <div style="text-align: center; margin-top: 20px; font-size: 0.9em; color: #666;">
-          <p>谢谢惠顾！</p>
-          <p>欢迎下次光临</p>
+          <p>¡Gracias por su compra!</p>
+          <p>Le esperamos pronto</p>
         </div>
       </div>
     `;
     
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     if (printWindow) {
-      printWindow.document.write(`<!DOCTYPE html><html><head><title>订单小票</title><style>
+      printWindow.document.write(`<!DOCTYPE html><html><head><title>Recibo</title><style>
         body { margin: 0; padding: 0; background: #f3f4f6; }
         .receipt-toolbar { position: sticky; top: 0; display: flex; gap: 8px; padding: 10px; background: #111827; z-index: 10; }
         .receipt-toolbar button { flex: 1; border: 0; border-radius: 4px; padding: 10px; color: white; font-weight: 700; cursor: pointer; }
@@ -2426,8 +2440,8 @@ const POS: React.FC = () => {
         }
       </style></head><body>
         <div class="receipt-toolbar no-print">
-          <button class="print-btn" onclick="window.print()">打印并切纸</button>
-          <button class="back-btn" onclick="window.close()">返回POS</button>
+          <button class="print-btn" onclick="window.print()">Imprimir y cortar</button>
+          <button class="back-btn" onclick="window.close()">Volver al POS</button>
         </div>
         ${printContent}
         <div class="receipt-cut-feed"></div>
@@ -2846,16 +2860,16 @@ const POS: React.FC = () => {
 
   const getStatusText = (status: string, paymentStatus?: string, clearedAt?: Date) => {
     if (paymentStatus === 'paid' && status !== 'completed' && status !== 'cancelled' && !clearedAt) {
-      return '\u5df2\u652f\u4ed8';
+      return 'Pagado';
     }
 
     switch (status) {
-      case 'draft': return '\u8349\u7a3f';
-      case 'confirmed': return '\u5df2\u786e\u8ba4';
-      case 'preparing': return '\u5236\u4f5c\u4e2d';
-      case 'served': return paymentStatus === 'paid' ? '\u5df2\u652f\u4ed8' : '\u5df2\u4e0a\u83dc';
-      case 'completed': return '\u5df2\u5b8c\u6210';
-      case 'cancelled': return '\u5df2\u53d6\u6d88';
+      case 'draft': return 'Borrador';
+      case 'confirmed': return 'Confirmado';
+      case 'preparing': return 'En cocina';
+      case 'served': return paymentStatus === 'paid' ? 'Pagado' : 'Servido';
+      case 'completed': return 'Completado';
+      case 'cancelled': return 'Cancelado';
       default: return status;
     }
   };
@@ -2895,31 +2909,31 @@ const POS: React.FC = () => {
           alignItems: 'center',
           gap: '0.5rem'
         }}>
-          {itemToDelete ? '⚠️ 取消商品授权' : '⚠️ 取消订单授权'}
+          {itemToDelete ? '⚠️ Autorizar cancelación de producto' : '⚠️ Autorizar cancelación de pedido'}
         </h3>
 
         <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#fef2f2', borderRadius: '0.5rem', border: '1px solid #fecaca' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', color: '#991b1b' }}>
-            <strong>警告：</strong>
+            <strong>Atención: </strong>
             {itemToDelete
-              ? '该商品已发送到厨房，取消需要店长授权。' 
-              : '取消订单需要店长授权。此操作不可恢复！'}
+              ? 'Este producto ya fue enviado a cocina. Se requiere autorización.'
+              : 'Cancelar el pedido requiere autorización. Esta acción no se puede deshacer.'}
           </p>
         </div>
 
         <div style={{ marginBottom: '1rem' }}>
           <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-            店长/老板授权密码
+            Clave de autorización
           </label>
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-            老板密码 admin123；店长密码 123456
+            Clave del jefe o gerente
           </div>
           <input
             type="password"
             value={cancelPassword}
             onChange={(e) => setCancelPassword(e.target.value)}
             onClick={(e) => e.stopPropagation()}
-            placeholder="请输入授权密码"
+            placeholder="Ingrese la clave"
             style={{
               width: '100%',
               padding: '0.75rem',
@@ -2940,12 +2954,12 @@ const POS: React.FC = () => {
 
         <div style={{ marginBottom: '1.5rem' }}>
           <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-            📝 取消原因
+            📝 Motivo de cancelación
           </label>
           <textarea
             value={cancelReason}
             onChange={(e) => setCancelReason(e.target.value)}
-            placeholder="请说明取消原因..."
+            placeholder="Escriba el motivo..."
             rows={3}
             style={{
               width: '100%',
@@ -2978,7 +2992,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            取消
+            Cerrar
           </button>
           <button
             onClick={confirmCancelOrder}
@@ -2994,7 +3008,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            确认授权
+            Autorizar
           </button>
         </div>
       </div>
@@ -3029,10 +3043,10 @@ const POS: React.FC = () => {
         boxShadow: '0 10px 25px rgba(0,0,0,0.2)'
       }}>
         <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', color: '#374151' }}>
-          {isDineIn ? `桌${tableActionData?.tableNumber}` : `${tableActionData?.tableNumber}`} 操作选择
+          {isDineIn ? `Mesa ${tableActionData?.tableNumber}` : `${tableActionData?.tableNumber}`} - Acción
         </h3>
         <p style={{ margin: '0 0 1.5rem 0', color: '#6b7280', fontSize: '0.95rem' }}>
-          {isDineIn ? '该桌订单已支付，请选择加菜或清台。' : '该订单已支付，请选择下一步操作。'}
+          {isDineIn ? 'Este pedido ya está pagado. Puede agregar productos o liberar la mesa.' : 'Este pedido ya está pagado. Elija la siguiente acción.'}
         </p>
 
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
@@ -3051,7 +3065,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            加菜
+            Agregar
           </button>
           <button
             onClick={() => {
@@ -3069,7 +3083,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            {clearingOrderId ? '处理中...' : (isDineIn ? '🧹 清台' : '✅ 完成')}
+            {clearingOrderId ? 'Procesando...' : (isDineIn ? '🧹 Liberar mesa' : '✅ Completar')}
           </button>
         </div>
       </div>
@@ -3084,7 +3098,7 @@ const POS: React.FC = () => {
         <div style={{ height: 'calc(100vh - 8rem)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
             <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#1f2937' }}>
-              账单拆分 - 桌{selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : ''}
+              Dividir cuenta - Mesa {selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : ''}
             </h2>
             <button
               onClick={() => setViewMode('order')}
@@ -3098,7 +3112,7 @@ const POS: React.FC = () => {
                 fontWeight: '600'
               }}
             >
-              ← 返回点餐
+              ← Volver a pedido
             </button>
           </div>
 
@@ -3177,16 +3191,16 @@ const POS: React.FC = () => {
                       return (
                         <>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                            <span>订单类型：</span>
+                            <span>Tipo:</span>
                             <span style={{ fontWeight: '600' }}>
-                              {displayOrderType === 'dine_in' ? '🍽️ 堂食' : displayOrderType === 'takeout' ? '🥡 打包' : '🚚 外卖'}
+                              {formatPosOrderType(displayOrderType)}
                             </span>
                           </div>
 
                           {/* 鉁?鏄剧ず璁㈠崟鍙?*/}
                           {displayOrderNumber && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                              <span>订单号：</span>
+                              <span>Pedido:</span>
                               <span style={{ fontWeight: '600', fontSize: '0.75rem' }}>{displayOrderNumber}</span>
                             </div>
                           )}
@@ -3194,8 +3208,8 @@ const POS: React.FC = () => {
                           {/* 鉁?鏄剧ず妗屽彿锛堝鏋滄湁锛?*/}
                           {selectedTableId && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                              <span>桌号：</span>
-                              <span style={{ fontWeight: '600' }}>桌{tables.find(t => t.id === selectedTableId)?.number}</span>
+                              <span>Mesa:</span>
+                              <span style={{ fontWeight: '600' }}>{tables.find(t => t.id === selectedTableId)?.number}</span>
                             </div>
                           )}
 
@@ -3203,7 +3217,7 @@ const POS: React.FC = () => {
                           {selectedCustomer && (
                             <>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                                <span>顾客：</span>
+                                <span>Cliente:</span>
                                 <span style={{ fontWeight: '600' }}>{selectedCustomer.name}</span>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
@@ -3236,11 +3250,11 @@ const POS: React.FC = () => {
                         fontSize: '0.75rem'
                       }}>
                         <div style={{ fontWeight: '600', color: '#92400e', marginBottom: '0.25rem' }}>
-                          🔀 已拆分为 {currentOrder.splitBills.length} 份
+                    🔀 Dividido en {currentOrder.splitBills.length}
                         </div>
                         {currentOrder.splitBills.map(bill => (
                           <div key={bill.id} style={{ color: '#78350f' }}>
-                            {bill.customerName}: C${bill.subtotal.toFixed(2)} ({bill.paymentStatus === 'paid' ? '已付' : '未付'})
+                      {bill.customerName}: C${bill.subtotal.toFixed(2)} ({bill.paymentStatus === 'paid' ? 'Pagado' : 'Pendiente'})
                           </div>
                         ))}
                       </div>
@@ -3324,7 +3338,7 @@ const POS: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'center'
                           }}
-                          title={item.quantity > 1 ? "减少数量" : "删除商品"}
+                    title={item.quantity > 1 ? "Reducir cantidad" : "Eliminar producto"}
                         >
                           {item.quantity > 1 ? '−' : '×'}
                         </button>
@@ -3343,7 +3357,7 @@ const POS: React.FC = () => {
                     if (displayDeliveryFee > 0) {
                       return (
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                          <span style={{ color: '#6b7280' }}>🚚 派送费</span>
+                  <span style={{ color: '#6b7280' }}>🚚 Envío</span>
                           <span style={{ color: '#374151', fontWeight: '600' }}>C${displayDeliveryFee.toFixed(2)}</span>
                         </div>
                       );
@@ -3364,7 +3378,7 @@ const POS: React.FC = () => {
                   {discountEnabled && discountAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
                       <span style={{ color: '#ef4444' }}>
-                        🎫 折扣 {discountType === 'percentage' ? `(${discountValue}%)` : ''}
+                  🎫 Descuento {discountType === 'percentage' ? `(${discountValue}%)` : ''}
                         {discountReason && <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}> - {discountReason}</span>}
                       </span>
                       <span style={{ color: '#ef4444', fontWeight: '600' }}>-C${discountAmount.toFixed(2)}</span>
@@ -3373,7 +3387,7 @@ const POS: React.FC = () => {
 
                   {pointsRedemptionEnabled && pointsRedemptionAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
-                      <span style={{ color: '#f59e0b' }}>⭐ 积分兑换 ({pointsToUse} 积分)</span>
+                  <span style={{ color: '#f59e0b' }}>⭐ Canje de puntos ({pointsToUse})</span>
                       <span style={{ color: '#f59e0b', fontWeight: '600' }}>-C${pointsRedemptionAmount.toFixed(2)}</span>
                     </div>
                   )}
@@ -3386,7 +3400,7 @@ const POS: React.FC = () => {
                     fontSize: '1.1rem',
                     fontWeight: 'bold'
                   }}>
-                    <span style={{ color: '#374151' }}>总计</span>
+                  <span style={{ color: '#374151' }}>Total</span>
                     <span style={{ color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                 </div>
@@ -3414,7 +3428,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                    🖨️ 打印小票
+                  🖨️ Imprimir recibo
                   </button>
 
                   {isReadOnly && (
@@ -3442,7 +3456,7 @@ const POS: React.FC = () => {
                         fontSize: '0.8rem'
                       }}
                     >
-                      ← 返回主界面
+                      ← Inicio
                     </button>
                   )}
 
@@ -3464,9 +3478,9 @@ const POS: React.FC = () => {
                           fontSize: '0.8rem',
                           opacity: hasUnsentItems ? 1 : 0.6
                         }}
-                        title={hasUnsentItems ? '确认下单（发送到厨房）' : '所有商品已确认'}
+                        title={hasUnsentItems ? 'Confirmar pedido y enviar a cocina' : 'Todo confirmado'}
                       >
-                        ✅ 确认下单
+                        ✅ Confirmar pedido
                       </button>
                       {currentItems.length > 0 && (
                         <button
@@ -3483,7 +3497,7 @@ const POS: React.FC = () => {
                             fontSize: '0.8rem'
                           }}
                         >
-                          ⏸️ 挂单
+                          ⏸️ Retener
                         </button>
                       )}
                     </>
@@ -3507,7 +3521,7 @@ const POS: React.FC = () => {
                         fontWeight: '600'
                       }}
                     >
-                      🔀 拆分账单
+                      🔀 Dividir cuenta
                     </button>
                     <button
                       onClick={(e) => {
@@ -3528,7 +3542,7 @@ const POS: React.FC = () => {
                         fontWeight: '600'
                       }}
                     >
-                      ❌ 取消整单
+                      ❌ Cancelar pedido
                     </button>
                   </div>
                 )}
@@ -3545,7 +3559,7 @@ const POS: React.FC = () => {
                 fontSize: '0.875rem',
                 color: '#9ca3af'
               }}>
-                暂无订单
+                Sin pedido
               </div>
             )}
           </div>
@@ -3553,7 +3567,7 @@ const POS: React.FC = () => {
           {/* Right: Payment Interface - 鍙妯″紡闅愯棌 */}
           {!isReadOnly && (
             <div style={{ flex: 3, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '1rem', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', margin: 0, marginBottom: '0.75rem' }}>💳 支付</h3>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', margin: 0, marginBottom: '0.75rem' }}>💳 Pago</h3>
 
             {selectedOrderId && settledAmount > 0 && (
               <div style={{
@@ -3564,7 +3578,7 @@ const POS: React.FC = () => {
                 border: '1px solid #10b981'
               }}>
                 <div style={{ fontSize: '0.75rem', color: '#065f46', fontWeight: '600', marginBottom: '0.2rem' }}>
-                  ✅ 已结算
+                  ✅ Pagado
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
                   <span style={{ color: '#047857' }}>之前：</span>
@@ -3575,7 +3589,7 @@ const POS: React.FC = () => {
                   <span style={{ fontWeight: '600', color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.2rem', borderTop: '1px dashed #10b981', fontSize: '0.8rem' }}>
-                  <span style={{ color: '#065f46', fontWeight: '600' }}>还需：</span>
+                  <span style={{ color: '#065f46', fontWeight: '600' }}>Falta:</span>
                   <span style={{ fontWeight: 'bold', color: '#dc2626', fontSize: '1rem' }}>C${remainingAmount.toFixed(2)}</span>
                 </div>
               </div>
@@ -3587,7 +3601,7 @@ const POS: React.FC = () => {
                   <div style={{ padding: '0.4rem', backgroundColor: '#f9fafb', borderRadius: '0.25rem', border: '1px solid #e5e7eb' }}>
                     {/* 娲鹃€佺被鍨嬮€夋嫨 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.4rem' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>🚚 派送类型:</label>
+                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>🚚 Tipo de entrega:</label>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
                           <input
@@ -3598,7 +3612,7 @@ const POS: React.FC = () => {
                             onChange={(e) => setDeliveryType(e.target.value as 'self' | 'outsourced')}
                             style={{ cursor: 'pointer' }}
                           />
-                          自送
+                          Propio
                         </label>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
                           <input
@@ -3609,14 +3623,14 @@ const POS: React.FC = () => {
                             onChange={(e) => setDeliveryType(e.target.value as 'self' | 'outsourced')}
                             style={{ cursor: 'pointer' }}
                           />
-                          外派
+                          Tercero
                         </label>
                       </div>
                     </div>
 
                     {/* 娲鹃€佽垂杈撳叆妗?*/}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>💰 派送费:</label>
+                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>💰 Costo de envío:</label>
                       <input
                         type="number"
                         value={deliveryFee || ''}
@@ -3631,7 +3645,7 @@ const POS: React.FC = () => {
                     {/* 鎻愮ず鏂囧瓧 */}
                     {deliveryType === 'outsourced' && deliveryFee > 0 && (
                       <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>
-                        ⚠️ 外派订单的派送费将计入当天支出
+                        ⚠️ El envío de tercero se registrará como gasto del día
                       </div>
                     )}
                   </div>
@@ -3646,11 +3660,11 @@ const POS: React.FC = () => {
                       onChange={(e) => {
                         if (e.target.checked) {
                           // 鉁?鍚敤鎶樻墸鏃堕渶瑕佸簵闀挎巿鏉?
-                          const password = prompt('🔑 请输入店长/老板密码以启用折扣：');
+                          const password = prompt('🔑 Ingrese clave de gerente/jefe para aplicar descuento:');
                           if (password && managerAuthorizationPasswords.includes(password.trim())) {
                             setDiscountEnabled(true);
                           } else {
-                            alert('❌ 密码错误，需要店长或老板授权');
+                            alert('❌ Clave incorrecta. Requiere autorización.');
                           }
                         } else {
                           // 绂佺敤鎶樻墸涓嶉渶瑕佹巿鏉?
@@ -3661,7 +3675,7 @@ const POS: React.FC = () => {
                       style={{ width: '14px', height: '14px', cursor: 'pointer' }}
                     />
                     <label htmlFor="discount-checkbox" style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>
-                      🎫 折扣
+                      🎫 Descuento
                     </label>
                   </div>
 
@@ -3673,8 +3687,8 @@ const POS: React.FC = () => {
                           onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
                           style={{ flex: 1, padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.8rem' }}
                         >
-                          <option value="percentage">百分比(%)</option>
-                          <option value="fixed">固定金额(C$)</option>
+                          <option value="percentage">Porcentaje(%)</option>
+                          <option value="fixed">Monto fijo(C$)</option>
                         </select>
                         <input
                           type="number"
@@ -3691,7 +3705,7 @@ const POS: React.FC = () => {
                         type="text"
                         value={discountReason}
                         onChange={(e) => setDiscountReason(e.target.value)}
-                        placeholder="折扣原因"
+                        placeholder="Motivo del descuento"
                         style={{ width: '100%', padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.8rem' }}
                       />
                       {discountAmount > 0 && (
@@ -3732,10 +3746,10 @@ const POS: React.FC = () => {
                         cursor: selectedCustomer.points > 0 ? 'pointer' : 'not-allowed',
                         flex: 1
                       }}>
-                        ⭐ 积分({selectedCustomer.points})
+                        ⭐ Puntos({selectedCustomer.points})
                         {selectedCustomer.points === 0 && (
                           <span style={{ fontSize: '0.7rem', color: '#ef4444', marginLeft: '0.3rem' }}>
-                            (无积分)
+                            (sin puntos)
                           </span>
                         )}
                       </label>
@@ -3745,7 +3759,7 @@ const POS: React.FC = () => {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <label style={{ fontSize: '0.75rem', color: '#92400e', whiteSpace: 'nowrap' }}>
-                            兑换比例({pointsExchangeRate}分 = C$1):
+                            Cambio({pointsExchangeRate} pts = C$1):
                           </label>
                           <input
                             type="number"
@@ -3754,7 +3768,7 @@ const POS: React.FC = () => {
                               const value = Math.min(parseInt(e.target.value) || 0, selectedCustomer.points);
                               setPointsToUse(value);
                             }}
-                            placeholder="积分"
+                            placeholder="Puntos"
                             min="0"
                             max={selectedCustomer.points}
                             step="1"
@@ -3770,7 +3784,7 @@ const POS: React.FC = () => {
                 )}
 
                 <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💵 现金</h4>
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💵 Efectivo</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
@@ -3787,7 +3801,7 @@ const POS: React.FC = () => {
                 </div>
 
                 <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💳 刷卡</h4>
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💳 Tarjeta</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
@@ -3805,11 +3819,11 @@ const POS: React.FC = () => {
 
                 <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '0.6rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
-                    <span>总计</span>
+                    <span>Total</span>
                     <span style={{ color: '#2563eb', fontSize: '1.3rem' }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-                    <span style={{ color: '#6b7280' }}>本次支付</span>
+                    <span style={{ color: '#6b7280' }}>Pago actual</span>
                     <span style={{ color: '#10b981', fontWeight: '600' }}>C${paidAmount.toFixed(2)}</span>
                   </div>
 
@@ -3837,7 +3851,7 @@ const POS: React.FC = () => {
                       color: '#991b1b',
                       border: '1px solid #ef4444'
                     }}>
-                      还需支付: C${Math.abs(change).toFixed(2)}
+                      Falta pagar: C${Math.abs(change).toFixed(2)}
                     </div>
                   )}
 
@@ -3867,7 +3881,7 @@ const POS: React.FC = () => {
                         fontSize: '0.95rem'
                       }}
                     >
-                      ← 返回
+                      ← Volver
                     </button>
 
                     <button
@@ -3885,7 +3899,7 @@ const POS: React.FC = () => {
                         fontSize: '0.95rem'
                       }}
                     >
-                      ✓ 完成
+                      ✓ Completar pago
                     </button>
                   </div>
 
@@ -3931,7 +3945,7 @@ const POS: React.FC = () => {
           {/* Left: Table Layout */}
           <div style={{ minWidth: 0, backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ffffff' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0 }}>🪑 桌台布局</h3>
+              <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0 }}>🪑 Mesas</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
                   onClick={() => setShowHeldOrders(!showHeldOrders)}
@@ -3947,7 +3961,7 @@ const POS: React.FC = () => {
                     position: 'relative'
                   }}
                 >
-                  ⏸️ 挂单
+                  ⏸️ Retenidos
                   {heldOrders.length > 0 && (
                     <span style={{
                       position: 'absolute',
@@ -3983,7 +3997,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                    🔗 合并桌子
+                    🔗 Unir mesas
                   </button>
                 )}
                 <button
@@ -4002,7 +4016,7 @@ const POS: React.FC = () => {
                     fontSize: '0.8rem'
                   }}
                 >
-                    {isEditMode ? '完成编辑' : '编辑桌台'}
+                    {isEditMode ? 'Terminar edición' : 'Editar mesas'}
                 </button>
                 {isEditMode && (
                   <button
@@ -4018,7 +4032,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                    ➕ 添加桌台
+                    ➕ Agregar mesa
                   </button>
                 )}
               </div>
@@ -4149,7 +4163,7 @@ const POS: React.FC = () => {
                         whiteSpace: 'nowrap'
                       }}
                     >
-                      ✂️ 拆分
+                      ✂️ Separar
                     </button>
                   )}
                   {isEditMode && (
@@ -4183,7 +4197,7 @@ const POS: React.FC = () => {
                           cursor: 'pointer'
                         }}
                       >
-                        修改
+                        Editar
                       </button>
                       <button
                         onClick={(e) => {
@@ -4201,7 +4215,7 @@ const POS: React.FC = () => {
                           cursor: 'pointer'
                         }}
                       >
-                        删除
+                        Eliminar
                       </button>
                     </div>
                   )}
@@ -4233,7 +4247,7 @@ const POS: React.FC = () => {
                   justifyContent: 'space-between',
                   alignItems: 'center'
                 }}>
-                  <h4 style={{ margin: 0, fontSize: '1rem', color: '#92400e' }}>⏸️ 挂单列表</h4>
+                  <h4 style={{ margin: 0, fontSize: '1rem', color: '#92400e' }}>⏸️ Pedidos retenidos</h4>
                   <button
                     onClick={() => setShowHeldOrders(false)}
                     style={{
@@ -4253,7 +4267,7 @@ const POS: React.FC = () => {
                 <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
                   {heldOrders.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                      暂无挂单
+                      Sin pedidos retenidos
                     </div>
                   ) : (
                     heldOrders.map(heldOrder => (
@@ -4269,22 +4283,22 @@ const POS: React.FC = () => {
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                           <div style={{ fontWeight: 'bold', color: '#374151' }}>
-                            桌{heldOrder.tableNumber}
+                            Mesa {heldOrder.tableNumber}
                           </div>
                           <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                             {formatOrderTime(heldOrder.createdAt)}
                           </div>
                         </div>
                         <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                          {heldOrder.orderType === 'dine_in' ? '🍽️ 堂食' : heldOrder.orderType === 'takeout' ? '🥡 打包' : '🚚 外卖'}
+                          {formatPosOrderType(heldOrder.orderType)}
                           {heldOrder.orderType === 'delivery' && heldOrder.deliveryType && (
                             <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: heldOrder.deliveryType === 'outsourced' ? '#ef4444' : '#10b981' }}>
-                              ({heldOrder.deliveryType === 'self' ? '自送' : '外派'})
+                              ({heldOrder.deliveryType === 'self' ? 'Propio' : 'Tercero'})
                             </span>
                           )}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-                          商品数：{heldOrder.items.length} 个
+                          Productos: {heldOrder.items.length}
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                           <button
@@ -4301,11 +4315,11 @@ const POS: React.FC = () => {
                               fontSize: '0.8rem'
                             }}
                           >
-                            ✅ 取单
+                            ✅ Recuperar
                           </button>
                           <button
                             onClick={() => {
-                              if (window.confirm(`确定要删除桌${heldOrder.tableNumber}的挂单吗？`)) {
+                              if (window.confirm(`¿Eliminar el pedido retenido de mesa ${heldOrder.tableNumber}?`)) {
                                 setHeldOrders(heldOrders.filter(o => o.id !== heldOrder.id));
                               }
                             }}
@@ -4335,7 +4349,7 @@ const POS: React.FC = () => {
           <div style={{ width: '430px', backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', flexShrink: 0, backgroundColor: '#ffffff' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#111827', margin: 0 }}>📋 订单列表</h3>
+                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#111827', margin: 0 }}>📋 Pedidos</h3>
                 <button
                   onClick={() => setOrderTypeFilter('all')}
                   style={{
@@ -4350,7 +4364,7 @@ const POS: React.FC = () => {
                     boxShadow: orderTypeFilter === 'all' ? '0 6px 14px rgba(37,99,235,0.22)' : 'none'
                   }}
                 >
-                  全部
+                  Todos
                 </button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.45rem' }}>
@@ -4368,7 +4382,7 @@ const POS: React.FC = () => {
                     fontSize: '0.75rem'
                   }}
                 >
-                  🍽️ 堂食
+                  {formatPosOrderType('dine_in')}
                 </button>
                 <button
                   onClick={() => setOrderTypeFilter('takeout')}
@@ -4384,7 +4398,7 @@ const POS: React.FC = () => {
                     fontSize: '0.75rem'
                   }}
                 >
-                  🥡 打包
+                  {formatPosOrderType('takeout')}
                 </button>
                 <button
                   onClick={() => setOrderTypeFilter('delivery')}
@@ -4400,29 +4414,29 @@ const POS: React.FC = () => {
                     fontSize: '0.75rem'
                   }}
                 >
-                  🚚 外卖
+                  {formatPosOrderType('delivery')}
                 </button>
               </div>
 
               <div style={{ marginTop: '0.85rem', padding: '0.85rem', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.65rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>订单总数：</span>
-                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#374151' }}>{filteredOrders.length} 单</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total pedidos:</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#374151' }}>{filteredOrders.length}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>草稿/待确认：</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Borrador:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#f59e0b' }}>
-                    {filteredOrders.filter(o => o.status === 'draft').length} 单
+                    {filteredOrders.filter(o => o.status === 'draft').length}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>制作中：</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>En cocina:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#3b82f6' }}>
-                    {filteredOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length} 单
+                    {filteredOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>总金额：</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total:</span>
                   <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#2563eb' }}>
                     C${filteredOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0).toFixed(2)}
                   </span>
@@ -4466,14 +4480,14 @@ const POS: React.FC = () => {
                   boxShadow: '0 8px 18px rgba(37, 99, 235, 0.22)'
                 }}
               >
-                ➕ 新建{orderTypeFilter === 'all' ? '订单' : orderTypeFilter === 'dine_in' ? '堂食订单' : orderTypeFilter === 'takeout' ? '打包订单' : '外卖订单'}
+                ➕ Nuevo {orderTypeFilter === 'all' ? 'pedido' : posOrderTypeLabels[orderTypeFilter]}
               </button>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.85rem', backgroundColor: '#f8fafc' }}>
               {filteredOrders.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                  暂无订单
+                  Sin pedidos
                 </div>
               ) : (
                 filteredOrders.map(order => (
@@ -4496,7 +4510,7 @@ const POS: React.FC = () => {
                         #{order.orderNumber || 'N/A'}
                         {/* 鉁?鏀粯鐘舵€佹爣璇?*/}
                         {pendingOrderSyncIdsRef.current.has(order.id) && (
-                          <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>待同步</span>
+                          <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>Sincronizando</span>
                         )}
                         {order.paymentStatus === 'paid' && order.status !== 'completed' && (
                           <span style={{ fontSize: '1rem', color: '#10b981' }}>$</span>
@@ -4519,13 +4533,13 @@ const POS: React.FC = () => {
                     <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.25rem' }}>
                       {order.orderType === 'dine_in' ? (
                         // 鍫傞锛氭樉绀烘鍙?
-                        <>堂食 | 桌{order.tableNumber}</>
+                        <>Mesa {order.tableNumber}</>
                       ) : order.orderType === 'takeout' ? (
                         // 鎵撳寘锛氬彧鏄剧ず鎵撳寘
-                        <>🥡 打包</>
+                        <>{formatPosOrderType('takeout')}</>
                       ) : (
                         // 澶栧崠锛氬彧鏄剧ず澶栧崠
-                        <>🚚 外卖</>
+                        <>{formatPosOrderType('delivery')}</>
                       )}
                     </div>
                     {order.customerName && (
@@ -4541,12 +4555,12 @@ const POS: React.FC = () => {
                           const canComplete = order.paymentStatus === 'paid' || order.status === 'served';
 
                           if (!canComplete) {
-                            alert('请先完成支付，再点击完成订单扣减库存');
+                            alert('Primero complete el pago. Luego finalice el pedido para descontar inventario.');
                             handleOrderClick(order);
                             return;
                           }
 
-                          if (window.confirm(`确认${order.orderType === 'takeout' ? '顾客已取餐' : '外卖订单已完成'}？\n\n点击确定后订单完成，并扣减库存。`)) {
+                          if (window.confirm(`¿Confirmar ${order.orderType === 'takeout' ? 'retiro en barra' : 'delivery completado'}?\n\nAl confirmar se completa el pedido y se descuenta inventario.`)) {
                             setCompletingOrderIds(prev => {
                               const next = new Set(prev);
                               next.add(order.id);
@@ -4555,10 +4569,10 @@ const POS: React.FC = () => {
                             try {
                               await waitForNextPaint();
                               await completeOrderWithStockDeduction(order);
-                              alert('✅ 订单已完成，库存已扣减');
+                              alert('✅ Pedido completado. Inventario descontado.');
                             } catch (error) {
                               console.error('complete order sync failed:', order.id, error);
-                              alert('完成订单同步失败，请检查网络后重试');
+                              alert('No se pudo sincronizar. Revise la red e intente de nuevo.');
                             } finally {
                               setCompletingOrderIds(prev => {
                                 const next = new Set(prev);
@@ -4585,10 +4599,10 @@ const POS: React.FC = () => {
                           boxShadow: completingOrderIds.has(order.id) ? 'none' : '0 8px 18px rgba(22, 163, 74, 0.22)'
                         }}
                       >
-                        {completingOrderIds.has(order.id) ? '处理中...' :
+                        {completingOrderIds.has(order.id) ? 'Procesando...' :
                           order.paymentStatus === 'paid' || order.status === 'served'
-                          ? (order.orderType === 'takeout' ? '✅ 顾客已取餐，完成订单' : '✅ 外卖已完成，完成订单')
-                          : '💳 先支付后完成订单'}
+                          ? (order.orderType === 'takeout' ? '✅ Retirado en barra' : '✅ Delivery completado')
+                          : '💳 Pagar antes de completar'}
                       </button>
                     )}
 
@@ -4604,7 +4618,7 @@ const POS: React.FC = () => {
                     }}>
                       {/* 涓嬪崟鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>下单</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Pedido</span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
@@ -4617,7 +4631,7 @@ const POS: React.FC = () => {
 
                       {/* 浜や粯鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>交付</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Entrega</span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
@@ -4630,7 +4644,7 @@ const POS: React.FC = () => {
 
                       {/* 瀹屾垚鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>完成</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Final</span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
@@ -4650,16 +4664,16 @@ const POS: React.FC = () => {
                         marginBottom: '0.5rem',
                         fontSize: '0.8rem'
                       }}>
-                        已付: C${order.paidAmount.toFixed(2)} / C${order.totalAmount.toFixed(2)}
+                        Pagado: C${order.paidAmount.toFixed(2)} / C${order.totalAmount.toFixed(2)}
                         <span style={{ color: '#f59e0b', fontWeight: '600', marginLeft: '0.5rem' }}>
-                          (还差 C${(order.totalAmount - order.paidAmount).toFixed(2)})
+                          (falta C${(order.totalAmount - order.paidAmount).toFixed(2)})
                         </span>
                       </div>
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontSize: '0.85rem', color: '#374151' }}>
-                        {order.items?.length || 0} 项商品
+                        {order.items?.length || 0} productos
                       </div>
                       <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#2563eb' }}>
                         C${order.totalAmount?.toFixed(2) || '0.00'}
@@ -4692,13 +4706,13 @@ const POS: React.FC = () => {
               width: '400px'
             }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-                {editingTable ? '编辑桌子' : '添加桌子'}
+                {editingTable ? 'Editar mesa' : 'Agregar mesa'}
               </h3>
               <input
                 type="text"
                 value={newTableName}
                 onChange={(e) => setNewTableName(e.target.value)}
-                placeholder="输入桌子名称"
+                placeholder="Nombre de mesa"
                 style={{
                   width: '100%',
                   padding: '0.5rem',
@@ -4724,7 +4738,7 @@ const POS: React.FC = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  取消
+                  Cerrar
                 </button>
                 <button
                   onClick={handleAddTable}
@@ -4737,7 +4751,7 @@ const POS: React.FC = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  {editingTable ? '保存' : '添加'}
+                  {editingTable ? 'Guardar' : 'Agregar'}
                 </button>
               </div>
             </div>
@@ -4773,14 +4787,14 @@ const POS: React.FC = () => {
             overflowY: 'auto'
           }}>
             <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', fontWeight: 'bold' }}>
-              👤 选择顾客
+              👤 Seleccionar cliente
             </h3>
 
             {!showNewCustomerForm ? (
               <>
                 <input
                   type="text"
-                  placeholder="搜索顾客姓名或电话..."
+                  placeholder="Buscar nombre o teléfono..."
                   value={customerSearch}
                   onChange={(e) => setCustomerSearch(e.target.value)}
                   style={{
@@ -4814,11 +4828,11 @@ const POS: React.FC = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
                             <div style={{ fontWeight: '600' }}>{customer.name}</div>
-                            <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>{customer.phone || '无电话'}</div>
+                            <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>{customer.phone || 'Sin teléfono'}</div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>⭐ {customer.points} 积分</div>
-                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>消费 {customer.visitCount} 次</div>
+                            <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>⭐ {customer.points} puntos</div>
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{customer.visitCount} visitas</div>
                           </div>
                         </div>
                       </div>
@@ -4826,7 +4840,7 @@ const POS: React.FC = () => {
 
                   {customers.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                      暂无顾客，请创建新顾客
+                      Sin clientes. Cree uno nuevo.
                     </div>
                   )}
                 </div>
@@ -4845,7 +4859,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ➕ 新建顾客
+                    ➕ Nuevo cliente
                   </button>
                   <button
                     onClick={handleSkipCustomer}
@@ -4860,19 +4874,19 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ⏭️ 跳过
+                    ⏭️ Omitir
                   </button>
                 </div>
               </>
             ) : (
               <>
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>姓名 *</label>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>Nombre *</label>
                   <input
                     type="text"
                     value={newCustomerName}
                     onChange={(e) => setNewCustomerName(e.target.value)}
-                    placeholder="请输入顾客姓名"
+                    placeholder="Ingrese nombre del cliente"
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -4883,12 +4897,12 @@ const POS: React.FC = () => {
                     }}
                   />
 
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>电话</label>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>Teléfono</label>
                   <input
                     type="tel"
                     value={newCustomerPhone}
                     onChange={(e) => setNewCustomerPhone(e.target.value)}
-                    placeholder="请输入电话号码（可选）"
+                    placeholder="Ingrese teléfono (opcional)"
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -4913,7 +4927,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ✅ 创建
+                    ✅ Crear
                   </button>
                   <button
                     onClick={() => {
@@ -4932,7 +4946,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ↩️ 返回
+                    ↩️ Volver
                   </button>
                 </div>
               </>

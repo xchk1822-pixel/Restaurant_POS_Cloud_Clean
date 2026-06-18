@@ -49,7 +49,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
           ref={searchInputRef}
           type="text"
           autoFocus
-          placeholder="搜索菜品 / Buscar platos..."
+          placeholder="Buscar plato..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
@@ -92,7 +92,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               color: selectedCategory === category ? 'white' : '#374151'
             }}
           >
-            {category === 'all' ? '全部' : category}
+            {category === 'all' ? 'Todos' : category}
           </button>
         ))}
       </div>
@@ -209,7 +209,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               )}
               {item.type !== 'recipe' && (
                 <div style={{ fontSize: '0.68rem', color: '#6b7280', padding: '0.2rem 0.45rem 0.4rem' }}>
-                  ✓ 直接扣库存
+                  ✓ Stock directo
                 </div>
               )}
               
@@ -228,7 +228,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   fontWeight: 'bold',
                   zIndex: 10
                 }}>
-                  已停售
+                  No disponible
                 </div>
               )}
             </button>

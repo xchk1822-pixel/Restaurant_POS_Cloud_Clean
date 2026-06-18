@@ -217,7 +217,9 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('data:image/svg+xml');
     expect(orderPanelBlock).toContain("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'");
     expect(orderPanelBlock).not.toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'");
-    expect(orderPanelBlock.indexOf('📋 订单列表')).toBeLessThan(
+    expect(source).toContain("takeout: 'Barra'");
+    expect(orderPanelBlock).toContain("{formatPosOrderType('takeout')}");
+    expect(orderPanelBlock.indexOf('📋 Pedidos')).toBeLessThan(
       orderPanelBlock.indexOf("setOrderTypeFilter('all')")
     );
     expect(orderPanelBlock.indexOf("setOrderTypeFilter('all')")).toBeLessThan(
@@ -245,7 +247,7 @@ describe('production data safety guards', () => {
     expect(cancelBlock).toContain('currentOrderId: undefined');
     expect(cancelBlock).toContain("status: 'available' as const");
     expect(orderListBlock).not.toContain("o.status === 'cancelled'");
-    expect(source).toContain("case 'cancelled': return '\\u5df2\\u53d6\\u6d88';");
+    expect(source).toContain("case 'cancelled': return 'Cancelado';");
   });
 
   test('POS cancelled orders are frozen and cannot be reused for new table orders', () => {
@@ -287,7 +289,8 @@ describe('production data safety guards', () => {
       source.indexOf('const handleCompletePayment = async')
     );
 
-    expect(source).toContain("title={hasUnsentItems ? '确认下单（发送到厨房）' : '所有商品已确认'}");
+    expect(source).toContain("title={hasUnsentItems ? 'Confirmar pedido y enviar a cocina' : 'Todo confirmado'}");
+    expect(source).toContain('✅ Confirmar pedido');
     expect(source).not.toContain('确认下单（发送到厨房并扣减库存）');
     expect(sendBlock).not.toContain('deductStockForOrder');
     expect(sendBlock).not.toContain('deductStock(');
@@ -362,7 +365,7 @@ describe('production data safety guards', () => {
       nonDineInButtonBlock.indexOf('await completeOrderWithStockDeduction(order);')
     );
     expect(nonDineInButtonBlock).toContain('disabled={completingOrderIds.has(order.id)}');
-    expect(nonDineInButtonBlock).toContain("completingOrderIds.has(order.id) ? '处理中...' :");
+    expect(nonDineInButtonBlock).toContain("completingOrderIds.has(order.id) ? 'Procesando...' :");
   });
 
   test('smart update uses Firestore upsert instead of update-only writes', () => {
