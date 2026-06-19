@@ -158,6 +158,12 @@ const getStoreOrdersDirect = (): any[] => {
 
 const money = (value: number): string => `C$ ${Number(value || 0).toFixed(2)}`;
 const pct = (value: number): string => `${Number(value || 0).toFixed(1)}%`;
+const compactMoney = (value: number): string => {
+  const amount = Number(value || 0);
+  if (Math.abs(amount) >= 100000) return `C$${Math.round(amount / 1000)}k`;
+  if (Math.abs(amount) >= 10000) return `C$${(amount / 1000).toFixed(1)}k`;
+  return `C$${amount.toFixed(0)}`;
+};
 
 const comparisonText = (comparison: PeriodComparison): string => {
   if (comparison.direction === 'flat') return '与上期持平';
@@ -167,8 +173,8 @@ const comparisonText = (comparison: PeriodComparison): string => {
 };
 
 const comparisonColor = (comparison: PeriodComparison): string => {
-  if (comparison.direction === 'up') return '#047857';
-  if (comparison.direction === 'down') return '#b91c1c';
+  if (comparison.direction === 'up') return '#0f9488';
+  if (comparison.direction === 'down') return '#c2410c';
   return '#64748b';
 };
 
@@ -183,10 +189,10 @@ const getRankingScopeLabel = (scope: RankingScope, beverageCategory: BeverageCat
 const getHeatBackground = (intensity: number, inMonth: boolean): string => {
   if (!inMonth) return '#f8fafc';
   if (intensity <= 0) return '#ffffff';
-  if (intensity < 25) return '#ecfdf5';
-  if (intensity < 50) return '#bbf7d0';
-  if (intensity < 75) return '#86efac';
-  return '#22c55e';
+  if (intensity < 25) return '#ecfeff';
+  if (intensity < 50) return '#ccfbf1';
+  if (intensity < 75) return '#7dd3fc';
+  return '#2dd4bf';
 };
 
 const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders }) => {
@@ -534,9 +540,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1rem',
-      background: '#f3f4f6',
-      color: '#111827',
+      padding: '1.25rem 1.4rem',
+      background: '#f6f9fb',
+      color: '#243647',
     },
     header: {
       display: 'flex',
@@ -548,15 +554,15 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       flexShrink: 0 as const,
     },
     title: {
-      fontSize: '1.5rem',
-      fontWeight: 800,
+      fontSize: '1.6rem',
+      fontWeight: 700,
       margin: 0,
-      color: '#111827',
+      color: '#142b3d',
       letterSpacing: 0,
     },
     subtitle: {
-      marginTop: '0.25rem',
-      color: '#64748b',
+      marginTop: '0.35rem',
+      color: '#6b7f8f',
       fontSize: '0.875rem',
     },
     toolbar: {
@@ -565,38 +571,40 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       flexWrap: 'wrap' as const,
       gap: '0.5rem',
       background: '#ffffff',
-      border: '1px solid #e5e7eb',
+      border: '1px solid #dce8ef',
       borderRadius: '0.5rem',
-      padding: '0.5rem',
-      boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
+      padding: '0.55rem',
+      boxShadow: '0 10px 28px rgba(33, 53, 71, 0.07)',
     },
     segmentButton: (active: boolean) => ({
-      border: '1px solid transparent',
-      background: active ? '#111827' : '#f8fafc',
-      color: active ? '#ffffff' : '#334155',
+      border: active ? '1px solid #0f9488' : '1px solid #dce8ea',
+      background: active ? 'linear-gradient(135deg, #0f9488, #2aa7c8)' : '#ffffff',
+      color: active ? '#ffffff' : '#496174',
       borderRadius: '0.375rem',
       padding: '0.5rem 0.75rem',
       fontSize: '0.8125rem',
-      fontWeight: 700,
+      fontWeight: 650,
       cursor: 'pointer',
       whiteSpace: 'nowrap' as const,
+      boxShadow: active ? '0 8px 18px rgba(15, 148, 136, 0.18)' : 'none',
     }),
     input: {
       height: '2.25rem',
-      border: '1px solid #d1d5db',
+      border: '1px solid #d7e5e8',
       borderRadius: '0.375rem',
       padding: '0 0.5rem',
       fontSize: '0.8125rem',
       background: '#ffffff',
+      color: '#294052',
     },
     select: {
       height: '2.25rem',
-      border: '1px solid #d1d5db',
+      border: '1px solid #d7e5e8',
       borderRadius: '0.375rem',
       padding: '0 0.5rem',
       fontSize: '0.8125rem',
       background: '#ffffff',
-      color: '#111827',
+      color: '#294052',
     },
     scroll: {
       flex: 1,
@@ -605,27 +613,27 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     },
     card: {
       background: '#ffffff',
-      border: '1px solid #e5e7eb',
+      border: '1px solid #d9e7ef',
       borderRadius: '0.5rem',
-      padding: '1rem',
-      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+      padding: '1.05rem',
+      boxShadow: '0 12px 28px rgba(37, 72, 88, 0.08)',
     },
     section: {
       background: '#ffffff',
-      border: '1px solid #e5e7eb',
+      border: '1px solid #d9e7ef',
       borderRadius: '0.5rem',
       padding: '1rem',
-      boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+      boxShadow: '0 12px 28px rgba(37, 72, 88, 0.08)',
       marginBottom: '1rem',
     },
     sectionTitle: {
       margin: 0,
       fontSize: '1rem',
-      fontWeight: 800,
-      color: '#111827',
+      fontWeight: 700,
+      color: '#213547',
     },
     muted: {
-      color: '#64748b',
+      color: '#6b7f8f',
       fontSize: '0.8125rem',
     },
     table: {
@@ -636,24 +644,24 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     th: {
       textAlign: 'left' as const,
       padding: '0.625rem',
-      color: '#475569',
-      background: '#f8fafc',
-      borderBottom: '1px solid #e5e7eb',
-      fontWeight: 800,
+      color: '#577083',
+      background: '#f4fbfb',
+      borderBottom: '1px solid #e2eef1',
+      fontWeight: 650,
     },
     td: {
       padding: '0.625rem',
-      borderBottom: '1px solid #f1f5f9',
-      color: '#334155',
+      borderBottom: '1px solid #edf4f6',
+      color: '#334c5f',
     },
   };
 
   const kpiCards = [
-    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales },
-    { label: '订单数', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount },
-    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment },
-    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment },
-    { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit },
+    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales, accent: '#22c55e', soft: '#dcfce7', mark: '￥' },
+    { label: '订单', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount, accent: '#3b82f6', soft: '#dbeafe', mark: '单' },
+    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment, accent: '#14b8a6', soft: '#ccfbf1', mark: '$' },
+    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment, accent: '#2563eb', soft: '#dbeafe', mark: '卡' },
+    { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit, accent: '#fb6f55', soft: '#ffe4df', mark: '↗' },
   ];
 
   const maxRankingRevenue = Math.max(...focusedRankings.map(item => item.revenue), 0);
@@ -665,21 +673,21 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     const current = movementMetric === 'revenue' ? item.currentRevenue : item.currentQuantity;
     const previous = movementMetric === 'revenue' ? item.previousRevenue : item.previousQuantity;
     const percentValue = movementMetric === 'revenue' ? item.revenuePercent : item.quantityPercent;
-    const color = type === 'up' ? '#047857' : '#b91c1c';
+    const color = type === 'up' ? '#0f9488' : '#c2410c';
     const formattedDelta = movementMetric === 'revenue' ? money(delta) : delta.toFixed(1);
     const formattedCurrent = movementMetric === 'revenue' ? money(current) : current.toFixed(1);
     const formattedPrevious = movementMetric === 'revenue' ? money(previous) : previous.toFixed(1);
 
     return (
-      <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-        <div style={{ width: 28, height: 28, borderRadius: 14, background: type === 'up' ? '#dcfce7' : '#fee2e2', color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.75rem' }}>{index + 1}</div>
+      <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #edf4f6' }}>
+        <div style={{ width: 28, height: 28, borderRadius: 14, background: type === 'up' ? '#dff7ef' : '#ffedd5', color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.75rem' }}>{index + 1}</div>
         <div>
-          <div style={{ fontWeight: 800, color: '#111827' }}>{item.name}</div>
+          <div style={{ fontWeight: 700, color: '#263d50' }}>{item.name}</div>
           <div style={{ ...styles.muted, marginTop: 2 }}>{item.category} · 本期 {formattedCurrent} / 上期 {formattedPrevious}</div>
         </div>
-        <div style={{ textAlign: 'right', color, fontWeight: 800 }}>
+        <div style={{ textAlign: 'right', color, fontWeight: 700 }}>
           {delta > 0 ? '+' : ''}{formattedDelta}
-          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{percentValue === null ? '新增' : `${percentValue > 0 ? '+' : ''}${percentValue.toFixed(1)}%`}</div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 650 }}>{percentValue === null ? '新增' : `${percentValue > 0 ? '+' : ''}${percentValue.toFixed(1)}%`}</div>
         </div>
       </div>
     );
@@ -723,7 +731,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             disabled={isRefreshing}
             style={{
               ...styles.segmentButton(false),
-              background: isRefreshing ? '#94a3b8' : '#0f766e',
+              background: isRefreshing ? '#94a3b8' : 'linear-gradient(135deg, #0f9488, #2aa7c8)',
               color: '#ffffff',
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
             }}
@@ -734,75 +742,122 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       </div>
 
       <div style={styles.scroll}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '0.8rem', marginBottom: '1rem' }}>
           {kpiCards.map(card => (
-            <div key={card.label} style={styles.card}>
-              <div style={styles.muted}>{card.label}</div>
-              <div style={{ fontSize: '1.375rem', fontWeight: 900, marginTop: '0.375rem', color: '#111827' }}>{card.value}</div>
-              <div style={{ ...styles.muted, marginTop: '0.25rem' }}>{card.sub}</div>
-              <div style={{ marginTop: '0.75rem', color: comparisonColor(card.comparison), fontSize: '0.8125rem', fontWeight: 800 }}>
-                {comparisonText(card.comparison)}
+            <div key={card.label} style={{ ...styles.card, minHeight: 122, overflow: 'hidden', padding: '0.9rem' }}>
+              <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center' }}>
+                <div style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 999,
+                  background: `radial-gradient(circle at 35% 30%, #ffffff 0%, ${card.soft} 35%, ${card.accent} 100%)`,
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 760,
+                  fontSize: '0.82rem',
+                  boxShadow: `0 10px 24px ${card.accent}33`,
+                  flex: '0 0 auto',
+                }}>
+                  {card.mark}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#50687a', fontSize: '0.78rem', fontWeight: 650 }}>{card.label}</div>
+                  <div style={{ fontSize: '1.08rem', fontWeight: 760, marginTop: '0.25rem', color: '#142b3d', whiteSpace: 'nowrap' }}>{card.value}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.35rem', marginTop: '0.7rem' }}>
+                <span style={{ ...styles.muted, whiteSpace: 'nowrap', fontSize: '0.76rem' }}>{card.sub}</span>
+                <span style={{
+                  alignSelf: 'flex-start',
+                  color: comparisonColor(card.comparison),
+                  background: `${comparisonColor(card.comparison)}13`,
+                  borderRadius: 999,
+                  padding: '0.16rem 0.42rem',
+                  fontSize: '0.68rem',
+                  fontWeight: 650,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {comparisonText(card.comparison)}
+                </span>
               </div>
             </div>
           ))}
         </div>
 
-        <div style={styles.section}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-            <div>
-              <h2 style={styles.sectionTitle}>月度销售日历</h2>
-              <div style={{ ...styles.muted, marginTop: 4 }}>
-                {monthlyCalendar?.month || calendarMonth} · 总额 {money(monthlyCalendar?.totalRevenue || 0)} · {monthlyCalendar?.totalOrders || 0} 单
-                {monthlyCalendar?.bestWeekday ? ` · 最高 ${monthlyCalendar.bestWeekday.weekday}` : ''}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(340px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
+          <div style={{ ...styles.section, marginBottom: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <div>
+                <h2 style={styles.sectionTitle}>月度销售日历</h2>
+                <div style={{ ...styles.muted, marginTop: 4 }}>
+                  {monthlyCalendar?.month || calendarMonth} · 总额 {money(monthlyCalendar?.totalRevenue || 0)} · {monthlyCalendar?.totalOrders || 0} 单
+                  {monthlyCalendar?.bestWeekday ? ` · 最高 ${monthlyCalendar.bestWeekday.weekday}` : ''}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7f8f', fontSize: '0.78rem' }}>
+                <span>低</span>
+                {[0, 20, 40, 60, 80].map(level => (
+                  <span key={level} style={{ width: 18, height: 14, borderRadius: 3, background: getHeatBackground(level, true), border: '1px solid #d9e7ef' }} />
+                ))}
+                <span>高</span>
               </div>
             </div>
-            <div style={styles.muted}>颜色越深表示当天销售额越高</div>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: 760 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 110px', gap: 6, marginBottom: 6 }}>
+            <div style={{ overflowX: 'auto' }}>
+              <div style={{ minWidth: 560 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 92px', gap: 6, marginBottom: 8 }}>
                 {(monthlyCalendar?.weekdays || ['周一', '周二', '周三', '周四', '周五', '周六', '周日']).map(day => (
-                  <div key={day} style={{ ...styles.muted, fontWeight: 800, textAlign: 'center' }}>{day}</div>
+                  <div key={day} style={{ ...styles.muted, fontWeight: 650, textAlign: 'center' }}>{day}</div>
                 ))}
-                <div style={{ ...styles.muted, fontWeight: 800, textAlign: 'center' }}>周合计</div>
+                <div style={{ ...styles.muted, fontWeight: 650, textAlign: 'center' }}>周合计</div>
               </div>
               {(monthlyCalendar?.weeks || []).map((week, weekIndex) => (
-                <div key={weekIndex} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 110px', gap: 6, marginBottom: 6 }}>
+                <div key={weekIndex} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 92px', gap: 6, marginBottom: 6 }}>
                   {week.days.map(day => (
                     <div
                       key={day.date}
                       style={{
-                        minHeight: 78,
+                        minHeight: 72,
                         padding: '0.5rem',
                         borderRadius: '0.5rem',
-                        border: day.inMonth ? '1px solid #dbe4ea' : '1px solid #f1f5f9',
+                        border: day.inMonth ? '1px solid rgba(148, 191, 198, 0.42)' : '1px solid #f1f5f9',
                         background: getHeatBackground(day.intensity, day.inMonth),
-                        color: day.intensity >= 75 ? '#052e16' : '#111827',
+                        color: day.intensity >= 75 ? '#053b3d' : '#294052',
                         opacity: day.inMonth ? 1 : 0.35,
+                        boxShadow: day.inMonth && day.intensity > 0 ? 'inset 0 0 0 1px rgba(255,255,255,0.42)' : 'none',
                       }}
                     >
-                      <div style={{ fontWeight: 900, fontSize: '0.8125rem' }}>{day.day}</div>
-                      <div style={{ fontWeight: 800, marginTop: 6, fontSize: '0.8125rem' }}>{money(day.revenue)}</div>
-                      <div style={{ fontSize: '0.72rem', marginTop: 3 }}>{day.orderCount} 单</div>
+                      <div style={{ fontWeight: 700, fontSize: '0.8125rem' }}>{day.day}</div>
+                      <div style={{ fontWeight: 720, marginTop: 6, fontSize: '0.76rem' }}>{compactMoney(day.revenue)}</div>
+                      <div style={{ fontSize: '0.72rem', marginTop: 3, color: '#557083' }}>{day.orderCount} 单</div>
                       {day.averageDeltaPercent !== null && (
-                        <div style={{ fontSize: '0.7rem', color: day.averageDeltaPercent >= 0 ? '#047857' : '#b91c1c' }}>
+                        <div style={{ fontSize: '0.7rem', color: day.averageDeltaPercent >= 0 ? '#0f9488' : '#c2410c' }}>
                           {day.averageDeltaPercent >= 0 ? '+' : ''}{day.averageDeltaPercent.toFixed(0)}%
                         </div>
                       )}
                     </div>
                   ))}
-                  <div style={{ padding: '0.5rem', borderRadius: '0.5rem', background: '#0f172a', color: '#ffffff', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ fontWeight: 900 }}>{money(week.weeklyRevenue)}</div>
-                    <div style={{ fontSize: '0.75rem', marginTop: 4 }}>{week.weeklyOrders} 单</div>
+                  <div style={{
+                    padding: '0.55rem',
+                    borderRadius: '0.5rem',
+                    background: 'linear-gradient(135deg, #e0f7fa, #effcf6)',
+                    border: '1px solid #bce5e8',
+                    color: '#17606d',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                  }}>
+                    <div style={{ fontWeight: 720 }}>{compactMoney(week.weeklyRevenue)}</div>
+                    <div style={{ fontSize: '0.75rem', marginTop: 4, color: '#5b7586' }}>{week.weeklyOrders} 单</div>
                   </div>
                 </div>
               ))}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(320px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
-          <div style={styles.section}>
+          <div style={{ ...styles.section, marginBottom: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               <div>
                 <h2 style={styles.sectionTitle}>{getRankingScopeLabel(rankingScope, beverageCategoryFilter)}销售排行</h2>
@@ -846,26 +901,30 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
                 {focusedRankings.map((item, index) => {
                   const barWidth = maxRankingRevenue > 0 ? Math.max(4, (item.revenue / maxRankingRevenue) * 100) : 0;
                   return (
-                    <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '36px minmax(0, 1fr) 110px 110px 100px', gap: '0.75rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 14, background: index < 3 ? '#111827' : '#e2e8f0', color: index < 3 ? '#ffffff' : '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '0.75rem' }}>{index + 1}</div>
+                    <div key={`${item.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '36px minmax(0, 1fr) auto', gap: '0.75rem', alignItems: 'center', padding: '0.74rem 0', borderBottom: '1px solid #edf4f6' }}>
+                      <div style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 14,
+                        background: index < 3 ? 'linear-gradient(135deg, #0f9488, #38bdf8)' : '#eef5f6',
+                        color: index < 3 ? '#ffffff' : '#60778a',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 700,
+                        fontSize: '0.75rem',
+                        boxShadow: index < 3 ? '0 8px 16px rgba(15, 148, 136, 0.16)' : 'none',
+                      }}>{index + 1}</div>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 900, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
+                        <div style={{ fontWeight: 700, color: '#263d50', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
                         <div style={{ ...styles.muted, marginTop: 2 }}>{item.category} · 均价 {money(item.averagePrice)}</div>
-                        <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
-                          <div style={{ width: `${barWidth}%`, height: '100%', background: '#0f766e', borderRadius: 3 }} />
+                        <div style={{ height: 6, background: '#edf4f6', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
+                          <div style={{ width: `${barWidth}%`, height: '100%', background: 'linear-gradient(90deg, #0f9488, #38bdf8)', borderRadius: 3 }} />
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={styles.muted}>销量</div>
-                        <div style={{ fontWeight: 900 }}>{item.quantity.toFixed(1)}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={styles.muted}>金额</div>
-                        <div style={{ fontWeight: 900 }}>{money(item.revenue)}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={styles.muted}>占比</div>
-                        <div style={{ fontWeight: 900 }}>{pct(item.revenueShare)}</div>
+                        <div style={{ fontWeight: 700, color: '#263d50' }}>{money(item.revenue)}</div>
+                        <div style={styles.muted}>{item.quantity.toFixed(1)} 份 · {pct(item.revenueShare)}</div>
                       </div>
                     </div>
                   );
@@ -874,6 +933,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             )}
           </div>
 
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(320px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
           <div style={styles.section}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem' }}>
               <div>
@@ -886,13 +948,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               </div>
             </div>
             <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontWeight: 900, color: '#047857', marginBottom: '0.25rem' }}>增长最大</div>
+              <div style={{ fontWeight: 700, color: '#0f9488', marginBottom: '0.25rem' }}>增长最大</div>
               {rankingMovement.increased.length === 0 ? (
                 <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无增长项</div>
               ) : rankingMovement.increased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'up'))}
             </div>
             <div>
-              <div style={{ fontWeight: 900, color: '#b91c1c', marginBottom: '0.25rem' }}>下降最大</div>
+              <div style={{ fontWeight: 700, color: '#c2410c', marginBottom: '0.25rem' }}>下降最大</div>
               {rankingMovement.decreased.length === 0 ? (
                 <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无下降项</div>
               ) : rankingMovement.decreased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'down'))}
@@ -904,17 +966,17 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
           <h2 style={styles.sectionTitle}>业务类型分析</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
             {[
-              { label: '堂食', orders: stats.dineInOrders, revenue: stats.dineInRevenue, color: '#0f766e' },
-              { label: 'Barra', orders: stats.takeoutOrders, revenue: stats.takeoutRevenue, color: '#2563eb' },
-              { label: 'Delivery', orders: stats.deliveryOrders, revenue: stats.deliveryRevenue, color: '#7c3aed' },
+              { label: '堂食', orders: stats.dineInOrders, revenue: stats.dineInRevenue, color: '#0f9488', bg: '#effcf9' },
+              { label: 'Barra', orders: stats.takeoutOrders, revenue: stats.takeoutRevenue, color: '#2aa7c8', bg: '#eff8ff' },
+              { label: 'Delivery', orders: stats.deliveryOrders, revenue: stats.deliveryRevenue, color: '#7c74d8', bg: '#f5f3ff' },
             ].map(item => (
-              <div key={item.label} style={{ background: '#f8fafc', borderRadius: '0.5rem', padding: '0.875rem', border: '1px solid #e5e7eb' }}>
-                <div style={{ ...styles.muted, fontWeight: 800 }}>{item.label}</div>
+              <div key={item.label} style={{ background: item.bg, borderRadius: '0.5rem', padding: '0.875rem', border: '1px solid rgba(197, 216, 221, 0.7)' }}>
+                <div style={{ ...styles.muted, fontWeight: 650 }}>{item.label}</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginTop: '0.5rem' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 900, color: item.color }}>{item.orders} 单</div>
-                  <div style={{ fontWeight: 900 }}>{money(item.revenue)}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 720, color: item.color }}>{item.orders} 单</div>
+                  <div style={{ fontWeight: 700, color: '#263d50' }}>{money(item.revenue)}</div>
                 </div>
-                <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: '0.75rem', overflow: 'hidden' }}>
+                <div style={{ height: 6, background: 'rgba(210, 226, 231, 0.85)', borderRadius: 3, marginTop: '0.75rem', overflow: 'hidden' }}>
                   <div style={{ width: `${stats.totalSales > 0 ? (item.revenue / stats.totalSales) * 100 : 0}%`, height: '100%', background: item.color }} />
                 </div>
               </div>
@@ -929,8 +991,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               <div style={{ marginTop: '0.75rem' }}>
                 {expenseByCategory.length === 0 ? <div style={styles.muted}>暂无开支</div> : expenseByCategory.map(item => (
                   <div key={item.category} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                    <span style={{ fontWeight: 800 }}>{item.category}</span>
-                    <span style={{ color: '#b91c1c', fontWeight: 900 }}>{money(item.amount)}</span>
+                    <span style={{ fontWeight: 650, color: '#263d50' }}>{item.category}</span>
+                    <span style={{ color: '#c2410c', fontWeight: 700 }}>{money(item.amount)}</span>
                   </div>
                 ))}
               </div>
@@ -940,9 +1002,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               <div style={{ marginTop: '0.75rem' }}>
                 {topPurchases.length === 0 ? <div style={styles.muted}>暂无采购</div> : topPurchases.map((item, index) => (
                   <div key={item.name} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                    <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
-                    <span style={{ fontWeight: 800 }}>{item.name}<span style={{ ...styles.muted, marginLeft: 6 }}>x {item.quantity}</span></span>
-                    <span style={{ fontWeight: 900 }}>{money(item.amount)}</span>
+                    <span style={{ fontWeight: 700, color: '#6b7f8f' }}>{index + 1}</span>
+                    <span style={{ fontWeight: 650, color: '#263d50' }}>{item.name}<span style={{ ...styles.muted, marginLeft: 6 }}>x {item.quantity}</span></span>
+                    <span style={{ fontWeight: 700, color: '#263d50' }}>{money(item.amount)}</span>
                   </div>
                 ))}
               </div>
@@ -970,12 +1032,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
                   {salesTrend.map(day => (
                     <tr key={day.date}>
                       <td style={styles.td}>{day.date}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 900 }}>{money(day.sales)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{money(day.sales)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{day.orders}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.dineInSales)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.takeoutSales)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{money(day.deliverySales)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right', color: day.profit >= 0 ? '#047857' : '#b91c1c', fontWeight: 900 }}>{money(day.profit)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', color: day.profit >= 0 ? '#0f9488' : '#c2410c', fontWeight: 700 }}>{money(day.profit)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -990,12 +1052,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
               <div style={{ background: '#eff6ff', borderRadius: '0.5rem', padding: '0.875rem' }}>
                 <div style={{ ...styles.muted, color: '#1d4ed8' }}>新客户</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#1d4ed8' }}>{customerProfile.newCustomers}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 720, color: '#2aa7c8' }}>{customerProfile.newCustomers}</div>
                 <div style={styles.muted}>占比 {pct(customerProfile.newCustomerRate)}</div>
               </div>
               <div style={{ background: '#ecfdf5', borderRadius: '0.5rem', padding: '0.875rem' }}>
-                <div style={{ ...styles.muted, color: '#047857' }}>老客户</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#047857' }}>{customerProfile.returningCustomers}</div>
+                <div style={{ ...styles.muted, color: '#0f9488' }}>老客户</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 720, color: '#0f9488' }}>{customerProfile.returningCustomers}</div>
                 <div style={styles.muted}>占比 {pct(100 - customerProfile.newCustomerRate)}</div>
               </div>
             </div>
@@ -1014,9 +1076,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             <div style={{ marginTop: '0.75rem' }}>
               {customerProfile.peakHours.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.peakHours.map((slot, index) => (
                 <div key={slot.hour} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                  <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
-                  <span style={{ fontWeight: 800 }}>{String(slot.hour).padStart(2, '0')}:00 - {String(slot.hour + 1).padStart(2, '0')}:00<span style={{ ...styles.muted, marginLeft: 6 }}>{slot.orderCount} 单</span></span>
-                  <span style={{ fontWeight: 900 }}>{money(slot.revenue)}</span>
+                  <span style={{ fontWeight: 700, color: '#6b7f8f' }}>{index + 1}</span>
+                  <span style={{ fontWeight: 650, color: '#263d50' }}>{String(slot.hour).padStart(2, '0')}:00 - {String(slot.hour + 1).padStart(2, '0')}:00<span style={{ ...styles.muted, marginLeft: 6 }}>{slot.orderCount} 单</span></span>
+                  <span style={{ fontWeight: 700, color: '#263d50' }}>{money(slot.revenue)}</span>
                 </div>
               ))}
             </div>
@@ -1028,11 +1090,11 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               {customerProfile.categoryPreference.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.categoryPreference.slice(0, 8).map(item => (
                 <div key={item.category} style={{ marginBottom: '0.75rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
-                    <span style={{ fontWeight: 800 }}>{item.category}</span>
+                    <span style={{ fontWeight: 650, color: '#263d50' }}>{item.category}</span>
                     <span style={styles.muted}>{item.orderCount} 份 · {pct(item.percentage)}</span>
                   </div>
-                  <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginTop: 6, overflow: 'hidden' }}>
-                    <div style={{ width: `${item.percentage}%`, height: '100%', background: '#0f766e' }} />
+                  <div style={{ height: 6, background: '#edf4f6', borderRadius: 3, marginTop: 6, overflow: 'hidden' }}>
+                    <div style={{ width: `${item.percentage}%`, height: '100%', background: 'linear-gradient(90deg, #0f9488, #38bdf8)' }} />
                   </div>
                 </div>
               ))}
@@ -1044,12 +1106,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             <div style={{ marginTop: '0.75rem' }}>
               {customerProfile.topCustomers.length === 0 ? <div style={styles.muted}>暂无数据</div> : customerProfile.topCustomers.map((customer, index) => (
                 <div key={`${customer.phone || 'guest'}-${index}`} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                  <span style={{ fontWeight: 900, color: '#64748b' }}>{index + 1}</span>
+                  <span style={{ fontWeight: 700, color: '#6b7f8f' }}>{index + 1}</span>
                   <div>
-                    <div style={{ fontWeight: 800 }}>{customer.phone || '散客'}</div>
+                    <div style={{ fontWeight: 650, color: '#263d50' }}>{customer.phone || '散客'}</div>
                     <div style={styles.muted}>{customer.orderCount} 次 · 常点 {customer.favoriteDish || '-'}</div>
                   </div>
-                  <span style={{ fontWeight: 900 }}>{money(customer.totalSpent)}</span>
+                  <span style={{ fontWeight: 700, color: '#263d50' }}>{money(customer.totalSpent)}</span>
                 </div>
               ))}
             </div>
