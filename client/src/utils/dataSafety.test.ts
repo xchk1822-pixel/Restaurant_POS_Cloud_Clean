@@ -1304,6 +1304,23 @@ describe('production data safety guards', () => {
     expect(source).toContain("await smartDeleteDocument('menu_items', menu.id)");
   });
 
+  test('inventory UI polish keeps cloud writes and image upload behavior intact', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const menuPath = path.join(process.cwd(), 'src/pages/Inventory/MenuManagement.tsx');
+    const inventorySource = fs.readFileSync(inventoryPath, 'utf8');
+    const menuSource = fs.readFileSync(menuPath, 'utf8');
+
+    expect(inventorySource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(menuSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(inventorySource).toContain("await smartUpdateDocument('inventory_items'");
+    expect(inventorySource).toContain("await smartDeleteDocument('inventory_items'");
+    expect(inventorySource).toContain("await smartSetDocument('inventory_categories'");
+    expect(menuSource).toContain("await smartUpdateDocument('menu_items'");
+    expect(menuSource).toContain("await smartDeleteDocument('menu_items'");
+    expect(menuSource).toContain('processAndUploadMenuImage');
+    expect(menuSource).toContain('MenuImage');
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');

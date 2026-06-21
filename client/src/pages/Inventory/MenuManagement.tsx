@@ -5,6 +5,7 @@ import { getRecordVersion, mergeRecordsByVersion } from '../../utils/syncMerge';
 import MenuImage from '../../components/MenuImage';
 import { processAndUploadMenuImage } from '../../services/menuImageService';
 import { dataService } from '../../services/DataService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface RecipeIngredient {
   itemId: string;
@@ -32,6 +33,60 @@ interface MenuItem {
   imageUploadPending?: boolean;
   lastModified?: number;
 }
+
+const pageStyle: React.CSSProperties = {
+  padding: '1.1rem',
+  height: '100vh',
+  maxHeight: '100vh',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.85rem',
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+  background: colors.page,
+  color: colors.textPrimary,
+  fontFamily: font.family,
+};
+
+const headerStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '1rem',
+  flexWrap: 'wrap',
+};
+
+const primaryButtonStyle: React.CSSProperties = {
+  padding: '0.58rem 0.95rem',
+  backgroundColor: colors.teal,
+  color: colors.surface,
+  border: 'none',
+  borderRadius: radii.md,
+  cursor: 'pointer',
+  fontWeight: 700,
+  fontSize: font.body,
+  boxShadow: '0 8px 18px rgba(15, 118, 110, 0.18)',
+};
+
+const secondaryButtonStyle: React.CSSProperties = {
+  ...primaryButtonStyle,
+  backgroundColor: colors.surface,
+  color: colors.textPrimary,
+  border: `1px solid ${colors.borderStrong}`,
+  boxShadow: 'none',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.62rem 0.75rem',
+  border: `1px solid ${colors.borderStrong}`,
+  borderRadius: radii.md,
+  fontSize: font.body,
+  backgroundColor: colors.surface,
+  color: colors.textPrimary,
+  boxSizing: 'border-box',
+  outline: 'none',
+};
 
 const MenuManagement: React.FC = () => {
   const { 
@@ -157,29 +212,20 @@ const MenuManagement: React.FC = () => {
   );
 
   return (
-    <div style={{ 
-      padding: '1.5rem', 
-      height: '100vh', 
-      maxHeight: '100vh',
-      display: 'flex', 
-      flexDirection: 'column', 
-      gap: '1rem', 
-      overflow: 'hidden',
-      boxSizing: 'border-box'
-    }}>
+    <div style={pageStyle}>
       {/* 标题栏 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={headerStyle}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>🍽️ 菜品管理</h2>
-          <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#6b7280' }}>
-            共 <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{menuItems.length}</span> 个菜品 · 
-            可售 <span style={{ fontWeight: 'bold', color: '#10b981' }}>{menuItems.filter(m => m.available).length}</span> 个 · 
-            停售 <span style={{ fontWeight: 'bold', color: '#ef4444' }}>{menuItems.filter(m => !m.available).length}</span> 个
+          <h2 style={{ margin: 0, fontSize: font.title, fontWeight: 750, letterSpacing: 0 }}>🍽️ 菜品管理</h2>
+          <div style={{ marginTop: '0.35rem', fontSize: font.body, color: colors.textSecondary }}>
+            共 <span style={{ fontWeight: 750, color: colors.blue }}>{menuItems.length}</span> 个菜品 ·
+            可售 <span style={{ fontWeight: 750, color: colors.success }}>{menuItems.filter(m => m.available).length}</span> 个 ·
+            停售 <span style={{ fontWeight: 750, color: colors.danger }}>{menuItems.filter(m => !m.available).length}</span> 个
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.55rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {lastSyncedAt && (
-            <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
               最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
@@ -187,13 +233,10 @@ const MenuManagement: React.FC = () => {
             onClick={refreshMenuData}
             disabled={isRefreshing}
             style={{
-              padding: '0.6rem 1.2rem',
-              backgroundColor: isRefreshing ? '#9ca3af' : '#0ea5e9',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
+              ...secondaryButtonStyle,
+              backgroundColor: isRefreshing ? colors.surfaceMuted : colors.surface,
+              color: isRefreshing ? colors.textMuted : colors.textPrimary,
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              fontWeight: '600'
             }}
           >
             {isRefreshing ? '同步中...' : '刷新菜品'}
@@ -201,13 +244,9 @@ const MenuManagement: React.FC = () => {
           <button
             onClick={() => setShowCategoryModal(true)}
             style={{
-              padding: '0.6rem 1.2rem',
-              backgroundColor: '#8b5cf6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              fontWeight: '600'
+              ...secondaryButtonStyle,
+              color: colors.teal,
+              borderColor: colors.tealSoft,
             }}
           >
             🏷️ 分类管理
@@ -228,15 +267,7 @@ const MenuManagement: React.FC = () => {
               });
               setShowMenuModal(true);
             }}
-            style={{
-              padding: '0.6rem 1.2rem',
-              backgroundColor: '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              fontWeight: '600'
-            }}
+            style={primaryButtonStyle}
           >
             ➕ 添加菜品
           </button>
@@ -244,42 +275,27 @@ const MenuManagement: React.FC = () => {
       </div>
 
       {/* 菜品卡片列表 */}
-      <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, backgroundColor: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           padding: '0.85rem 1rem',
-          borderBottom: '1px solid #e5e7eb',
+          borderBottom: `1px solid ${colors.border}`,
           display: 'grid',
           gridTemplateColumns: 'minmax(240px, 1fr) minmax(180px, 240px) auto',
           gap: '0.75rem',
           alignItems: 'center',
-          backgroundColor: '#f9fafb'
+          backgroundColor: colors.surfaceMuted
         }}>
           <input
             type="text"
             value={menuSearchTerm}
             onChange={(e) => setMenuSearchTerm(e.target.value)}
             placeholder="搜索菜品名称、分类或价格"
-            style={{
-              width: '100%',
-              padding: '0.6rem 0.75rem',
-              border: '1px solid #d1d5db',
-              borderRadius: '0.375rem',
-              fontSize: '0.9rem',
-              boxSizing: 'border-box'
-            }}
+            style={inputStyle}
           />
           <select
             value={selectedMenuCategory}
             onChange={(e) => setSelectedMenuCategory(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '0.6rem 0.75rem',
-              border: '1px solid #d1d5db',
-              borderRadius: '0.375rem',
-              fontSize: '0.9rem',
-              backgroundColor: 'white',
-              boxSizing: 'border-box'
-            }}
+            style={inputStyle}
           >
             <option value="all">全部类别</option>
             {menuCategoryOptions.map(categoryName => (
@@ -289,7 +305,7 @@ const MenuManagement: React.FC = () => {
             ))}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
               显示 {filteredMenuItems.length} / {menuItems.length}
             </span>
             {(menuSearchTerm || selectedMenuCategory !== 'all') && (
@@ -298,17 +314,7 @@ const MenuManagement: React.FC = () => {
                   setMenuSearchTerm('');
                   setSelectedMenuCategory('all');
                 }}
-                style={{
-                  padding: '0.5rem 0.75rem',
-                  backgroundColor: '#e5e7eb',
-                  color: '#374151',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  fontWeight: '600',
-                  fontSize: '0.85rem',
-                  whiteSpace: 'nowrap'
-                }}
+                style={{ ...secondaryButtonStyle, padding: '0.5rem 0.75rem', fontSize: font.caption, whiteSpace: 'nowrap' }}
               >
                 清空
               </button>
@@ -327,21 +333,22 @@ const MenuManagement: React.FC = () => {
               <p>没有找到匹配的菜品</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.85rem' }}>
               {filteredMenuItems.map(menu => (
                 <div key={menu.id} style={{
-                  padding: '1rem',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '0.5rem',
-                  backgroundColor: menu.available ? 'white' : '#fee2e2'
+                  padding: '0.9rem',
+                  border: `1px solid ${menu.available ? colors.border : '#fecaca'}`,
+                  borderRadius: radii.lg,
+                  backgroundColor: menu.available ? colors.surface : colors.dangerSoft,
+                  boxShadow: '0 6px 18px rgba(15, 23, 42, 0.05)'
                 }}>
                   <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
                     {/* 菜品图片 */}
                     <div style={{
                       width: '80px',
                       height: '80px',
-                      borderRadius: '0.375rem',
-                      backgroundColor: '#f3f4f6',
+                      borderRadius: radii.md,
+                      backgroundColor: colors.surfaceMuted,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -365,18 +372,18 @@ const MenuManagement: React.FC = () => {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                         <div>
-                          <div style={{ fontWeight: 'bold', fontSize: '1.05rem' }}>{menu.name}</div>
-                          <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                          <div style={{ fontWeight: 750, fontSize: '1rem', color: colors.textPrimary }}>{menu.name}</div>
+                          <div style={{ fontSize: font.caption, color: colors.textSecondary, marginTop: '0.25rem' }}>
                             {menu.category} · C$ {menu.price.toFixed(2)}
                           </div>
                         </div>
                         <span style={{
                           padding: '0.25rem 0.5rem',
-                          backgroundColor: menu.available ? '#d1fae5' : '#fee2e2',
-                          color: menu.available ? '#059669' : '#dc2626',
-                          borderRadius: '0.25rem',
-                          fontSize: '0.75rem',
-                          fontWeight: '600'
+                          backgroundColor: menu.available ? colors.successSoft : colors.dangerSoft,
+                          color: menu.available ? colors.success : colors.danger,
+                          borderRadius: radii.pill,
+                          fontSize: font.caption,
+                          fontWeight: 700
                         }}>
                           {menu.available ? '✓ 可售' : '✗ 停售'}
                         </span>
@@ -385,15 +392,15 @@ const MenuManagement: React.FC = () => {
                   </div>
                   
                   <div style={{ marginBottom: '0.75rem', paddingLeft: '90px' }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.5rem', color: '#374151' }}>
+                    <div style={{ fontSize: font.caption, fontWeight: 700, marginBottom: '0.5rem', color: colors.textPrimary }}>
                       配方原料：
                     </div>
                     {menu.ingredients?.map((ing, idx) => (
                       <div key={idx} style={{ 
                         padding: '0.35rem 0', 
-                        borderBottom: idx < (menu.ingredients?.length || 0) - 1 ? '1px solid #f3f4f6' : 'none',
-                        fontSize: '0.85rem',
-                        color: '#6b7280'
+                        borderBottom: idx < (menu.ingredients?.length || 0) - 1 ? `1px solid ${colors.border}` : 'none',
+                        fontSize: font.caption,
+                        color: colors.textSecondary
                       }}>
                         {ing.itemName} - {ing.quantity}{ing.unit}
                       </div>

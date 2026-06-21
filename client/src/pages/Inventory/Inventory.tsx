@@ -5,6 +5,7 @@ import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDo
 import { dataService } from '../../services/DataService';
 import MenuImage from '../../components/MenuImage';
 import { processAndUploadMenuImage } from '../../services/menuImageService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 // 本地类型定义（与AppContext保持一致）
 interface InventoryItem {
@@ -88,6 +89,69 @@ const REQUIRED_FRIDGE_INVENTORY_CATEGORIES: InventoryCategory[] = [
   { id: 'bebida', key: 'bebida', name: 'Bebida', icon: '🥤' },
   { id: 'jugo', key: 'jugo', name: 'Jugo', icon: '🧃' },
 ];
+
+const inventoryPageStyle: React.CSSProperties = {
+  height: '100vh',
+  display: 'flex',
+  flexDirection: 'column',
+  padding: '1rem',
+  gap: '0.75rem',
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+  background: colors.page,
+  color: colors.textPrimary,
+  fontFamily: font.family,
+};
+
+const inventoryShellStyle: React.CSSProperties = {
+  backgroundColor: colors.surface,
+  borderRadius: radii.lg,
+  boxShadow: shadows.soft,
+  border: `1px solid ${colors.border}`,
+  padding: '0.72rem',
+  flexShrink: 0,
+};
+
+const inventoryInputStyle: React.CSSProperties = {
+  padding: '0.56rem 0.68rem',
+  border: `1px solid ${colors.borderStrong}`,
+  borderRadius: radii.md,
+  fontSize: font.body,
+  backgroundColor: colors.surface,
+  color: colors.textPrimary,
+  outline: 'none',
+};
+
+const inventoryActionButtonStyle: React.CSSProperties = {
+  padding: '0.52rem 0.78rem',
+  backgroundColor: colors.surface,
+  color: colors.textPrimary,
+  border: `1px solid ${colors.borderStrong}`,
+  borderRadius: radii.md,
+  fontWeight: 700,
+  cursor: 'pointer',
+  fontSize: font.body,
+};
+
+const inventoryPrimaryButtonStyle: React.CSSProperties = {
+  ...inventoryActionButtonStyle,
+  backgroundColor: colors.teal,
+  color: colors.surface,
+  border: 'none',
+  boxShadow: '0 8px 18px rgba(15, 118, 110, 0.18)',
+};
+
+const getInventoryTabStyle = (isActive: boolean): React.CSSProperties => ({
+  padding: '0.52rem 0.92rem',
+  backgroundColor: isActive ? colors.teal : colors.surfaceMuted,
+  color: isActive ? colors.surface : colors.textPrimary,
+  border: `1px solid ${isActive ? colors.teal : colors.border}`,
+  borderRadius: radii.pill,
+  fontWeight: 700,
+  cursor: 'pointer',
+  fontSize: font.body,
+  boxShadow: isActive ? '0 8px 18px rgba(15, 118, 110, 0.16)' : 'none',
+});
 
 const SELLABLE_DIRECT_MENU_CATEGORY_KEYS = ['alcohol', 'beverage', 'cerveza', 'bebida', 'jugo', 'jugos'];
 
@@ -452,61 +516,34 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', padding: '0.75rem', gap: '0.6rem', overflow: 'hidden' }}>
+    <div style={inventoryPageStyle}>
       {/* 顶部标签和统计 */}
-      <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '0.65rem', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: activeTab === 'items' ? '0.55rem' : 0 }}>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div style={inventoryShellStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: activeTab === 'items' ? '0.65rem' : 0, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
             <button
               onClick={() => setActiveTab('items')}
-              style={{
-                padding: '0.45rem 0.85rem',
-                backgroundColor: activeTab === 'items' ? '#3b82f6' : '#f3f4f6',
-                color: activeTab === 'items' ? 'white' : '#374151',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}
+              style={getInventoryTabStyle(activeTab === 'items')}
             >
               📦 库存物品
             </button>
             <button
               onClick={() => setActiveTab('purchase')}
-              style={{
-                padding: '0.45rem 0.85rem',
-                backgroundColor: activeTab === 'purchase' ? '#3b82f6' : '#f3f4f6',
-                color: activeTab === 'purchase' ? 'white' : '#374151',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}
+              style={getInventoryTabStyle(activeTab === 'purchase')}
             >
               🛒 采购入库
             </button>
             <button
               onClick={() => setActiveTab('records')}
-              style={{
-                padding: '0.45rem 0.85rem',
-                backgroundColor: activeTab === 'records' ? '#3b82f6' : '#f3f4f6',
-                color: activeTab === 'records' ? 'white' : '#374151',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}
+              style={getInventoryTabStyle(activeTab === 'records')}
             >
               📊 出入库记录
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {inventoryLastSyncedAt && (
-              <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
                 最后同步 {inventoryLastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
               </span>
             )}
@@ -514,30 +551,17 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               onClick={refreshInventoryData}
               disabled={isRefreshingInventory}
               style={{
-                padding: '0.45rem 0.75rem',
-                backgroundColor: isRefreshingInventory ? '#9ca3af' : '#0ea5e9',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
+                ...inventoryActionButtonStyle,
+                backgroundColor: isRefreshingInventory ? colors.surfaceMuted : colors.surface,
+                color: isRefreshingInventory ? colors.textMuted : colors.textPrimary,
                 cursor: isRefreshingInventory ? 'not-allowed' : 'pointer',
-                fontSize: '0.85rem'
               }}
             >
               {isRefreshingInventory ? '同步中...' : '刷新库存'}
             </button>
             <button
               onClick={handleScanBarcode}
-              style={{
-                padding: '0.45rem 0.75rem',
-                backgroundColor: '#8b5cf6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
+              style={inventoryActionButtonStyle}
             >
               📷 扫码
             </button>
@@ -550,16 +574,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 });
                 setShowAddModal(true);
               }}
-              style={{
-                padding: '0.45rem 0.75rem',
-                backgroundColor: '#10b981',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
+              style={inventoryPrimaryButtonStyle}
             >
               ➕ 添加物品
             </button>
@@ -568,28 +583,22 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
         {/* 搜索和筛选 */}
         {activeTab === 'items' && (
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(160px, 220px) auto', gap: '0.55rem', alignItems: 'center', backgroundColor: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.55rem' }}>
             <input
               type="text"
               placeholder="搜索商品名称或条形码..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
+                ...inventoryInputStyle,
                 flex: 1,
-                padding: '0.45rem 0.6rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                fontSize: '0.9rem'
               }}
             />
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
               style={{
-                padding: '0.45rem 0.6rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                fontSize: '0.9rem'
+                ...inventoryInputStyle,
               }}
             >
               <option value="all">全部类别</option>
@@ -599,16 +608,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             </select>
             <button
               onClick={() => setShowInventoryCategoryModal(true)}
-              style={{
-                padding: '0.45rem 0.75rem',
-                backgroundColor: '#8b5cf6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
+              style={inventoryActionButtonStyle}
             >
               🏷️ 类别管理
             </button>
@@ -618,7 +618,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
       {/* 库存物品列表 */}
       {activeTab === 'items' && (
-        <div style={{ flex: 1, minHeight: 0, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {/* 🔥 货值统计面板 */}
           {(() => {
             // 🔥 计算仓库库存货值
