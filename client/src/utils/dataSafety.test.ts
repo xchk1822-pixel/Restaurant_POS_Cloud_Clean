@@ -2030,4 +2030,21 @@ describe('production data safety guards', () => {
       expect(block).not.toContain('鏃堕棿');
     });
   });
+
+  test('UI redesign uses shared style tokens without changing business services', () => {
+    const tokensPath = path.join(process.cwd(), 'src/styles/uiTokens.ts');
+    const adminUiPath = path.join(process.cwd(), 'src/styles/adminUi.ts');
+
+    expect(fs.existsSync(tokensPath)).toBe(true);
+    expect(fs.existsSync(adminUiPath)).toBe(true);
+
+    const tokens = fs.readFileSync(tokensPath, 'utf8');
+    const adminUi = fs.readFileSync(adminUiPath, 'utf8');
+
+    expect(tokens).toContain('colors');
+    expect(tokens).toContain('radii');
+    expect(tokens).toContain('shadows');
+    expect(adminUi).toContain('adminPageStyle');
+    expect(adminUi).toContain('adminCardStyle');
+  });
 });
