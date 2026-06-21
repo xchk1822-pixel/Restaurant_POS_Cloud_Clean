@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
 import { DEFAULT_ROLE_PERMISSIONS } from '../../utils/permissions';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface PermissionNode {
   id: string;
@@ -382,18 +383,18 @@ const PermissionsModule: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.5rem', background: '#f3f4f6' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.1rem 1.25rem', background: colors.page, color: colors.textPrimary, fontFamily: font.family }}>
       {/* 头部 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0, gap: '1rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', flexShrink: 0, gap: '1rem', flexWrap: 'wrap' }}>
         <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>权限管理</h1>
-          <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+          <h1 style={{ fontSize: font.title, fontWeight: 720, color: colors.textPrimary, margin: 0, letterSpacing: 0 }}>权限管理</h1>
+          <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: '0.35rem' }}>
             固定角色：店长 / 收银 / 服务生 / 厨师
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           {lastSyncedAt && (
-            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap', padding: '0.45rem 0.7rem', background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: radii.pill }}>
               最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
@@ -402,13 +403,14 @@ const PermissionsModule: React.FC = () => {
             disabled={isRefreshing}
             style={{
               padding: '0.45rem 0.9rem',
-              backgroundColor: isRefreshing ? '#9ca3af' : '#6366f1',
+              backgroundColor: isRefreshing ? colors.textMuted : colors.blue,
               color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
+              border: `1px solid ${isRefreshing ? colors.textMuted : colors.blue}`,
+              borderRadius: radii.md,
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              fontWeight: 600,
-              fontSize: '0.85rem',
+              fontWeight: 700,
+              fontSize: font.caption,
+              boxShadow: isRefreshing ? 'none' : '0 10px 22px rgba(37, 99, 235, 0.18)',
             }}
           >
             {isRefreshing ? '同步中...' : '刷新云端数据'}
@@ -417,15 +419,15 @@ const PermissionsModule: React.FC = () => {
       </div>
 
       {/* 主体：左侧角色列表 + 右侧权限配置 */}
-      <div style={{ display: 'flex', gap: '1.5rem', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: '1rem', flex: 1, overflow: 'hidden' }}>
         {/* 左侧 */}
-        <div style={{ width: '280px', flexShrink: 0, background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e5e7eb', fontWeight: 600, fontSize: '0.9rem' }}>
+        <div style={{ width: '280px', flexShrink: 0, background: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${colors.border}`, fontWeight: 700, fontSize: font.body }}>
             角色列表 ({roles.length})
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
             {roles.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
+              <div style={{ textAlign: 'center', padding: '2rem', color: colors.textMuted }}>
                 暂无角色数据，请点击刷新云端数据
               </div>
             )}
@@ -436,23 +438,23 @@ const PermissionsModule: React.FC = () => {
                 style={{
                   padding: '0.75rem',
                   marginBottom: '0.5rem',
-                  borderRadius: '0.5rem',
+                  borderRadius: radii.md,
                   cursor: 'pointer',
-                  border: selectedRoleId === role.id ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                  border: selectedRoleId === role.id ? `2px solid ${colors.blue}` : `1px solid ${colors.border}`,
                   borderLeftWidth: '4px',
                   borderLeftStyle: 'solid',
                   borderLeftColor: role.color,
-                  backgroundColor: selectedRoleId === role.id ? '#eff6ff' : 'white',
+                  backgroundColor: selectedRoleId === role.id ? colors.blueSoft : colors.surface,
                   transition: 'all 0.15s',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                   <span style={{ fontSize: '1.25rem' }}>{role.icon}</span>
-                  <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{role.name}</span>
+                  <span style={{ fontWeight: 700, fontSize: font.body }}>{role.name}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{role.description}</span>
-                  <span style={{ fontSize: '0.7rem', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '0.15rem 0.5rem', borderRadius: '9999px' }}>
+                  <span style={{ fontSize: font.caption, color: colors.textSecondary }}>{role.description}</span>
+                  <span style={{ fontSize: '0.7rem', color: colors.textSecondary, backgroundColor: colors.surfaceMuted, padding: '0.15rem 0.5rem', borderRadius: radii.pill }}>
                     {role.permissions.length} 项
                   </span>
                 </div>
@@ -462,9 +464,9 @@ const PermissionsModule: React.FC = () => {
         </div>
 
         {/* 右侧 */}
-        <div style={{ flex: 1, background: 'white', borderRadius: '0.75rem', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, background: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {!showForm ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.textMuted }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>👈</div>
                 <div style={{ fontSize: '1rem' }}>请点击左侧角色修改权限</div>
@@ -473,7 +475,7 @@ const PermissionsModule: React.FC = () => {
           ) : (
             <>
               {/* 表单区 */}
-              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${colors.border}`, flexShrink: 0, background: colors.surfaceMuted }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                   <span style={{ fontWeight: 600, fontSize: '1rem' }}>
                     编辑: {formName}
@@ -481,20 +483,20 @@ const PermissionsModule: React.FC = () => {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 50px', gap: '0.75rem', alignItems: 'end' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>角色名称 *</label>
-                    <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="例如：服务员" style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem' }} />
+                    <label style={{ display: 'block', fontSize: font.caption, fontWeight: 700, color: colors.textSecondary, marginBottom: '0.25rem' }}>角色名称 *</label>
+                    <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="例如：服务员" style={{ width: '100%', padding: '0.5rem 0.65rem', border: `1px solid ${colors.border}`, borderRadius: radii.sm, fontSize: font.caption }} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>描述</label>
-                    <input value={formDesc} onChange={e => setFormDesc(e.target.value)} placeholder="角色职责" style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem' }} />
+                    <label style={{ display: 'block', fontSize: font.caption, fontWeight: 700, color: colors.textSecondary, marginBottom: '0.25rem' }}>描述</label>
+                    <input value={formDesc} onChange={e => setFormDesc(e.target.value)} placeholder="角色职责" style={{ width: '100%', padding: '0.5rem 0.65rem', border: `1px solid ${colors.border}`, borderRadius: radii.sm, fontSize: font.caption }} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>图标</label>
-                    <input value={formIcon} onChange={e => setFormIcon(e.target.value)} style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem', textAlign: 'center' }} />
+                    <label style={{ display: 'block', fontSize: font.caption, fontWeight: 700, color: colors.textSecondary, marginBottom: '0.25rem' }}>图标</label>
+                    <input value={formIcon} onChange={e => setFormIcon(e.target.value)} style={{ width: '100%', padding: '0.5rem 0.65rem', border: `1px solid ${colors.border}`, borderRadius: radii.sm, fontSize: font.caption, textAlign: 'center' }} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#6b7280', marginBottom: '0.25rem' }}>色</label>
-                    <input type="color" value={formColor} onChange={e => setFormColor(e.target.value)} style={{ width: '100%', height: '2rem', padding: 0, border: '1px solid #d1d5db', borderRadius: '0.25rem', cursor: 'pointer' }} />
+                    <label style={{ display: 'block', fontSize: font.caption, fontWeight: 700, color: colors.textSecondary, marginBottom: '0.25rem' }}>色</label>
+                    <input type="color" value={formColor} onChange={e => setFormColor(e.target.value)} style={{ width: '100%', height: '2.15rem', padding: 0, border: `1px solid ${colors.border}`, borderRadius: radii.sm, cursor: 'pointer' }} />
                   </div>
                 </div>
               </div>
@@ -505,20 +507,20 @@ const PermissionsModule: React.FC = () => {
               </div>
 
               {/* 底部按钮 */}
-              <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+              <div style={{ padding: '1rem 1.5rem', borderTop: `1px solid ${colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
                   已选 {formPerms.length} 项权限
                 </span>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     onClick={() => { setShowForm(false); setSelectedRoleId(''); setEditingRoleId(null); }}
-                    style={{ padding: '0.5rem 1rem', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                    style={{ padding: '0.5rem 1rem', backgroundColor: colors.surfaceMuted, color: colors.textPrimary, border: `1px solid ${colors.border}`, borderRadius: radii.md, cursor: 'pointer', fontWeight: 650, fontSize: font.caption }}
                   >
                     取消
                   </button>
                   <button
                     onClick={handleSave}
-                    style={{ padding: '0.5rem 1.5rem', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                    style={{ padding: '0.5rem 1.5rem', backgroundColor: colors.success, color: 'white', border: `1px solid ${colors.success}`, borderRadius: radii.md, cursor: 'pointer', fontWeight: 700, fontSize: font.caption }}
                   >
                     💾 保存
                   </button>

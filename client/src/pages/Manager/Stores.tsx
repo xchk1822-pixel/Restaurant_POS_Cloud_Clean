@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { getLocalDateString } from '../../utils/localTime';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { createFirebaseUser } from '../../services/FirebaseAuthService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Store {
   id: string;
@@ -500,40 +501,46 @@ const StoresModule: React.FC = () => {
       display: 'flex', 
       flexDirection: 'column' as const, 
       height: '100%',
-      padding: '1.5rem',
-      background: '#f3f4f6',
+      padding: '1.1rem 1.25rem',
+      background: colors.page,
+      color: colors.textPrimary,
+      fontFamily: font.family,
     },
     header: { 
       display: 'flex', 
       justifyContent: 'space-between', 
-      alignItems: 'center', 
-      marginBottom: '1.5rem',
+      alignItems: 'flex-start', 
+      marginBottom: '1rem',
       flexShrink: 0 as const,
+      gap: '1rem',
+      flexWrap: 'wrap' as const,
     },
     title: { 
-      fontSize: '1.75rem', 
-      fontWeight: 'bold', 
-      color: '#1f2937',
+      fontSize: font.title, 
+      fontWeight: 720, 
+      color: colors.textPrimary,
       margin: 0,
+      letterSpacing: 0,
     },
     subtitle: {
-      color: '#6b7280',
+      color: colors.textSecondary,
       marginTop: '0.5rem',
-      fontSize: '0.875rem',
+      fontSize: font.body,
     },
     btn: (color: string) => ({ 
-      padding: '0.5rem 1rem', 
+      padding: '0.58rem 0.95rem', 
       backgroundColor: color, 
       color: 'white', 
-      border: 'none', 
-      borderRadius: '0.5rem', 
+      border: `1px solid ${color}`, 
+      borderRadius: radii.md, 
       cursor: 'pointer', 
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      fontSize: font.caption,
+      boxShadow: color === colors.blue ? '0 10px 22px rgba(37, 99, 235, 0.18)' : 'none',
     }),
     contentWrapper: {
       display: 'flex',
-      gap: '1.5rem',
+      gap: '1rem',
       flex: 1,
       overflow: 'hidden',
     },
@@ -542,16 +549,17 @@ const StoresModule: React.FC = () => {
       flexShrink: 0 as const,
       display: 'flex',
       flexDirection: 'column' as const,
-      background: 'white',
-      borderRadius: '0.75rem',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
       overflow: 'hidden',
     },
     storesHeader: {
       padding: '1rem 1.5rem',
-      borderBottom: '1px solid #e5e7eb',
-      fontWeight: '600',
-      fontSize: '1rem',
+      borderBottom: `1px solid ${colors.border}`,
+      fontWeight: 720,
+      fontSize: font.section,
       flexShrink: 0 as const,
     },
     storesList: {
@@ -560,11 +568,11 @@ const StoresModule: React.FC = () => {
       padding: '1rem',
     },
     storeCard: (isSelected: boolean) => ({ 
-      background: isSelected ? '#eff6ff' : 'white', 
-      borderRadius: '0.5rem', 
+      background: isSelected ? colors.blueSoft : colors.surface, 
+      borderRadius: radii.md, 
       padding: '1rem', 
       cursor: 'pointer', 
-      border: isSelected ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+      border: isSelected ? `2px solid ${colors.blue}` : `1px solid ${colors.border}`,
       transition: 'all 0.2s',
       marginBottom: '0.75rem',
     }),
@@ -572,9 +580,10 @@ const StoresModule: React.FC = () => {
       flex: 1,
       display: 'flex',
       flexDirection: 'column' as const,
-      background: 'white', 
-      borderRadius: '0.75rem', 
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      background: colors.surface, 
+      borderRadius: radii.lg, 
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
       overflow: 'hidden',
     },
     tabs: { 
@@ -585,13 +594,13 @@ const StoresModule: React.FC = () => {
     },
     tab: (active: boolean) => ({ 
       padding: '0.75rem 1.5rem', 
-      backgroundColor: active ? '#3b82f6' : 'white', 
-      color: active ? 'white' : '#6b7280', 
-      border: 'none', 
-      borderRadius: '0.5rem', 
+      backgroundColor: active ? colors.blue : colors.surfaceMuted, 
+      color: active ? 'white' : colors.textSecondary, 
+      border: active ? `1px solid ${colors.blue}` : `1px solid ${colors.border}`, 
+      borderRadius: radii.md, 
       cursor: 'pointer', 
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      fontSize: font.caption,
       transition: 'all 0.2s',
     }),
     contentArea: {
@@ -605,16 +614,19 @@ const StoresModule: React.FC = () => {
     th: { 
       textAlign: 'left' as const, 
       padding: '0.75rem', 
-      borderBottom: '2px solid #e5e7eb', 
-      fontWeight: '600',
+      borderBottom: `1px solid ${colors.border}`, 
+      fontWeight: 720,
       position: 'sticky' as const,
       top: 0,
-      backgroundColor: 'white',
+      backgroundColor: colors.surfaceMuted,
       zIndex: 1,
+      color: colors.textSecondary,
+      fontSize: font.caption,
     },
     td: { 
       padding: '0.75rem', 
-      borderBottom: '1px solid #e5e7eb',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
     },
     modal: { 
       position: 'fixed' as const, 
@@ -622,37 +634,41 @@ const StoresModule: React.FC = () => {
       left: 0, 
       right: 0, 
       bottom: 0, 
-      backgroundColor: 'rgba(0,0,0,0.5)', 
+      backgroundColor: 'rgba(15, 23, 42, 0.38)', 
       display: 'flex', 
       alignItems: 'center', 
       justifyContent: 'center', 
       zIndex: 1000,
     },
     modalContent: { 
-      background: 'white', 
-      borderRadius: '1rem', 
+      background: colors.surface, 
+      borderRadius: radii.lg, 
       padding: '2rem', 
       maxWidth: '800px', 
       width: '90%', 
       maxHeight: '80vh', 
       overflowY: 'auto' as const,
+      boxShadow: shadows.lift,
+      border: `1px solid ${colors.border}`,
     },
     formGroup: { 
       marginBottom: '1rem',
     },
     label: { 
       display: 'block', 
-      fontWeight: '600', 
+      fontWeight: 700, 
       marginBottom: '0.5rem', 
-      color: '#374151',
-      fontSize: '0.875rem',
+      color: colors.textPrimary,
+      fontSize: font.caption,
     },
     input: { 
       width: '100%', 
-      padding: '0.5rem 0.75rem', 
-      border: '1px solid #d1d5db', 
-      borderRadius: '0.375rem', 
-      fontSize: '0.9rem',
+      padding: '0.58rem 0.75rem', 
+      border: `1px solid ${colors.border}`, 
+      borderRadius: radii.md, 
+      fontSize: font.body,
+      color: colors.textPrimary,
+      background: colors.surface,
     },
     grid2: { 
       display: 'grid', 
@@ -669,8 +685,8 @@ const StoresModule: React.FC = () => {
       display: 'flex', 
       alignItems: 'center', 
       gap: '0.5rem', 
-      color: completed ? '#10b981' : active ? '#3b82f6' : '#9ca3af', 
-      fontWeight: '600',
+      color: completed ? colors.success : active ? colors.blue : colors.textMuted, 
+      fontWeight: 700,
     }),
     infoGrid: {
       display: 'grid',
@@ -679,8 +695,9 @@ const StoresModule: React.FC = () => {
     },
     infoItem: {
       padding: '0.75rem',
-      backgroundColor: '#f9fafb',
-      borderRadius: '0.5rem',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radii.md,
+      border: `1px solid ${colors.border}`,
     },
   };
 
@@ -689,11 +706,11 @@ const StoresModule: React.FC = () => {
       <div style={styles.header}>
         <div>
           <h1 style={styles.title}>🏪 分店管理</h1>
-          <p style={{ color: '#6b7280', marginTop: '0.5rem' }}>管理所有分店及其账号</p>
+          <p style={styles.subtitle}>管理所有分店及其账号</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {lastSyncedAt && (
-            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap', padding: '0.45rem 0.7rem', background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: radii.pill }}>
               {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
@@ -701,13 +718,13 @@ const StoresModule: React.FC = () => {
             onClick={refreshStoresData}
             disabled={isRefreshing}
             style={{
-              ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1'),
+              ...styles.btn(isRefreshing ? colors.textMuted : colors.blue),
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
             }}
           >
             {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
           </button>
-          <button onClick={() => setShowCreateWizard(true)} style={styles.btn('#3b82f6')}>➕ 创建分店</button>
+          <button onClick={() => setShowCreateWizard(true)} style={styles.btn(colors.blue)}>➕ 创建分店</button>
         </div>
       </div>
 
@@ -723,18 +740,18 @@ const StoresModule: React.FC = () => {
                 onClick={() => { setSelectedStore(store.id); setActiveTab('info'); }}
               >
                 <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.5rem' }}>{store.name}</h3>
-                <div style={{ color: '#6b7280', fontSize: '0.875rem', lineHeight: '1.6' }}>
+                <div style={{ color: colors.textSecondary, fontSize: font.caption, lineHeight: '1.6' }}>
                   <div>代码: {store.code}</div>
                   <div>地址: {store.address || '未设置'}</div>
                   <div>电话: {store.phone || '未设置'}</div>
-                  <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
+                  <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: `1px solid ${colors.border}` }}>
                     账号数: {users.filter(u => u.storeId === store.id).length}
                   </div>
                 </div>
               </div>
             ))}
             {stores.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
+              <div style={{ textAlign: 'center', padding: '2rem', color: colors.textMuted }}>
                 暂无分店，点击右上角创建
               </div>
             )}
@@ -744,12 +761,12 @@ const StoresModule: React.FC = () => {
         {/* 右侧详情面板 */}
         {selectedStoreData ? (
           <div style={styles.detailPanel}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem', borderBottom: `1px solid ${colors.border}` }}>
               <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0 }}>{selectedStoreData.name}</h2>
-              <button onClick={() => handleDeleteStore(selectedStore)} style={styles.btn('#ef4444')}>🗑️ 删除分店</button>
+              <button onClick={() => handleDeleteStore(selectedStore)} style={styles.btn(colors.danger)}>🗑️ 删除分店</button>
             </div>
 
-            <div style={{ ...styles.tabs, padding: '1rem 1.5rem 0', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ ...styles.tabs, padding: '1rem 1.5rem 0', borderBottom: `1px solid ${colors.border}` }}>
               <button onClick={() => setActiveTab('info')} style={styles.tab(activeTab === 'info')}>📋 基本信息</button>
               <button onClick={() => setActiveTab('users')} style={styles.tab(activeTab === 'users')}>👥 账号管理 ({storeUsers.length})</button>
             </div>
@@ -758,7 +775,7 @@ const StoresModule: React.FC = () => {
               {activeTab === 'info' && (
                 <div style={{ padding: '1.5rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-                    <button onClick={() => handleEditStore(selectedStoreData)} style={styles.btn('#3b82f6')}>
+                    <button onClick={() => handleEditStore(selectedStoreData)} style={styles.btn(colors.blue)}>
                       ✏️ 编辑分店信息
                     </button>
                   </div>
@@ -778,13 +795,13 @@ const StoresModule: React.FC = () => {
               {activeTab === 'users' && (
                 <div style={{ padding: '1.5rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <div style={{ color: '#6b7280' }}>管理该分店的所有账号</div>
-                    <button onClick={handleAddUser} style={styles.btn('#10b981')}>
+                    <div style={{ color: colors.textSecondary }}>管理该分店的所有账号</div>
+                    <button onClick={handleAddUser} style={styles.btn(colors.success)}>
                       ➕ 添加账号
                     </button>
                   </div>
                   {storeUsers.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>暂无账号，点击上方按钮添加</div>
+                    <div style={{ textAlign: 'center', padding: '2rem', color: colors.textSecondary }}>暂无账号，点击上方按钮添加</div>
                   ) : (
                     <table style={styles.table}>
                       <thead>

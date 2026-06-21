@@ -1482,6 +1482,29 @@ describe('production data safety guards', () => {
     expect(source).toContain('group.details.map');
   });
 
+  test('settings UI polish uses shared tokens without changing settings data paths', () => {
+    const permissionsPath = path.join(process.cwd(), 'src/pages/Settings/PermissionsModule.tsx');
+    const backupPath = path.join(process.cwd(), 'src/pages/Settings/DataBackup.tsx');
+    const storesPath = path.join(process.cwd(), 'src/pages/Manager/Stores.tsx');
+    const exchangePath = path.join(process.cwd(), 'src/pages/Manager/ExchangeRateSettings.tsx');
+    const permissionsSource = fs.readFileSync(permissionsPath, 'utf8');
+    const backupSource = fs.readFileSync(backupPath, 'utf8');
+    const storesSource = fs.readFileSync(storesPath, 'utf8');
+    const exchangeSource = fs.readFileSync(exchangePath, 'utf8');
+
+    expect(permissionsSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(backupSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(storesSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(exchangeSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+
+    expect(permissionsSource).toContain("await smartUpdateDocument('system_roles', editingRoleId, roleData)");
+    expect(backupSource).toContain('createFirestoreBackup(user)');
+    expect(backupSource).toContain('downloadBackupFile(nextBackup)');
+    expect(storesSource).toContain("smartSetDocument('stores'");
+    expect(storesSource).toContain("smartDeleteDocument('stores'");
+    expect(exchangeSource).toContain("await smartSetDocument(`stores/${targetStoreId}/${COLLECTION}`, DOC_ID, updatedConfig)");
+  });
+
   test('owner dashboard uses collected revenue and financial order dates', () => {
     const ownerDashboardPath = path.join(process.cwd(), 'src/pages/Dashboard/OwnerDashboard.tsx');
     const source = fs.readFileSync(ownerDashboardPath, 'utf8');
