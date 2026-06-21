@@ -1321,6 +1321,30 @@ describe('production data safety guards', () => {
     expect(menuSource).toContain('MenuImage');
   });
 
+  test('employee UI polish keeps employee loan and salary data behavior intact', () => {
+    const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
+    const listPath = path.join(process.cwd(), 'src/pages/Employees/EmployeeList.tsx');
+    const loansPath = path.join(process.cwd(), 'src/pages/Employees/LoanManagement.tsx');
+    const salaryPath = path.join(process.cwd(), 'src/pages/Employees/SalarySettlement.tsx');
+    const employeesSource = fs.readFileSync(employeesPath, 'utf8');
+    const listSource = fs.readFileSync(listPath, 'utf8');
+    const loansSource = fs.readFileSync(loansPath, 'utf8');
+    const salarySource = fs.readFileSync(salaryPath, 'utf8');
+
+    expect(employeesSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(listSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(loansSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(salarySource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(employeesSource).toContain("smartGetDocuments('employee_deletions'");
+    expect(listSource).toContain("await smartUpdateDocument('employees'");
+    expect(listSource).toContain("await smartUpdateDocument('employee_deletions'");
+    expect(loansSource).toContain("await smartAddDocument('loan_records'");
+    expect(loansSource).toContain("await smartAddDocument('expenses'");
+    expect(salarySource).toContain('const calculateSalary =');
+    expect(salarySource).toContain("await smartAddDocument('salary_records'");
+    expect(salarySource).toContain("smartUpdateDocument('loan_records'");
+  });
+
   test('customer refresh persists deletion tombstones and delete writes are single-document', () => {
     const customersPath = path.join(process.cwd(), 'src/pages/Manager/CustomersModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');

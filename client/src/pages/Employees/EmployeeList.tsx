@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { dataManager } from '../../services/dataManager';
 import { filterActiveEmployees } from '../../utils/employeeRecords';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
   id: string;
@@ -128,60 +129,62 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
 
   const styles = {
     card: {
-      background: 'white',
-      borderRadius: '1rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-      marginBottom: '1.5rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      marginBottom: '1rem',
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
     },
     cardContent: {
-      padding: '1.5rem',
+      padding: '1rem',
       flex: 1,
       display: 'flex',
       flexDirection: 'column' as const,
       overflow: 'hidden' as const,
     },
     btn: (bg: string) => ({
-      padding: '0.75rem 1.5rem',
+      padding: '0.58rem 1rem',
       background: bg,
-      color: 'white',
+      color: colors.surface,
       border: 'none',
-      borderRadius: '0.5rem',
+      borderRadius: radii.md,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      fontSize: font.body,
     }),
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.875rem',
-      background: 'white',
+      fontSize: font.body,
+      background: colors.surface,
     },
     th: {
-      background: '#f9fafb',
-      padding: '1rem',
+      background: colors.surfaceMuted,
+      padding: '0.78rem 0.85rem',
       textAlign: 'left' as const,
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      color: '#6b7280',
-      borderBottom: '2px solid #e5e7eb',
+      fontSize: font.caption,
+      fontWeight: 700,
+      color: colors.textSecondary,
+      borderBottom: `1px solid ${colors.border}`,
       position: 'sticky' as const,
       top: 0,
       zIndex: 10,
     },
     td: {
-      padding: '1rem',
-      borderBottom: '1px solid #f3f4f6',
+      padding: '0.82rem 0.85rem',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
     },
     badge: (color: string) => ({
       padding: '0.25rem 0.75rem',
       background: color,
-      color: 'white',
-      borderRadius: '9999px',
-      fontSize: '0.75rem',
-      fontWeight: '600',
+      color: colors.surface,
+      borderRadius: radii.pill,
+      fontSize: font.caption,
+      fontWeight: 700,
     }),
     modal: {
       position: 'fixed' as const,
@@ -189,20 +192,21 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       left: 0,
       right: 0,
       bottom: 0,
-      background: 'rgba(0,0,0,0.5)',
+      background: 'rgba(15, 23, 42, 0.45)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 1000,
     },
     modalContent: {
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '2rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1.35rem',
       maxWidth: '600px',
       width: '90%',
       maxHeight: '80vh',
       overflow: 'auto',
+      boxShadow: shadows.lift,
     },
     formGroup: {
       marginBottom: '1rem',
@@ -210,23 +214,28 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     label: {
       display: 'block',
       marginBottom: '0.5rem',
-      fontWeight: '600',
-      color: '#374151',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      color: colors.textPrimary,
+      fontSize: font.body,
     },
     input: {
       width: '100%',
-      padding: '0.75rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.5rem',
-      fontSize: '0.875rem',
+      padding: '0.68rem 0.75rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      boxSizing: 'border-box' as const,
     },
     select: {
       width: '100%',
-      padding: '0.75rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.5rem',
-      fontSize: '0.875rem',
+      padding: '0.68rem 0.75rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      background: colors.surface,
+      boxSizing: 'border-box' as const,
     },
     grid2: {
       display: 'grid',
@@ -238,16 +247,16 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
   return (
     <div style={styles.card}>
       <div style={styles.cardContent}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0 }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>👥 员工列表</h2>
-          <button onClick={() => setShowAddEmployee(true)} style={styles.btn('#3b82f6')}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexShrink: 0, gap: '0.75rem', flexWrap: 'wrap' }}>
+          <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>👥 员工列表</h2>
+          <button onClick={() => setShowAddEmployee(true)} style={styles.btn(colors.teal)}>
             ➕ 添加员工
           </button>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
         {employees.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>👤</div>
             <div>暂无员工数据</div>
           </div>
@@ -275,7 +284,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
                     <td style={styles.td}>{emp.hireDate}</td>
                     <td style={{ ...styles.td, fontWeight: '600' }}>C$ {(emp.dailyRate || 0).toFixed(2)}/天</td>
                     <td style={styles.td}>
-                      <span style={styles.badge(emp.status === 'active' ? '#10b981' : '#9ca3af')}>
+                      <span style={styles.badge(emp.status === 'active' ? colors.success : colors.textMuted)}>
                         {emp.status === 'active' ? '在职' : '离职'}
                       </span>
                     </td>
@@ -286,13 +295,13 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
                           setFormData(emp);
                           setShowAddEmployee(true);
                         }}
-                        style={{ ...styles.btn('#f59e0b'), marginRight: '0.5rem', padding: '0.5rem 1rem' }}
+                        style={{ ...styles.btn(colors.amber), marginRight: '0.5rem', padding: '0.48rem 0.72rem' }}
                       >
                         ✏️
                       </button>
                       <button
                         onClick={() => handleDeleteEmployee(emp.id)}
-                        style={{ ...styles.btn('#ef4444'), padding: '0.5rem 1rem' }}
+                        style={{ ...styles.btn(colors.danger), padding: '0.48rem 0.72rem' }}
                       >
                         🗑️
                       </button>
@@ -309,7 +318,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       {showAddEmployee && (
         <div style={styles.modal} onClick={() => setShowAddEmployee(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: font.title, fontWeight: 750, marginBottom: '1.2rem', color: colors.textPrimary }}>
               {editingEmployee ? '✏️ 编辑员工' : '➕ 添加员工'}
             </h2>
             
@@ -378,7 +387,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
               </div>
             </div>
 
-            <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: '1.5rem 0 1rem 0', color: '#374151' }}>
+            <h3 style={{ fontSize: font.section, fontWeight: 750, margin: '1.3rem 0 0.85rem 0', color: colors.textPrimary }}>
               💰 薪资配置（每人不同）
             </h3>
             <div style={styles.grid2}>
@@ -428,7 +437,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
             </div>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-              <button onClick={handleSaveEmployee} style={{ ...styles.btn('#3b82f6'), flex: 1 }}>
+              <button onClick={handleSaveEmployee} style={{ ...styles.btn(colors.teal), flex: 1 }}>
                 💾 保存
               </button>
               <button
@@ -436,7 +445,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
                   setShowAddEmployee(false);
                   setEditingEmployee(null);
                 }}
-                style={{ ...styles.btn('#6b7280'), flex: 1 }}
+                style={{ ...styles.btn(colors.textSecondary), flex: 1 }}
               >
                 ❌ 取消
               </button>

@@ -3,6 +3,7 @@ import { dataManager } from '../../services/dataManager';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
   id: string;
@@ -636,72 +637,79 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
 
   const styles = {
     card: {
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '1.5rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-      marginBottom: '1.5rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1rem',
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      marginBottom: '1rem',
     },
     btn: (bg: string) => ({
-      padding: '0.75rem 1.5rem',
+      padding: '0.58rem 1rem',
       background: bg,
-      color: 'white',
+      color: colors.surface,
       border: 'none',
-      borderRadius: '0.5rem',
+      borderRadius: radii.md,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      fontSize: font.body,
     }),
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.875rem',
+      fontSize: font.body,
     },
     th: {
-      background: '#f9fafb',
-      padding: '1rem',
+      background: colors.surfaceMuted,
+      padding: '0.78rem 0.85rem',
       textAlign: 'left' as const,
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      color: '#6b7280',
-      borderBottom: '2px solid #e5e7eb',
+      fontSize: font.caption,
+      fontWeight: 700,
+      color: colors.textSecondary,
+      borderBottom: `1px solid ${colors.border}`,
     },
     td: {
-      padding: '1rem',
-      borderBottom: '1px solid #f3f4f6',
+      padding: '0.82rem 0.85rem',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
     },
     input: {
       width: '100%',
-      padding: '0.5rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.375rem',
-      fontSize: '0.875rem',
+      padding: '0.58rem 0.68rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      boxSizing: 'border-box' as const,
     },
     select: {
       width: '100%',
-      padding: '0.5rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.375rem',
-      fontSize: '0.875rem',
+      padding: '0.58rem 0.68rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      background: colors.surface,
+      boxSizing: 'border-box' as const,
     },
   };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: '1.5rem', flexShrink: 0 }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>💰 薪资结算</h2>
-        <p style={{ color: '#6b7280', marginTop: '0.5rem' }}>
+      <div style={{ marginBottom: '1rem', flexShrink: 0 }}>
+        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>💰 薪资结算</h2>
+        <p style={{ color: colors.textSecondary, marginTop: '0.35rem', marginBottom: 0, fontSize: font.body }}>
           支持单人结算和批量结算，半月发薪制
         </p>
       </div>
 
       {/* 结算模式切换 - 固定在顶部 */}
       <div style={{ ...styles.card, flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
             onClick={() => setSettlementMode('single')}
             style={{
-              ...styles.btn(settlementMode === 'single' ? '#3b82f6' : '#6b7280'),
+              ...styles.btn(settlementMode === 'single' ? colors.teal : colors.textSecondary),
               flex: 1,
             }}
           >
@@ -710,7 +718,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
           <button
             onClick={() => setSettlementMode('batch')}
             style={{
-              ...styles.btn(settlementMode === 'batch' ? '#3b82f6' : '#6b7280'),
+              ...styles.btn(settlementMode === 'batch' ? colors.teal : colors.textSecondary),
               flex: 1,
             }}
           >
@@ -724,25 +732,25 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       {/* 单人结算 */}
       {settlementMode === 'single' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }}>📅 选择员工和日期范围</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1rem' }}>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>📅 选择员工和日期范围</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '0.85rem' }}>
             {employees.filter(e => e.status === 'active').map((emp) => {
               const activeLoans = getActiveLoansForEmployee(emp.id);
               const totalLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0);
               
               return (
                 <div key={emp.id} style={{
-                  padding: '1rem',
-                  background: '#f9fafb',
-                  borderRadius: '0.75rem',
-                  border: '2px solid #e5e7eb',
+                  padding: '0.9rem',
+                  background: colors.surfaceMuted,
+                  borderRadius: radii.lg,
+                  border: `1px solid ${colors.border}`,
                 }}>
-                  <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>{emp.name}</div>
-                  <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
+                  <div style={{ fontWeight: 750, marginBottom: '0.35rem', color: colors.textPrimary }}>{emp.name}</div>
+                  <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.5rem' }}>
                     {emp.position} · 日薪 C$ {(emp.dailyRate || 0).toFixed(2)}
                   </div>
                   {totalLoan > 0 && (
-                    <div style={{ fontSize: '0.75rem', color: '#f59e0b', marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: font.caption, color: colors.amber, marginBottom: '0.75rem' }}>
                       ⚠️ 剩余借款: C$ {totalLoan.toFixed(2)}
                     </div>
                   )}
@@ -750,7 +758,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                   {/* 动态福利、补贴和社保输入 */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                     <div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>本月福利 (C$)</div>
+                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月福利 (C$)</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -760,7 +768,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>本月补贴 (C$)</div>
+                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月补贴 (C$)</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -770,7 +778,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>本月社保 (C$)</div>
+                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月社保 (C$)</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -782,20 +790,20 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                   </div>
                   
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>结算日期范围：</div>
+                    <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>结算日期范围：</div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <input
                         type="date"
                         id={`start-${emp.id}`}
                         defaultValue={getLocalDateString(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000))} // 🔥 使用本地时间
-                        style={{ flex: 1, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.75rem' }}
+                        style={{ ...styles.input, flex: 1, fontSize: font.caption }}
                       />
                       <span style={{ lineHeight: '2rem' }}>至</span>
                       <input
                         type="date"
                         id={`end-${emp.id}`}
                         defaultValue={getLocalDateString()} // 🔥 使用本地时间
-                        style={{ flex: 1, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.75rem' }}
+                        style={{ ...styles.input, flex: 1, fontSize: font.caption }}
                       />
                     </div>
                   </div>
@@ -813,13 +821,13 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                     style={{
                       width: '100%',
                       padding: '0.75rem',
-                      background: '#10b981',
-                      color: 'white',
+                      background: colors.success,
+                      color: colors.surface,
                       border: 'none',
-                      borderRadius: '0.5rem',
+                      borderRadius: radii.md,
                       cursor: 'pointer',
-                      fontWeight: '600',
-                      fontSize: '0.875rem',
+                      fontWeight: 700,
+                      fontSize: font.body,
                     }}
                   >
                     💵 立即结算
@@ -834,11 +842,11 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       {/* 批量结算 */}
       {settlementMode === 'batch' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }}>👥 批量结算配置</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>👥 批量结算配置</h3>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>开始日期</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>开始日期</label>
               <input
                 type="date"
                 value={batchPeriod.startDate}
@@ -847,7 +855,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>结束日期</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>结束日期</label>
               <input
                 type="date"
                 value={batchPeriod.endDate}
@@ -856,7 +864,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>发薪类型</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>发薪类型</label>
               <select
                 value={batchPeriod.periodType}
                 onChange={(e) => setBatchPeriod({ ...batchPeriod, periodType: e.target.value as 'first_half' | 'second_half' })}
@@ -871,7 +879,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
           <div style={{ display: 'flex', gap: '1rem' }}>
             <button
               onClick={handleBatchSettlement}
-              style={{ ...styles.btn('#10b981'), flex: 1 }}
+              style={{ ...styles.btn(colors.success), flex: 1 }}
             >
               ✅ 开始批量结算
             </button>
@@ -884,7 +892,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                   alert('暂无薪资记录可打印');
                 }
               }}
-              style={{ ...styles.btn('#3b82f6'), flex: 1 }}
+              style={{ ...styles.btn(colors.blue), flex: 1 }}
             >
               🖨️ 打印汇总表
             </button>
@@ -894,9 +902,9 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
 
       {/* 薪资历史记录 */}
       <div style={styles.card}>
-        <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }}>📊 薪资历史记录</h3>
+        <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>📊 薪资历史记录</h3>
         {salaryRecords.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             暂无薪资记录
           </div>
         ) : (
@@ -927,10 +935,10 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       <td style={styles.td}>
                         <span style={{
                           padding: '0.25rem 0.5rem',
-                          borderRadius: '0.25rem',
-                          fontSize: '0.75rem',
-                          backgroundColor: record.periodType === 'first_half' ? '#dbeafe' : '#fef3c7',
-                          color: record.periodType === 'first_half' ? '#1e40af' : '#92400e',
+                          borderRadius: radii.pill,
+                          fontSize: font.caption,
+                          backgroundColor: record.periodType === 'first_half' ? colors.blueSoft : colors.amberSoft,
+                          color: record.periodType === 'first_half' ? colors.blue : colors.amber,
                         }}>
                           {record.periodType === 'first_half' ? '上半月' : '下半月'}
                         </span>
@@ -939,11 +947,11 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       <td style={styles.td}>C$ {record.overtimePay.toFixed(2)}</td>
                       <td style={styles.td}>C$ {record.benefits.toFixed(2)}</td>
                       <td style={styles.td}>C$ {record.subsidy.toFixed(2)}</td>
-                      <td style={{ ...styles.td, color: '#ef4444' }}>C$ {record.socialSecurityEmployee.toFixed(2)}</td>
-                      <td style={{ ...styles.td, color: '#f59e0b', fontWeight: '600' }}>
+                      <td style={{ ...styles.td, color: colors.danger }}>C$ {record.socialSecurityEmployee.toFixed(2)}</td>
+                      <td style={{ ...styles.td, color: colors.amber, fontWeight: '600' }}>
                         C$ {record.loanRepayment.toFixed(2)}
                       </td>
-                      <td style={{ ...styles.td, fontWeight: 'bold', color: '#10b981' }}>
+                      <td style={{ ...styles.td, fontWeight: 'bold', color: colors.success }}>
                         C$ {record.actualSalary.toFixed(2)}
                       </td>
                       <td style={styles.td}>
@@ -951,8 +959,8 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                           onClick={() => emp && printSalarySlip(record, emp)}
                           style={{
                             padding: '0.25rem 0.5rem',
-                            backgroundColor: '#3b82f6',
-                            color: 'white',
+                            backgroundColor: colors.blue,
+                            color: colors.surface,
                             border: 'none',
                             borderRadius: '0.25rem',
                             cursor: 'pointer',

@@ -7,6 +7,7 @@ import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
 import SalarySettlement from './SalarySettlement';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
   id: string;
@@ -173,35 +174,45 @@ const EmployeesModule: React.FC = () => {
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1.5rem',
-      background: '#f3f4f6',
+      padding: '1.1rem',
+      background: colors.page,
+      color: colors.textPrimary,
+      fontFamily: font.family,
     },
     header: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: '1rem',
-      marginBottom: '1rem',
+      marginBottom: '0.85rem',
       flexShrink: 0 as const,
+      padding: '0.85rem 1rem',
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.lg,
+      boxShadow: shadows.soft,
+      flexWrap: 'wrap' as const,
     },
     title: {
       margin: 0,
-      fontSize: '1.5rem',
-      fontWeight: 700,
-      color: '#1f2937',
+      fontSize: font.title,
+      fontWeight: 750,
+      color: colors.textPrimary,
+      letterSpacing: 0,
     },
     refreshButton: {
-      padding: '0.6rem 1rem',
-      border: 'none',
-      borderRadius: '0.5rem',
-      background: isRefreshing ? '#9ca3af' : '#2563eb',
-      color: 'white',
-      fontWeight: 600,
+      padding: '0.58rem 0.95rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      background: isRefreshing ? colors.surfaceMuted : colors.surface,
+      color: isRefreshing ? colors.textMuted : colors.textPrimary,
+      fontWeight: 700,
       cursor: isRefreshing ? 'not-allowed' : 'pointer',
+      fontSize: font.body,
     },
     syncInfo: {
-      fontSize: '0.8rem',
-      color: '#6b7280',
+      fontSize: font.caption,
+      color: colors.textSecondary,
       whiteSpace: 'nowrap' as const,
     },
     content: {

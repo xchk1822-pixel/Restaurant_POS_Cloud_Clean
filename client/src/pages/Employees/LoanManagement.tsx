@@ -3,6 +3,7 @@ import { getLocalDateString } from '../../utils/exchangeRate';
 import { dataManager } from '../../services/dataManager';
 import { smartAddDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
   id: string;
@@ -159,46 +160,49 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   const styles = {
     card: {
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '1.5rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-      marginBottom: '1.5rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1rem',
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      marginBottom: '1rem',
     },
     btn: (bg: string) => ({
-      padding: '0.75rem 1.5rem',
+      padding: '0.58rem 1rem',
       background: bg,
-      color: 'white',
+      color: colors.surface,
       border: 'none',
-      borderRadius: '0.5rem',
+      borderRadius: radii.md,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      fontSize: font.body,
     }),
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.875rem',
+      fontSize: font.body,
     },
     th: {
-      background: '#f9fafb',
-      padding: '1rem',
+      background: colors.surfaceMuted,
+      padding: '0.78rem 0.85rem',
       textAlign: 'left' as const,
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      color: '#6b7280',
-      borderBottom: '2px solid #e5e7eb',
+      fontSize: font.caption,
+      fontWeight: 700,
+      color: colors.textSecondary,
+      borderBottom: `1px solid ${colors.border}`,
     },
     td: {
-      padding: '1rem',
-      borderBottom: '1px solid #f3f4f6',
+      padding: '0.82rem 0.85rem',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
     },
     statCard: (bg: string) => ({
-      background: 'white',
-      borderRadius: '0.75rem',
-      padding: '1.5rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-      borderLeft: `4px solid ${bg}`,
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1rem',
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      borderTop: `4px solid ${bg}`,
     }),
     modal: {
       position: 'fixed' as const,
@@ -206,20 +210,21 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       left: 0,
       right: 0,
       bottom: 0,
-      background: 'rgba(0,0,0,0.5)',
+      background: 'rgba(15, 23, 42, 0.45)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 1000,
     },
     modalContent: {
-      background: 'white',
-      borderRadius: '1rem',
-      padding: '2rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1.35rem',
       maxWidth: '600px',
       width: '90%',
       maxHeight: '80vh',
       overflow: 'auto',
+      boxShadow: shadows.lift,
     },
     formGroup: {
       marginBottom: '1rem',
@@ -227,23 +232,28 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     label: {
       display: 'block',
       marginBottom: '0.5rem',
-      fontWeight: '600',
-      color: '#374151',
-      fontSize: '0.875rem',
+      fontWeight: 700,
+      color: colors.textPrimary,
+      fontSize: font.body,
     },
     input: {
       width: '100%',
-      padding: '0.75rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.5rem',
-      fontSize: '0.875rem',
+      padding: '0.68rem 0.75rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      boxSizing: 'border-box' as const,
     },
     select: {
       width: '100%',
-      padding: '0.75rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.5rem',
-      fontSize: '0.875rem',
+      padding: '0.68rem 0.75rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
+      fontSize: font.body,
+      color: colors.textPrimary,
+      background: colors.surface,
+      boxSizing: 'border-box' as const,
     },
     grid2: {
       display: 'grid',
@@ -257,39 +267,39 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>💸 借款管理</h2>
-        <button onClick={() => setShowLoanModal(true)} style={styles.btn('#f59e0b')}>
+      <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '0.75rem', flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>💸 借款管理</h2>
+        <button onClick={() => setShowLoanModal(true)} style={styles.btn(colors.amber)}>
           ➕ 新增借款
         </button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ ...styles.statCard('#f59e0b'), textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#f59e0b' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.85rem', marginBottom: '1rem' }}>
+        <div style={{ ...styles.statCard(colors.amber), textAlign: 'center' }}>
+          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.amber }}>
             {activeLoans.length}
           </div>
-          <div style={{ color: '#6b7280', marginTop: '0.5rem' }}>活跃借款笔数</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>活跃借款笔数</div>
         </div>
-        <div style={{ ...styles.statCard('#ef4444'), textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ef4444' }}>
+        <div style={{ ...styles.statCard(colors.danger), textAlign: 'center' }}>
+          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.danger }}>
             C$ {activeLoans.reduce((sum, l) => sum + l.amount, 0).toFixed(2)}
           </div>
-          <div style={{ color: '#6b7280', marginTop: '0.5rem' }}>借款总额</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>借款总额</div>
         </div>
-        <div style={{ ...styles.statCard('#3b82f6'), textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#3b82f6' }}>
+        <div style={{ ...styles.statCard(colors.blue), textAlign: 'center' }}>
+          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.blue }}>
             C$ {activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0).toFixed(2)}
           </div>
-          <div style={{ color: '#6b7280', marginTop: '0.5rem' }}>未还总额</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>未还总额</div>
         </div>
       </div>
 
       <div style={styles.card}>
         {activeLoans.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+          <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💰</div>
             <div>暂无活跃借款</div>
           </div>
@@ -312,14 +322,14 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                     <tr key={loan.id}>
                       <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || '未知'}</td>
                       <td style={styles.td}>{loan.date}</td>
-                      <td style={{ ...styles.td, fontWeight: '600', color: '#ef4444' }}>
+                      <td style={{ ...styles.td, fontWeight: '600', color: colors.danger }}>
                         C$ {loan.amount.toFixed(2)}
                       </td>
-                      <td style={{ ...styles.td, fontWeight: 'bold', color: '#f59e0b' }}>
+                      <td style={{ ...styles.td, fontWeight: 'bold', color: colors.amber }}>
                         C$ {loan.remainingAmount.toFixed(2)}
                       </td>
                       <td style={styles.td}>
-                        <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                        <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
                           工资中扣除
                         </span>
                       </td>
@@ -335,7 +345,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       {showLoanModal && (
         <div style={styles.modal} onClick={() => setShowLoanModal(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '1.5rem' }}>💸 新增借款</h2>
+            <h2 style={{ fontSize: font.title, fontWeight: 750, marginBottom: '1.2rem', color: colors.textPrimary }}>💸 新增借款</h2>
             
             <div style={styles.formGroup}>
               <label style={styles.label}>选择员工 *</label>
@@ -385,12 +395,12 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
             </div>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-              <button onClick={handleAddLoan} style={{ ...styles.btn('#f59e0b'), flex: 1 }}>
+              <button onClick={handleAddLoan} style={{ ...styles.btn(colors.amber), flex: 1 }}>
                 💾 确认借款
               </button>
               <button
                 onClick={() => setShowLoanModal(false)}
-                style={{ ...styles.btn('#6b7280'), flex: 1 }}
+                style={{ ...styles.btn(colors.textSecondary), flex: 1 }}
               >
                 ❌ 取消
               </button>
