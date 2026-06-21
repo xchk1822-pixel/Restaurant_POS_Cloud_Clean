@@ -2,84 +2,98 @@ import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canAccessPermission } from '../../utils/permissions';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface MainLayoutProps {
   children: React.ReactNode;
 }
+
+interface NavItem {
+  path: string;
+  icon: string;
+  label: string;
+  roles?: string[];
+  children?: Array<{
+    path: string;
+    icon: string;
+    label: string;
+  }>;
+}
+
+const roleLabel: Record<string, string> = {
+  super_admin: '超级管理员',
+  store_manager: '店长',
+  cashier: '收银',
+  waiter: '服务生',
+  chef: '厨师',
+};
+
+const menuItems: NavItem[] = [
+  { path: '/dashboard', icon: 'DS', label: '老板仪表板', roles: ['super_admin'] },
+  { path: '/pos', icon: 'POS', label: 'POS 收银', roles: ['store_manager', 'cashier'] },
+  { path: '/waiter', icon: 'WT', label: '服务生点餐', roles: ['store_manager', 'waiter'] },
+  { path: '/kitchen', icon: 'KDS', label: '厨房显示', roles: ['store_manager', 'chef'] },
+  {
+    path: '/inventory',
+    icon: 'ST',
+    label: '库存管理',
+    roles: ['store_manager'],
+    children: [
+      { path: '/inventory', icon: 'IT', label: '物品管理' },
+      { path: '/inventory/menu', icon: 'MN', label: '菜品管理' },
+      { path: '/inventory/warehouse', icon: 'WH', label: '仓库盘点' },
+      { path: '/inventory/fridge', icon: 'FR', label: '冰箱盘点' },
+      { path: '/inventory/suppliers', icon: 'SP', label: '供应商管理' },
+    ],
+  },
+  {
+    path: '/employees',
+    icon: 'HR',
+    label: '员工管理',
+    roles: ['store_manager'],
+    children: [
+      { path: '/employees', icon: 'EP', label: '员工档案' },
+      { path: '/employees/attendance', icon: 'AT', label: '考勤管理' },
+      { path: '/employees/loans', icon: 'LN', label: '借款管理' },
+      { path: '/employees/salary', icon: 'PY', label: '工资结算' },
+    ],
+  },
+  {
+    path: '/manager',
+    icon: 'MG',
+    label: '店长管理',
+    roles: ['store_manager'],
+    children: [
+      { path: '/manager/expense-records', icon: 'EX', label: '开支记录' },
+      { path: '/manager/shift-handover', icon: 'SH', label: '交班对账' },
+      { path: '/manager/order-history', icon: 'OH', label: '历史订单' },
+      { path: '/manager/financial-reports', icon: 'FR', label: '财务报表' },
+      { path: '/manager', icon: 'DA', label: '数据概览' },
+      { path: '/manager/customers', icon: 'CU', label: '客户管理' },
+    ],
+  },
+  {
+    path: '/settings',
+    icon: 'SE',
+    label: '系统设置',
+    roles: ['super_admin'],
+    children: [
+      { path: '/settings/stores', icon: 'BR', label: '分店管理' },
+      { path: '/settings/exchange-rate', icon: 'FX', label: '汇率设置' },
+      { path: '/settings/permissions', icon: 'PM', label: '权限管理' },
+      { path: '/settings/backup', icon: 'BK', label: '数据备份' },
+    ],
+  },
+];
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showFullscreenMenu, setShowFullscreenMenu] = useState(false);
 
-  const menuItems = [
-    { path: '/dashboard', icon: '📊', label: '老板仪表板', roles: ['super_admin'] },
-    { path: '/pos', icon: '💰', label: 'POS收银', roles: ['store_manager', 'cashier'] },
-    { path: '/waiter', icon: '🍽️', label: '服务生点餐', roles: ['store_manager', 'waiter'] },
-    { path: '/kitchen', icon: '👨‍🍳', label: '厨房显示', roles: ['store_manager', 'chef'] },
-    { 
-      path: '/inventory', 
-      icon: '📦', 
-      label: '库存管理', 
-      roles: ['store_manager'],
-      children: [
-        { path: '/inventory', icon: '📋', label: '物品管理' },
-        { path: '/inventory/menu', icon: '🍽️', label: '菜品管理' },
-        { path: '/inventory/warehouse', icon: '🏪', label: '仓库盘点' },
-        { path: '/inventory/fridge', icon: '🧊', label: '冰箱盘点' },
-        { path: '/inventory/suppliers', icon: '👥', label: '供应商管理' }
-      ]
-    },
-    { 
-      path: '/employees', 
-      icon: '👥', 
-      label: '员工管理', 
-      roles: ['store_manager'],
-      children: [
-        { path: '/employees', icon: '👤', label: '员工档案' },
-        { path: '/employees/attendance', icon: '📅', label: '考勤管理' },
-        { path: '/employees/loans', icon: '💸', label: '借款管理' },
-        { path: '/employees/salary', icon: '💰', label: '薪资结算' }
-      ]
-    },
-    { 
-      path: '/manager', 
-      icon: '🏢', 
-      label: '店长管理', 
-      roles: ['store_manager'],
-      children: [
-        { path: '/manager/expense-records', icon: '💸', label: '开支记录' },
-        { path: '/manager/shift-handover', icon: '🔄', label: '交班对账' },
-        { path: '/manager/order-history', icon: '📋', label: '历史订单' },
-        { path: '/manager/financial-reports', icon: '📈', label: '财务报表' },
-        { path: '/manager', icon: '📊', label: '数据概览' },
-        { path: '/manager/customers', icon: '🤝', label: '客户管理' }
-      ]
-    },
-    { 
-      path: '/settings', 
-      icon: '⚙️', 
-      label: '系统设置', 
-      roles: ['super_admin'],
-      children: [
-        { path: '/settings/stores', icon: '🏪', label: '分店管理' },
-        { path: '/settings/exchange-rate', icon: '💱', label: '汇率设置' },
-        { path: '/settings/permissions', icon: '🔐', label: '权限管理' },
-        { path: '/settings/backup', icon: '💾', label: '数据备份' },
-        // 未来扩展
-        // { path: '/settings/notifications', icon: '🔔', label: '通知设置' },
-        // { path: '/settings/print', icon: '🖨️', label: '打印设置' },
-        // { path: '/settings/language', icon: '🌐', label: '语言设置' },
-        // { path: '/settings/mobile', icon: '📱', label: '移动端设置' },
-        // { path: '/settings/security', icon: '🔐', label: '安全设置' }
-      ]
-    }
-  ];
-
-  // 🔥 根据用户角色和权限配置过滤菜单
   const filteredMenuItems = user ? menuItems.filter(item => {
-    // 获取当前角色的权限列表
     const permissionId = item.path === '/settings'
       ? 'settings'
       : item.path === '/inventory'
@@ -92,15 +106,43 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return canAccessPermission(user.role, permissionId);
   }) : [];
 
-  // 判断是否应该隐藏侧边栏
   const shouldHideSidebar = location.pathname === '/pos' || location.pathname === '/kitchen' || location.pathname === '/waiter';
-  
-  // 🔥 全屏模式下的导航切换状态
-  const [showFullscreenMenu, setShowFullscreenMenu] = useState(false);
+
+  const renderIcon = (icon: string, active = false) => (
+    <span style={{
+      minWidth: sidebarCollapsed ? '2.15rem' : '2rem',
+      width: sidebarCollapsed ? '2.15rem' : '2rem',
+      height: '2rem',
+      borderRadius: radii.md,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: active ? colors.teal : colors.surfaceMuted,
+      color: active ? colors.surface : colors.textSecondary,
+      fontSize: icon.length > 2 ? '0.66rem' : '0.72rem',
+      fontWeight: 800,
+      letterSpacing: 0,
+      flexShrink: 0,
+    }}>
+      {icon}
+    </span>
+  );
+
+  const navigateAndClose = (path: string) => {
+    navigate(path);
+    setShowFullscreenMenu(false);
+  };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* 🔥 全屏模式下的浮动菜单按钮 */}
+    <div style={{
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      background: colors.page,
+      color: colors.textPrimary,
+      fontFamily: font.family,
+    }}>
       {shouldHideSidebar && (
         <button
           onClick={() => setShowFullscreenMenu(!showFullscreenMenu)}
@@ -109,27 +151,18 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             top: '1rem',
             left: '1rem',
             zIndex: 1000,
-            width: '3rem',
-            height: '3rem',
-            borderRadius: '50%',
-            backgroundColor: 'rgba(59, 130, 246, 0.9)',
-            color: 'white',
-            border: 'none',
-            fontSize: '1.5rem',
+            width: '3.1rem',
+            height: '3.1rem',
+            borderRadius: radii.lg,
+            background: `linear-gradient(135deg, ${colors.teal}, ${colors.blue})`,
+            color: colors.surface,
+            border: `1px solid rgba(255,255,255,0.35)`,
+            fontSize: '1.25rem',
             cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            boxShadow: shadows.lift,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 1)';
-            e.currentTarget.style.transform = 'scale(1.1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.9)';
-            e.currentTarget.style.transform = 'scale(1)';
           }}
           title="切换功能菜单"
         >
@@ -137,92 +170,90 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </button>
       )}
 
-      {/* 🔥 全屏模式下的菜单面板 */}
       {shouldHideSidebar && showFullscreenMenu && (
         <div
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.48)',
             zIndex: 999,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            padding: '1rem',
+            boxSizing: 'border-box',
           }}
           onClick={() => setShowFullscreenMenu(false)}
         >
           <div
             style={{
-              background: 'white',
-              borderRadius: '1rem',
-              padding: '1.5rem',
-              maxWidth: '400px',
-              width: '90%',
-              maxHeight: '80vh',
+              background: colors.surface,
+              borderRadius: '18px',
+              padding: '1.1rem',
+              maxWidth: '420px',
+              width: '100%',
+              maxHeight: '82vh',
               overflowY: 'auto',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              boxShadow: '0 28px 80px rgba(15, 23, 42, 0.32)',
+              border: `1px solid ${colors.border}`,
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1f2937' }}>📋 功能菜单</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.05rem', color: colors.textPrimary }}>功能菜单</h2>
+                <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: '0.25rem' }}>
+                  {user?.storeName || 'Restaurant POS'}
+                </div>
+              </div>
               <button
                 onClick={() => setShowFullscreenMenu(false)}
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.5rem',
+                  background: colors.surfaceMuted,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: radii.md,
+                  width: '2.25rem',
+                  height: '2.25rem',
                   cursor: 'pointer',
-                  color: '#6b7280',
+                  color: colors.textSecondary,
+                  fontSize: '1.15rem',
                 }}
+                aria-label="关闭"
               >
-                ✕
+                ×
               </button>
             </div>
-            
+
             <div style={{ display: 'grid', gap: '0.5rem' }}>
-              {filteredMenuItems.map((item) => (
-                <button
-                  key={item.path}
-                  onClick={() => {
-                    navigate(item.path);
-                    setShowFullscreenMenu(false);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    padding: '0.75rem 1rem',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '0.5rem',
-                    background: location.pathname === item.path ? '#eff6ff' : 'white',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: location.pathname === item.path ? '600' : '500',
-                    color: location.pathname === item.path ? '#2563eb' : '#374151',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (location.pathname !== item.path) {
-                      e.currentTarget.style.backgroundColor = '#f9fafb';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (location.pathname !== item.path) {
-                      e.currentTarget.style.backgroundColor = 'white';
-                    }
-                  }}
-                >
-                  <span style={{ fontSize: '1.25rem' }}>{item.icon}</span>
-                  <span>{item.label}</span>
-                </button>
-              ))}
+              {filteredMenuItems.map(item => {
+                const isActive = location.pathname === item.path || Boolean(item.children?.some(child => location.pathname === child.path));
+                return (
+                  <button
+                    key={item.path}
+                    onClick={() => navigateAndClose(item.path)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                      padding: '0.72rem',
+                      border: `1px solid ${isActive ? colors.teal : colors.border}`,
+                      borderRadius: radii.lg,
+                      background: isActive ? colors.tealSoft : colors.surface,
+                      cursor: 'pointer',
+                      fontSize: font.body,
+                      fontWeight: isActive ? 700 : 600,
+                      color: isActive ? colors.teal : colors.textPrimary,
+                      textAlign: 'left',
+                    }}
+                  >
+                    {renderIcon(item.icon, isActive)}
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
             </div>
 
-            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
               <button
                 onClick={() => {
                   logout();
@@ -230,83 +261,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 }}
                 style={{
                   width: '100%',
-                  padding: '0.75rem',
-                  backgroundColor: '#fee2e2',
-                  color: '#dc2626',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  fontSize: '0.875rem',
-                  fontWeight: '600',
+                  padding: '0.72rem',
+                  backgroundColor: colors.dangerSoft,
+                  color: colors.danger,
+                  border: `1px solid ${colors.dangerSoft}`,
+                  borderRadius: radii.lg,
+                  fontSize: font.body,
+                  fontWeight: 700,
                   cursor: 'pointer',
-                }}
-              >
-                🚪 退出登录
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 顶部导航栏 */}
-      <header style={{ 
-        backgroundColor: 'white', 
-        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-        flexShrink: 0
-      }}>
-        <div style={{ maxWidth: '80rem', margin: '0 auto', padding: '0 1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', height: '4rem', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {!shouldHideSidebar && (
-                <button
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    fontSize: '1.5rem',
-                    cursor: 'pointer',
-                    padding: '0.25rem',
-                    borderRadius: '0.375rem',
-                    transition: 'background-color 0.2s',
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                  title={sidebarCollapsed ? '展开菜单' : '折叠菜单'}
-                >
-                  {sidebarCollapsed ? '☰' : '✕'}
-                </button>
-              )}
-              <div>
-                <h1 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', margin: 0 }}>🍽️ Restaurant POS</h1>
-                {user?.storeId && (
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                    📍 {user.storeName}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {user && (
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>{user.username}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    {user.role === 'super_admin' ? '👑 超级管理员' : 
-                     user.role === 'store_manager' ? '🏢 店长' :
-                     user.role === 'cashier' ? '💰 收银员' :
-                     user.role === 'waiter' ? '🍽️ 服务生' : '👨‍🍳 厨师'}
-                  </div>
-                </div>
-              )}
-              <button
-                onClick={logout}
-                style={{
-                  padding: '0.5rem 0.75rem',
-                  borderRadius: '0.375rem',
-                  fontSize: '0.875rem',
-                  fontWeight: '500',
-                  color: '#dc2626',
-                  cursor: 'pointer',
-                  border: 'none',
-                  backgroundColor: 'transparent'
                 }}
               >
                 退出登录
@@ -314,28 +276,111 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             </div>
           </div>
         </div>
+      )}
+
+      <header style={{
+        background: 'rgba(255,255,255,0.94)',
+        borderBottom: `1px solid ${colors.border}`,
+        flexShrink: 0,
+        boxShadow: '0 1px 0 rgba(15, 23, 42, 0.03)',
+        backdropFilter: 'blur(12px)',
+      }}>
+        <div style={{ padding: '0 1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', height: '4.25rem', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', minWidth: 0 }}>
+              {!shouldHideSidebar && (
+                <button
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  style={{
+                    background: colors.surfaceMuted,
+                    border: `1px solid ${colors.border}`,
+                    color: colors.textPrimary,
+                    fontSize: '1.05rem',
+                    cursor: 'pointer',
+                    width: '2.45rem',
+                    height: '2.45rem',
+                    borderRadius: radii.md,
+                  }}
+                  title={sidebarCollapsed ? '展开菜单' : '收起菜单'}
+                >
+                  {sidebarCollapsed ? '→' : '←'}
+                </button>
+              )}
+              <div style={{
+                width: '2.55rem',
+                height: '2.55rem',
+                borderRadius: radii.lg,
+                background: `linear-gradient(135deg, ${colors.teal}, ${colors.blue})`,
+                color: colors.surface,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: '0.8rem',
+                flexShrink: 0,
+              }}>
+                POS
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <h1 style={{ fontSize: '1.08rem', fontWeight: 800, color: colors.textPrimary, margin: 0, letterSpacing: 0 }}>
+                  Restaurant POS
+                </h1>
+                {user?.storeId && (
+                  <div style={{ fontSize: font.caption, color: colors.textSecondary, marginTop: '0.2rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user.storeName}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+              {user && (
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: font.body, fontWeight: 700, color: colors.textPrimary }}>{user.username}</div>
+                  <div style={{ fontSize: font.caption, color: colors.textSecondary }}>
+                    {roleLabel[user.role] || user.role}
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={logout}
+                style={{
+                  padding: '0.55rem 0.82rem',
+                  borderRadius: radii.md,
+                  fontSize: font.body,
+                  fontWeight: 650,
+                  color: colors.danger,
+                  cursor: 'pointer',
+                  border: `1px solid ${colors.dangerSoft}`,
+                  backgroundColor: '#fff7f7',
+                }}
+              >
+                退出
+              </button>
+            </div>
+          </div>
+        </div>
       </header>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* 侧边栏 - 根据页面类型显示/隐藏 */}
         {!shouldHideSidebar && (
-          <aside style={{ 
-            width: sidebarCollapsed ? '4rem' : '16rem', 
-            backgroundColor: 'white', 
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            transition: 'width 0.3s ease',
+          <aside style={{
+            width: sidebarCollapsed ? '4.6rem' : '17rem',
+            backgroundColor: colors.surface,
+            borderRight: `1px solid ${colors.border}`,
+            transition: 'width 0.22s ease',
             overflow: 'hidden',
             flexShrink: 0,
             display: 'flex',
-            flexDirection: 'column'
+            flexDirection: 'column',
           }}>
-            <nav style={{ marginTop: '1.25rem', padding: '0 0.5rem', flex: 1, overflowY: 'auto' }}>
-              {filteredMenuItems.map((item) => {
-                const isActive = location.pathname === item.path || 
-                  (item.children && item.children.some(child => location.pathname === child.path));
-                
+            <nav style={{ marginTop: '0.85rem', padding: '0 0.7rem 1rem', flex: 1, overflowY: 'auto' }}>
+              {filteredMenuItems.map(item => {
+                const isActive = location.pathname === item.path ||
+                  Boolean(item.children?.some(child => location.pathname === child.path));
+
                 return (
-                  <div key={item.path}>
+                  <div key={item.path} style={{ marginBottom: '0.35rem' }}>
                     <button
                       onClick={() => navigate(item.path)}
                       title={sidebarCollapsed ? item.label : ''}
@@ -343,27 +388,26 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                        padding: sidebarCollapsed ? '0.75rem' : '0.5rem',
-                        fontSize: '1rem',
-                        fontWeight: '500',
-                        borderRadius: '0.375rem',
+                        gap: sidebarCollapsed ? 0 : '0.72rem',
+                        padding: sidebarCollapsed ? '0.55rem' : '0.55rem 0.62rem',
+                        fontSize: font.body,
+                        fontWeight: isActive ? 750 : 650,
+                        borderRadius: radii.lg,
                         width: '100%',
-                        marginBottom: item.children ? '0.25rem' : '0.25rem',
                         cursor: 'pointer',
-                        border: 'none',
-                        backgroundColor: isActive ? '#eff6ff' : 'transparent',
-                        color: isActive ? '#2563eb' : '#4b5563',
-                        transition: 'all 0.2s',
-                        whiteSpace: 'nowrap'
+                        border: `1px solid ${isActive ? colors.tealSoft : 'transparent'}`,
+                        backgroundColor: isActive ? colors.tealSoft : 'transparent',
+                        color: isActive ? colors.teal : colors.textPrimary,
+                        transition: 'background-color 0.16s, color 0.16s',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      <span style={{ fontSize: '1.25rem', minWidth: sidebarCollapsed ? 'auto' : '2rem' }}>{item.icon}</span>
-                      {!sidebarCollapsed && <span style={{ marginLeft: '0.5rem' }}>{item.label}</span>}
+                      {renderIcon(item.icon, isActive)}
+                      {!sidebarCollapsed && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>}
                     </button>
-                    
-                    {/* 子菜单 */}
+
                     {!sidebarCollapsed && item.children && (
-                      <div style={{ marginLeft: '2.5rem', marginTop: '0.25rem' }}>
+                      <div style={{ marginLeft: '2.55rem', marginTop: '0.3rem', display: 'grid', gap: '0.18rem' }}>
                         {item.children.map(child => {
                           const isChildActive = location.pathname === child.path;
                           return (
@@ -373,21 +417,20 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                               style={{
                                 display: 'flex',
                                 alignItems: 'center',
-                                padding: '0.4rem 0.75rem',
-                                fontSize: '0.9rem',
-                                fontWeight: '500',
-                                borderRadius: '0.375rem',
+                                gap: '0.42rem',
+                                padding: '0.42rem 0.55rem',
+                                fontSize: '0.83rem',
+                                fontWeight: isChildActive ? 700 : 600,
+                                borderRadius: radii.md,
                                 width: '100%',
-                                marginBottom: '0.25rem',
                                 cursor: 'pointer',
                                 border: 'none',
-                                backgroundColor: isChildActive ? '#dbeafe' : 'transparent',
-                                color: isChildActive ? '#2563eb' : '#6b7280',
-                                transition: 'all 0.2s',
-                                whiteSpace: 'nowrap'
+                                backgroundColor: isChildActive ? colors.blueSoft : 'transparent',
+                                color: isChildActive ? colors.blue : colors.textSecondary,
+                                textAlign: 'left',
                               }}
                             >
-                              <span style={{ fontSize: '1rem', marginRight: '0.5rem' }}>{child.icon}</span>
+                              <span style={{ fontSize: '0.68rem', fontWeight: 800 }}>{child.icon}</span>
                               <span>{child.label}</span>
                             </button>
                           );
@@ -401,15 +444,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           </aside>
         )}
 
-        {/* 主内容区 */}
-        <main style={{ 
-          flex: 1, 
-          padding: shouldHideSidebar ? '0' : '1.5rem',
+        <main style={{
+          flex: 1,
+          padding: shouldHideSidebar ? '0' : '1.2rem',
           maxWidth: shouldHideSidebar ? '100%' : undefined,
           width: shouldHideSidebar ? '100%' : undefined,
           overflow: 'hidden',
           display: 'flex',
-          flexDirection: 'column'
+          flexDirection: 'column',
+          background: shouldHideSidebar ? colors.surface : colors.page,
         }}>
           {children}
         </main>

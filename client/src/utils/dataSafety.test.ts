@@ -2047,4 +2047,21 @@ describe('production data safety guards', () => {
     expect(adminUi).toContain('adminPageStyle');
     expect(adminUi).toContain('adminCardStyle');
   });
+
+  test('app shell UI polish keeps permission routing intact', () => {
+    const layoutPath = path.join(process.cwd(), 'src/components/Layout/MainLayout.tsx');
+    const loginPath = path.join(process.cwd(), 'src/pages/Login/Login.tsx');
+    const layoutSource = fs.readFileSync(layoutPath, 'utf8');
+    const loginSource = fs.readFileSync(loginPath, 'utf8');
+
+    expect(layoutSource).toContain('canAccessPermission');
+    expect(layoutSource).toContain('shouldHideSidebar');
+    expect(layoutSource).toContain('logout');
+    expect(layoutSource).toContain("location.pathname === '/pos'");
+    expect(layoutSource).toContain("location.pathname === '/kitchen'");
+    expect(layoutSource).toContain("location.pathname === '/waiter'");
+    expect(loginSource).toContain('redirectUrl');
+    expect(loginSource).toContain('firebaseLogin(username, password)');
+    expect(loginSource).toContain('login(loggedInUser)');
+  });
 });
