@@ -4,6 +4,7 @@ import TableLayout from '../../components/TableLayout';
 import MenuSelection from '../../components/MenuSelection';
 import { dataService } from '../../services/DataService';
 import { smartSubscribeToCollection, smartUpdateDocument } from '../../services/smartSyncService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Table {
   id: string;
@@ -391,21 +392,30 @@ const WaiterInterface: React.FC = () => {
 
   // 渲染桌台视图
   const renderTablesView = () => (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', backgroundColor: 'white' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0 }}>🍽️ 服务生 - 桌台管理</h2>
-        <p style={{ color: '#6b7280', marginTop: '0.5rem', fontSize: '0.875rem' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: colors.page, fontFamily: font.family }}>
+      <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${colors.border}`, backgroundColor: colors.surface }}>
+        <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: 0, color: colors.textPrimary }}>服务生桌台</h2>
+        <p style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.body }}>
           点击桌台开始点餐，桌台布局由 POS 同步
         </p>
       </div>
       
       <div style={{ flex: 1, padding: '1rem', overflow: 'hidden' }}>
-        <TableLayout
-          tables={displayedTables}
-          selectedTableId={selectedTableId}
-          onTableSelect={handleTableSelect}
-          editable={false}
-        />
+        <div style={{
+          height: '100%',
+          background: colors.surface,
+          border: `1px solid ${colors.border}`,
+          borderRadius: radii.lg,
+          boxShadow: shadows.soft,
+          overflow: 'hidden',
+        }}>
+          <TableLayout
+            tables={displayedTables}
+            selectedTableId={selectedTableId}
+            onTableSelect={handleTableSelect}
+            editable={false}
+          />
+        </div>
       </div>
     </div>
   );
@@ -415,12 +425,12 @@ const WaiterInterface: React.FC = () => {
     const table = tables.find(t => t.id === selectedTableId);
     
     return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: colors.page, fontFamily: font.family }}>
         {/* 顶部栏 */}
         <div style={{ 
-          padding: '1rem', 
-          borderBottom: '1px solid #e5e7eb', 
-          backgroundColor: 'white',
+          padding: '0.9rem 1.1rem',
+          borderBottom: `1px solid ${colors.border}`,
+          backgroundColor: colors.surface,
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center'
@@ -431,25 +441,26 @@ const WaiterInterface: React.FC = () => {
               style={{
                 marginRight: '1rem',
                 padding: '0.5rem 1rem',
-                backgroundColor: '#f3f4f6',
-                border: 'none',
-                borderRadius: '0.375rem',
+                backgroundColor: colors.surfaceMuted,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radii.md,
                 cursor: 'pointer',
-                fontSize: '0.875rem'
+                fontSize: font.body,
+                color: colors.textPrimary,
               }}
             >
               ← 返回桌台
             </button>
-            <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
-              📋 桌台 {table?.number} - 点餐
+            <span style={{ fontSize: '1.15rem', fontWeight: '800', color: colors.textPrimary }}>
+              桌台 {table?.number} - 点餐
             </span>
             {currentOrder && (
               <span style={{ 
                 marginLeft: '1rem',
                 padding: '0.25rem 0.75rem',
-                backgroundColor: '#dbeafe',
-                color: '#1e40af',
-                borderRadius: '9999px',
+                backgroundColor: colors.blueSoft,
+                color: colors.blue,
+                borderRadius: radii.pill,
                 fontSize: '0.75rem',
                 fontWeight: '600'
               }}>
@@ -462,13 +473,14 @@ const WaiterInterface: React.FC = () => {
             onClick={handleSendToKitchen}
             style={{
               padding: '0.75rem 1.5rem',
-              backgroundColor: '#10b981',
-              color: 'white',
+              backgroundColor: colors.success,
+              color: colors.surface,
               border: 'none',
-              borderRadius: '0.375rem',
-              fontWeight: '600',
+              borderRadius: radii.md,
+              fontWeight: '800',
               cursor: 'pointer',
-              fontSize: '1rem'
+              fontSize: '1rem',
+              boxShadow: '0 10px 20px rgba(22, 163, 74, 0.22)'
             }}
           >
             🍳 发送到厨房
@@ -478,7 +490,7 @@ const WaiterInterface: React.FC = () => {
         {/* 主要内容区 */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* 左侧：菜单选择 */}
-          <div style={{ flex: 1, borderRight: '1px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ flex: 1, borderRight: `1px solid ${colors.border}`, overflow: 'hidden', background: colors.surface }}>
             <MenuSelection
               items={currentItems}
               onAddItem={handleAddItem}
@@ -488,8 +500,8 @@ const WaiterInterface: React.FC = () => {
           </div>
 
           {/* 右侧：订单详情 */}
-          <div style={{ width: '350px', display: 'flex', flexDirection: 'column', backgroundColor: 'white' }}>
-            <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', fontWeight: '600' }}>
+          <div style={{ width: '350px', display: 'flex', flexDirection: 'column', backgroundColor: colors.surface }}>
+            <div style={{ padding: '1rem', borderBottom: `1px solid ${colors.border}`, fontWeight: '800', color: colors.textPrimary }}>
               🛒 当前订单
             </div>
             
@@ -579,7 +591,7 @@ const WaiterInterface: React.FC = () => {
             </div>
 
             {/* 底部汇总 */}
-            <div style={{ borderTop: '2px solid #e5e7eb', padding: '1rem', backgroundColor: '#f9fafb' }}>
+            <div style={{ borderTop: `2px solid ${colors.border}`, padding: '1rem', backgroundColor: colors.surfaceMuted }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                 <span style={{ color: '#6b7280' }}>商品数量:</span>
                 <span style={{ fontWeight: '600' }}>{currentItems.reduce((sum, item) => sum + item.quantity, 0)}</span>

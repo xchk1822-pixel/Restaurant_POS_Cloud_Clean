@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartUpdateDocument } from '../../services/smartSyncService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface OrderItem {
   id: string;
@@ -207,29 +208,29 @@ const KitchenDisplay: React.FC = () => {
   };
 
   return (
-    <div style={{ height: 'calc(100vh - 8rem)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', backgroundColor: '#f9fafb' }}>
+    <div style={{ height: 'calc(100vh - 8rem)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', backgroundColor: colors.page, fontFamily: font.family }}>
       {/* 顶部统计栏 */}
-      <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '1rem' }}>
+      <div style={{ backgroundColor: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, padding: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: '1.5rem' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#3b82f6' }}>{stats.total}</div>
-              <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>总订单</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.blue }}>{stats.total}</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>总订单</div>
             </div>
-            <div style={{ width: '1px', backgroundColor: '#e5e7eb' }} />
+            <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#f59e0b' }}>{stats.pending}</div>
-              <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>待制作</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.amber }}>{stats.pending}</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>待制作</div>
             </div>
-            <div style={{ width: '1px', backgroundColor: '#e5e7eb' }} />
+            <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#3b82f6' }}>{stats.preparing}</div>
-              <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>制作中</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.blue }}>{stats.preparing}</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>制作中</div>
             </div>
-            <div style={{ width: '1px', backgroundColor: '#e5e7eb' }} />
+            <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#10b981' }}>{stats.ready}</div>
-              <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>已完成</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.success }}>{stats.ready}</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>已完成</div>
             </div>
           </div>
 
@@ -243,7 +244,7 @@ const KitchenDisplay: React.FC = () => {
                   backgroundColor: filter === 'all' ? '#3b82f6' : '#f3f4f6',
                   color: filter === 'all' ? 'white' : '#374151',
                   border: 'none',
-                  borderRadius: '0.25rem',
+                  borderRadius: radii.md,
                   fontWeight: '600',
                   cursor: 'pointer',
                   fontSize: '0.85rem'
@@ -258,7 +259,7 @@ const KitchenDisplay: React.FC = () => {
                   backgroundColor: filter === 'pending' ? '#f59e0b' : '#f3f4f6',
                   color: filter === 'pending' ? 'white' : '#374151',
                   border: 'none',
-                  borderRadius: '0.25rem',
+                  borderRadius: radii.md,
                   fontWeight: '600',
                   cursor: 'pointer',
                   fontSize: '0.85rem'
@@ -273,7 +274,7 @@ const KitchenDisplay: React.FC = () => {
                   backgroundColor: filter === 'preparing' ? '#3b82f6' : '#f3f4f6',
                   color: filter === 'preparing' ? 'white' : '#374151',
                   border: 'none',
-                  borderRadius: '0.25rem',
+                  borderRadius: radii.md,
                   fontWeight: '600',
                   cursor: 'pointer',
                   fontSize: '0.85rem'
@@ -288,7 +289,7 @@ const KitchenDisplay: React.FC = () => {
                   backgroundColor: filter === 'ready' ? '#10b981' : '#f3f4f6',
                   color: filter === 'ready' ? 'white' : '#374151',
                   border: 'none',
-                  borderRadius: '0.25rem',
+                  borderRadius: radii.md,
                   fontWeight: '600',
                   cursor: 'pointer',
                   fontSize: '0.85rem'
@@ -304,8 +305,8 @@ const KitchenDisplay: React.FC = () => {
               onChange={(e) => setSortBy(e.target.value as 'time' | 'priority')}
               style={{
                 padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.25rem',
+                border: `1px solid ${colors.borderStrong}`,
+                borderRadius: radii.md,
                 fontSize: '0.85rem'
               }}
             >
@@ -339,11 +340,11 @@ const KitchenDisplay: React.FC = () => {
               <div
                 key={order.id}
                 style={{
-                  backgroundColor: 'white',
-                  borderRadius: '0.5rem',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                  backgroundColor: colors.surface,
+                  borderRadius: radii.lg,
+                  boxShadow: shadows.soft,
                   overflow: 'hidden',
-                  border: order.priority === 'urgent' ? '3px solid #ef4444' : '2px solid #e5e7eb',
+                  border: order.priority === 'urgent' ? `3px solid ${colors.danger}` : `1px solid ${colors.border}`,
                   opacity: order.status === 'ready' ? 0.7 : 1
                 }}
               >
@@ -351,11 +352,11 @@ const KitchenDisplay: React.FC = () => {
                 <div style={{
                   padding: '0.75rem',
                   backgroundColor: order.status === 'pending' ? '#fef3c7' : (order.status === 'preparing' ? '#dbeafe' : '#d1fae5'),
-                  borderBottom: '1px solid #e5e7eb'
+                  borderBottom: `1px solid ${colors.border}`
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#374151' }}>
+                        <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.textPrimary }}>
                         {order.type === 'dine_in' ? '🍽️' : (order.type === 'takeout' ? '🥡' : '🚚')}
                         {' '}{order.tableNumber}号桌
                       </span>
@@ -421,7 +422,7 @@ const KitchenDisplay: React.FC = () => {
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                        <div style={{ fontWeight: '600', fontSize: '0.95rem', color: '#374151' }}>
+                      <div style={{ fontWeight: '750', fontSize: '0.95rem', color: colors.textPrimary }}>
                           {item.name} × {item.quantity}
                         </div>
                         <div style={{ display: 'flex', gap: '0.35rem' }}>

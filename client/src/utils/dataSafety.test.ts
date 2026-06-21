@@ -2064,4 +2064,29 @@ describe('production data safety guards', () => {
     expect(loginSource).toContain('firebaseLogin(username, password)');
     expect(loginSource).toContain('login(loggedInUser)');
   });
+
+  test('front-of-house UI polish keeps POS waiter and kitchen data paths intact', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const menuPath = path.join(process.cwd(), 'src/components/MenuSelection.tsx');
+    const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
+    const kitchenPath = path.join(process.cwd(), 'src/pages/POS/KitchenDisplay.tsx');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const menuSource = fs.readFileSync(menuPath, 'utf8');
+    const waiterSource = fs.readFileSync(waiterPath, 'utf8');
+    const kitchenSource = fs.readFileSync(kitchenPath, 'utf8');
+
+    expect(posSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(menuSource).toContain("import { colors, font, radii, shadows } from '../styles/uiTokens';");
+    expect(waiterSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(kitchenSource).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+
+    expect(posSource).toContain("smartSubscribeToCollection('pos_tables'");
+    expect(posSource).toContain("smartUpdateDocument('pos_orders', order.id");
+    expect(posSource).toContain('completeOrderWithStockDeduction');
+    expect(menuSource).toContain('MenuImage');
+    expect(waiterSource).toContain("smartUpdateDocument('pos_orders', newOrder.id");
+    expect(waiterSource).toContain('editable={false}');
+    expect(kitchenSource).toContain("smartUpdateDocument('pos_orders', updatedOrder.id");
+    expect(kitchenSource).toContain("return dataManager.saveData('orders', nextAllOrders, { syncFirestore: false }).then(() =>");
+  });
 });

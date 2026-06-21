@@ -2,8 +2,20 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import type { MenuItem as AppMenuItem } from '../contexts/AppContext';
 import MenuImage from './MenuImage';
+import { colors, font, radii, shadows } from '../styles/uiTokens';
 
 interface MenuItem extends AppMenuItem {}
+
+const menuInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.72rem 0.85rem',
+  border: `1px solid ${colors.borderStrong}`,
+  borderRadius: radii.md,
+  fontSize: font.body,
+  outline: 'none',
+  boxSizing: 'border-box',
+  background: colors.surface,
+};
 
 interface OrderDetailProps {
   items: Array<{ menuItemId: string; name: string; quantity: number; price: number; subtotal: number }>;
@@ -42,9 +54,9 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: colors.surface, fontFamily: font.family }}>
       {/* 搜索框 */}
-      <div style={{ padding: '0.5rem', borderBottom: '1px solid #e5e7eb' }}>
+      <div style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, background: colors.surface }}>
         <input
           ref={searchInputRef}
           type="text"
@@ -52,14 +64,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
           placeholder="Buscar plato..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '0.5rem 0.75rem',
-            border: '1px solid #d1d5db',
-            borderRadius: '0.375rem',
-            fontSize: '0.875rem',
-            outline: 'none'
-          }}
+          style={menuInputStyle}
         />
       </div>
 
@@ -68,9 +73,10 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
         display: 'flex',
         flexWrap: 'wrap',
         alignContent: 'flex-start',
-        gap: '0.5rem',
-        padding: '0.5rem',
-        borderBottom: '1px solid #e5e7eb',
+        gap: '0.45rem',
+        padding: '0.65rem 0.75rem',
+        borderBottom: `1px solid ${colors.border}`,
+        background: colors.surfaceMuted,
         flexShrink: 0
       }}>
         {categoryList.map(category => (
@@ -81,15 +87,16 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               focusSearchInput();
             }}
             style={{
-              padding: '0.375rem 0.75rem',
-              borderRadius: '0.375rem',
+              padding: '0.42rem 0.78rem',
+              borderRadius: radii.pill,
               fontSize: '0.75rem',
-              fontWeight: '500',
+              fontWeight: '750',
               whiteSpace: 'nowrap',
               cursor: 'pointer',
-              border: 'none',
-              backgroundColor: selectedCategory === category ? '#3b82f6' : '#f3f4f6',
-              color: selectedCategory === category ? 'white' : '#374151'
+              border: selectedCategory === category ? `1px solid ${colors.blue}` : `1px solid ${colors.border}`,
+              backgroundColor: selectedCategory === category ? colors.blue : colors.surface,
+              color: selectedCategory === category ? colors.surface : colors.textSecondary,
+              boxShadow: selectedCategory === category ? '0 8px 18px rgba(37, 99, 235, 0.2)' : 'none'
             }}
           >
             {category === 'all' ? 'Todos' : category}
@@ -98,8 +105,8 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
       </div>
 
       {/* 菜品网格 */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0.4rem', minHeight: 0 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0.65rem', minHeight: 0, background: colors.surfaceMuted }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.6rem' }}>
           {filteredItems.map(item => {
             const isAvailable = item.available !== false;
             return (
@@ -113,31 +120,32 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 disabled={!isAvailable}
                 style={{
                   padding: 0,
-                  backgroundColor: !isAvailable ? '#f3f4f6' : (item.type === 'recipe' ? 'white' : '#dbeafe'),
-                  border: item.type === 'recipe' ? '1px solid #e5e7eb' : '2px solid #3b82f6',
-                  borderColor: !isAvailable ? '#d1d5db' : (item.type === 'recipe' ? '#e5e7eb' : '#3b82f6'),
-                  borderRadius: '0.375rem',
+                  backgroundColor: !isAvailable ? colors.surfaceMuted : colors.surface,
+                  border: item.type === 'recipe' ? `1px solid ${colors.border}` : `1px solid ${colors.blue}`,
+                  borderColor: !isAvailable ? colors.borderStrong : (item.type === 'recipe' ? colors.border : colors.blue),
+                  borderRadius: radii.md,
                   cursor: isAvailable ? 'pointer' : 'not-allowed',
                   textAlign: 'left',
                   transition: 'all 0.2s',
                   position: 'relative',
                   opacity: isAvailable ? 1 : 0.5,
-                  minHeight: '142px',
+                  minHeight: '154px',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
-                  overflow: 'hidden'
+                  overflow: 'hidden',
+                  boxShadow: shadows.soft
                 }}
                 onMouseEnter={(e) => {
                   if (isAvailable) {
-                    e.currentTarget.style.borderColor = item.type === 'recipe' ? '#3b82f6' : '#2563eb';
-                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(59, 130, 246, 0.1)';
+                    e.currentTarget.style.borderColor = item.type === 'recipe' ? colors.blue : colors.teal;
+                    e.currentTarget.style.boxShadow = shadows.lift;
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (isAvailable) {
-                    e.currentTarget.style.borderColor = item.type === 'recipe' ? '#e5e7eb' : '#3b82f6';
-                    e.currentTarget.style.boxShadow = 'none';
+                    e.currentTarget.style.borderColor = item.type === 'recipe' ? colors.border : colors.blue;
+                    e.currentTarget.style.boxShadow = shadows.soft;
                   }
                 }}
               >
@@ -147,7 +155,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   aspectRatio: '4 / 3',
                   minHeight: '104px',
                   overflow: 'hidden',
-                  backgroundColor: '#f8fafc',
+                  backgroundColor: colors.surfaceMuted,
                   position: 'relative'
                 }}>
                   <MenuImage
@@ -195,9 +203,9 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                 top: '0.3rem',
                 right: '0.3rem',
                 padding: '0.1rem 0.3rem',
-                backgroundColor: item.type === 'recipe' ? '#10b981' : '#3b82f6',
+                backgroundColor: item.type === 'recipe' ? colors.success : colors.blue,
                 color: 'white',
-                borderRadius: '0.2rem',
+                borderRadius: radii.sm,
                 fontSize: '0.6rem',
                 fontWeight: '600'
               }}>

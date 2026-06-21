@@ -7,6 +7,7 @@ import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTim
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
 import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import tableFoodBackground from '../../assets/pos/table-food-background.jpg';
 import tableSingleModern from '../../assets/pos/table-single-modern.png';
 import tableHorizontalModern from '../../assets/pos/table-horizontal-modern.png';
@@ -532,6 +533,20 @@ const posOrderTypeIcons: Record<'dine_in' | 'takeout' | 'delivery', string> = {
 };
 
 const formatPosOrderType = (type: 'dine_in' | 'takeout' | 'delivery') => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
+
+const posPanelStyle: React.CSSProperties = {
+  backgroundColor: colors.surface,
+  borderRadius: radii.lg,
+  boxShadow: shadows.soft,
+  border: `1px solid ${colors.border}`,
+  overflow: 'hidden',
+};
+
+const posMutedPanelStyle: React.CSSProperties = {
+  backgroundColor: colors.surfaceMuted,
+  border: `1px solid ${colors.border}`,
+  borderRadius: radii.md,
+};
 
 const POS: React.FC = () => {
   const { deductStock, orders: appOrders, setOrders: setAppOrders } = useAppContext();
@@ -3239,13 +3254,15 @@ const POS: React.FC = () => {
           height: 'calc(100vh - 64px)',  // 鍑忓幓椤堕儴瀵艰埅鏍忛珮搴?
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          background: colors.page,
+          fontFamily: font.family,
         }}>
           {/* 涓诲唴瀹瑰尯 */}
           <div style={{ flex: 1, display: 'flex', gap: '0.75rem', padding: '0.75rem', overflow: 'hidden', boxSizing: 'border-box' }}>
             {/* Left: Menu Selection - 鍙妯″紡闅愯棌 */}
             {!isReadOnly && (
-              <div style={{ flex: 6, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ ...posPanelStyle, flex: 6, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                 <MenuSelection
                   items={currentItems}
                   onAddItem={handleAddItem}
@@ -3265,7 +3282,7 @@ const POS: React.FC = () => {
               overflow: 'hidden'
             }}>
               {currentItems.length > 0 ? (
-                <div style={{ flex: 1, backgroundColor: '#fffbe6', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+                <div style={{ ...posPanelStyle, flex: 1, backgroundColor: '#fffdf2', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   {/* 鍙粴鍔ㄧ殑鍐呭鍖?- 闄愬埗鏈€澶ч珮搴?*/}
                   <div style={{ flex: '1 1 auto', overflowY: 'auto', padding: '0.75rem', maxHeight: 'calc(100vh - 200px)' }}>
                     {/* Receipt Header */}
@@ -3659,8 +3676,8 @@ const POS: React.FC = () => {
 
           {/* Right: Payment Interface - 鍙妯″紡闅愯棌 */}
           {!isReadOnly && (
-            <div style={{ flex: 3, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '1rem', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', margin: 0, marginBottom: '0.75rem' }}>💳 Pago</h3>
+            <div style={{ ...posPanelStyle, flex: 3, padding: '1rem', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: colors.textPrimary, margin: 0, marginBottom: '0.75rem' }}>💳 Pago</h3>
 
             {selectedOrderId && settledAmount > 0 && (
               <div style={{
@@ -4449,10 +4466,10 @@ const POS: React.FC = () => {
           </div>
 
           {/* Right: Order List */}
-          <div style={{ width: '430px', backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', flexShrink: 0, backgroundColor: '#ffffff' }}>
+          <div style={{ ...posPanelStyle, width: '430px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${colors.border}`, flexShrink: 0, backgroundColor: colors.surface }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#111827', margin: 0 }}>📋 Pedidos</h3>
+                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: colors.textPrimary, margin: 0 }}>Pedidos</h3>
                 <button
                   onClick={() => setOrderTypeFilter('all')}
                   style={{
@@ -4521,7 +4538,7 @@ const POS: React.FC = () => {
                 </button>
               </div>
 
-              <div style={{ marginTop: '0.85rem', padding: '0.85rem', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.65rem' }}>
+              <div style={{ ...posMutedPanelStyle, marginTop: '0.85rem', padding: '0.85rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total pedidos:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#374151' }}>{filteredOrders.length}</span>
@@ -4587,7 +4604,7 @@ const POS: React.FC = () => {
               </button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0.85rem', backgroundColor: '#f8fafc' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0.85rem', backgroundColor: colors.surfaceMuted }}>
               {filteredOrders.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
                   Sin pedidos
