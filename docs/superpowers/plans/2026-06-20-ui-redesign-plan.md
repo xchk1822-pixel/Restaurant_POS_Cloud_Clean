@@ -4,6 +4,8 @@
 
 **Goal:** Upgrade the Restaurant POS UI to a commercial software standard while preserving all existing business logic.
 
+**Implementation status:** Completed through Task 9 on 2026-06-20. Each batch was protected by source tests, built, browser-verified, deployed to Firebase Hosting project `restaurant-pos-1b420`, recorded in `docs/2026-06-15_PROGRESS.md`, committed, and pushed to GitHub.
+
 **Architecture:** Add a lightweight shared UI token layer, then apply it incrementally to individual screens. Keep functional code paths untouched; only adjust style objects, CSS classes, display labels, visual grouping, spacing, typography, and responsive layout.
 
 **Tech Stack:** React 19, TypeScript, react-scripts, Firebase-hosted SPA, inline React styles plus lightweight shared style constants.
