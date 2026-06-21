@@ -1468,6 +1468,20 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("smartSubscribeToCollection('pos_orders'");
   });
 
+  test('financial report UI polish uses shared tokens without changing formulas or print details', () => {
+    const reportsPath = path.join(process.cwd(), 'src/pages/Manager/FinancialReports.tsx');
+    const source = fs.readFileSync(reportsPath, 'utf8');
+
+    expect(source).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(source).toContain('calculateFinancialReportTotals({');
+    expect(source).toContain('buildDailyExpenseBreakdown(');
+    expect(source).toContain('calculateOrderStatusSummary(orders, date)');
+    expect(source).toContain("smartGetDocuments('pos_orders'");
+    expect(source).toContain('const handlePrint = () => {');
+    expect(source).toContain('dailyExpenseBreakdown.groups.map');
+    expect(source).toContain('group.details.map');
+  });
+
   test('owner dashboard uses collected revenue and financial order dates', () => {
     const ownerDashboardPath = path.join(process.cwd(), 'src/pages/Dashboard/OwnerDashboard.tsx');
     const source = fs.readFileSync(ownerDashboardPath, 'utf8');

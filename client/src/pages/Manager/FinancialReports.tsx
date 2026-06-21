@@ -4,6 +4,7 @@ import { dataService } from '../../services/DataService';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface DailyReport {
   date: string;
@@ -242,125 +243,174 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1.5rem',
-      background: '#f3f4f6',
+      padding: '1.1rem 1.25rem',
+      background: colors.page,
+      color: colors.textPrimary,
+      fontFamily: font.family,
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '1.5rem',
+      alignItems: 'flex-start',
+      gap: '1rem',
+      marginBottom: '1rem',
       flexShrink: 0 as const,
+      flexWrap: 'wrap' as const,
     },
     title: {
-      fontSize: '1.75rem',
-      fontWeight: 'bold',
-      color: '#1f2937',
+      fontSize: font.title,
+      fontWeight: 700,
+      color: colors.textPrimary,
       margin: 0,
+      letterSpacing: 0,
     },
     controls: {
       display: 'flex',
-      gap: '0.75rem',
+      gap: '0.55rem',
       alignItems: 'center',
       flexWrap: 'wrap' as const,
+      justifyContent: 'flex-end',
     },
     btn: (bg: string, color: string) => ({
-      padding: '0.5rem 1rem',
+      padding: '0.62rem 0.95rem',
       background: bg,
       color: color,
-      border: 'none',
-      borderRadius: '0.375rem',
+      border: `1px solid ${bg}`,
+      borderRadius: radii.md,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '0.875rem',
+      fontWeight: 650,
+      fontSize: font.caption,
+      boxShadow: bg === colors.blue ? '0 10px 22px rgba(37, 99, 235, 0.18)' : 'none',
     }),
     select: {
-      padding: '0.5rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.375rem',
-      fontSize: '0.875rem',
+      padding: '0.6rem 0.75rem',
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.md,
+      fontSize: font.caption,
+      color: colors.textPrimary,
+      background: colors.surface,
+      outline: 'none',
     },
     input: {
-      padding: '0.5rem',
-      border: '1px solid #d1d5db',
-      borderRadius: '0.375rem',
-      fontSize: '0.875rem',
+      padding: '0.6rem 0.75rem',
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.md,
+      fontSize: font.caption,
+      color: colors.textPrimary,
+      background: colors.surface,
+      outline: 'none',
+    },
+    syncBadge: {
+      padding: '0.45rem 0.7rem',
+      borderRadius: radii.pill,
+      border: `1px solid ${colors.border}`,
+      background: colors.surface,
+      color: colors.textSecondary,
+      fontSize: font.caption,
+      whiteSpace: 'nowrap' as const,
+    },
+    content: {
+      flex: 1,
+      overflowY: 'auto' as const,
+      paddingRight: '0.15rem',
     },
     statsGrid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: '1rem',
-      marginBottom: '1.5rem',
+      gridTemplateColumns: 'repeat(5, minmax(150px, 1fr))',
+      gap: '0.75rem',
+      marginBottom: '1rem',
     },
     statCard: (bg: string, color: string) => ({
-      background: 'white',
-      borderRadius: '0.75rem',
-      padding: '1.25rem',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      borderLeft: `4px solid ${color}`,
+      background: `linear-gradient(180deg, ${colors.surface} 0%, ${colors.surfaceMuted} 100%)`,
+      borderRadius: radii.lg,
+      padding: '1rem',
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      borderTop: `3px solid ${color}`,
+      minHeight: '118px',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      justifyContent: 'space-between',
     }),
     statLabel: {
-      fontSize: '0.875rem',
-      color: '#6b7280',
-      marginBottom: '0.5rem',
+      fontSize: font.caption,
+      color: colors.textSecondary,
+      marginBottom: '0.45rem',
+      fontWeight: 650,
     },
     statValue: (color: string) => ({
-      fontSize: '1.5rem',
-      fontWeight: 'bold',
+      fontSize: '1.32rem',
+      fontWeight: 760,
       color: color,
-      marginBottom: '0.25rem',
+      marginBottom: '0.3rem',
+      letterSpacing: 0,
     }),
     statSub: {
-      fontSize: '0.75rem',
-      color: '#9ca3af',
+      fontSize: '0.72rem',
+      color: colors.textMuted,
+      lineHeight: 1.45,
     },
     card: {
-      background: 'white',
-      borderRadius: '0.75rem',
-      padding: '1.5rem',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      marginBottom: '1.5rem',
+      background: colors.surface,
+      borderRadius: radii.lg,
+      padding: '1rem',
+      boxShadow: shadows.soft,
+      border: `1px solid ${colors.border}`,
+      marginBottom: '1rem',
     },
     cardTitle: {
-      fontSize: '1.125rem',
-      fontWeight: '600',
-      color: '#1f2937',
+      fontSize: font.section,
+      fontWeight: 720,
+      color: colors.textPrimary,
       marginBottom: '1rem',
       display: 'flex',
       alignItems: 'center',
       gap: '0.5rem',
     },
+    tableWrap: {
+      overflowX: 'auto' as const,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.md,
+      background: colors.surface,
+    },
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.875rem',
+      fontSize: font.caption,
     },
     th: {
-      background: '#f9fafb',
-      padding: '0.75rem',
+      background: colors.surfaceMuted,
+      padding: '0.68rem 0.75rem',
       textAlign: 'left' as const,
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      color: '#6b7280',
-      borderBottom: '2px solid #e5e7eb',
+      fontSize: '0.72rem',
+      fontWeight: 720,
+      color: colors.textSecondary,
+      borderBottom: `1px solid ${colors.border}`,
     },
     td: {
-      padding: '0.75rem',
-      borderBottom: '1px solid #e5e7eb',
+      padding: '0.66rem 0.75rem',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
+      verticalAlign: 'top' as const,
+    },
+    groupCell: {
+      background: colors.surfaceMuted,
+      color: colors.textPrimary,
+      fontWeight: 720,
     },
     printBtn: {
       position: 'fixed' as const,
-      bottom: '2rem',
-      right: '2rem',
-      padding: '1rem 2rem',
-      background: '#3b82f6',
+      bottom: '1.4rem',
+      right: '1.4rem',
+      padding: '0.82rem 1.25rem',
+      background: colors.blue,
       color: 'white',
-      border: 'none',
-      borderRadius: '0.5rem',
+      border: `1px solid ${colors.blue}`,
+      borderRadius: radii.pill,
       cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '1rem',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+      fontWeight: 720,
+      fontSize: font.body,
+      boxShadow: '0 18px 34px rgba(37, 99, 235, 0.28)',
       zIndex: 1000,
     },
   };
@@ -507,40 +557,40 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           )}
 
           {lastSyncedAt && (
-            <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            <span style={styles.syncBadge}>
               {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
 
-          <button onClick={refreshFinancialData} disabled={isRefreshing} style={{ ...styles.btn(isRefreshing ? '#9ca3af' : '#3b82f6', 'white'), cursor: isRefreshing ? 'not-allowed' : 'pointer' }}>
+          <button onClick={refreshFinancialData} disabled={isRefreshing} style={{ ...styles.btn(isRefreshing ? colors.textMuted : colors.blue, 'white'), cursor: isRefreshing ? 'not-allowed' : 'pointer' }}>
             {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>{'\u52a0\u8f7d\u4e2d...'}</div>
+        <div style={{ textAlign: 'center', padding: '3rem', color: colors.textSecondary }}>{'\u52a0\u8f7d\u4e2d...'}</div>
       ) : (
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div style={styles.content}>
           <div style={styles.statsGrid}>
-            <div style={styles.statCard('#3b82f6', '#3b82f6')}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue('#3b82f6')}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
-            <div style={styles.statCard('#10b981', '#10b981')}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue('#10b981')}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard('#8b5cf6', '#8b5cf6')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#8b5cf6')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard('#0f766e', '#0f766e')}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue('#0f766e'), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
-            <div style={styles.statCard(summary.profit >= 0 ? '#10b981' : '#ef4444', summary.profit >= 0 ? '#10b981' : '#ef4444')}><div style={styles.statLabel}>{'\u76c8\u4e8f'}</div><div style={styles.statValue(summary.profit >= 0 ? '#10b981' : '#ef4444')}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f + \u8bef\u5dee'} | {'\u76c8\u4e8f\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard('#64748b', '#64748b')}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue('#64748b')}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
-            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981', summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? '#f59e0b' : '#ef4444') : '#10b981')}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5b9e\u4ea4 - \u5e94\u4ea4\u73b0\u91d1'}</div></div>
-            <div style={styles.statCard('#ef4444', '#ef4444')}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue('#ef4444')}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
-            <div style={styles.statCard('#f59e0b', '#f59e0b')}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue('#f59e0b')}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
-            <div style={styles.statCard('#d97706', '#d97706')}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue('#d97706')}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
+            <div style={styles.statCard(colors.blue, colors.blue)}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue(colors.blue)}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
+            <div style={styles.statCard(colors.success, colors.success)}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue(colors.success)}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard('#7c3aed', '#7c3aed')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#7c3aed')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
+            <div style={styles.statCard(summary.profit >= 0 ? colors.success : colors.danger, summary.profit >= 0 ? colors.success : colors.danger)}><div style={styles.statLabel}>{'\u76c8\u4e8f'}</div><div style={styles.statValue(summary.profit >= 0 ? colors.success : colors.danger)}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f + \u8bef\u5dee'} | {'\u76c8\u4e8f\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
+            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success, summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5b9e\u4ea4 - \u5e94\u4ea4\u73b0\u91d1'}</div></div>
+            <div style={styles.statCard(colors.danger, colors.danger)}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue(colors.danger)}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
+            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue(colors.amber)}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
+            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue(colors.amber)}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
           </div>
 
           <div style={styles.card}>
             <div style={styles.cardTitle}>{'\u62a5\u8868\u660e\u7ec6'}</div>
             {dailyReports.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>{'\u6682\u65e0\u6570\u636e'}</div>
+              <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>{'\u6682\u65e0\u6570\u636e'}</div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div style={styles.tableWrap}>
                 <table style={styles.table}>
                   <thead>
                     <tr>
@@ -562,13 +612,13 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                         <td style={styles.td}>{report.date}</td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600' }}>{money(report.totalSales)}</td>
                         <td style={styles.td}>{formatTodayOrders(report)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', color: '#10b981' }}>{money(report.cashPayment)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', color: '#8b5cf6' }}>{money(report.cardPayment)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', color: '#f59e0b' }}>{money(report.purchaseAmount)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', color: '#ef4444' }}>{money(report.expenseAmount)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 'bold', color: report.profit >= 0 ? '#10b981' : '#ef4444' }}>{money(report.profit)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', color: colors.success }}>{money(report.cashPayment)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', color: '#7c3aed' }}>{money(report.cardPayment)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', color: colors.amber }}>{money(report.purchaseAmount)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', color: colors.danger }}>{money(report.expenseAmount)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 'bold', color: report.profit >= 0 ? colors.success : colors.danger }}>{money(report.profit)}</td>
                         <td style={{ ...styles.td, textAlign: 'right' }}>{report.handoverAmount !== undefined ? money(report.handoverAmount) : '-'}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: report.difference === 0 ? '#10b981' : report.difference! > 0 ? '#f59e0b' : '#ef4444' }}>{report.difference !== undefined ? signedMoney(report.difference) : '-'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: report.difference === 0 ? colors.success : report.difference! > 0 ? colors.amber : colors.danger }}>{report.difference !== undefined ? signedMoney(report.difference) : '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -582,9 +632,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
               <div style={styles.card}>
                 <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u548c\u91c7\u8d2d\u5355\u660e\u7ec6'}</div>
                 {dailyExpenseBreakdown.groups.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
+                  <div style={{ textAlign: 'center', padding: '2rem', color: colors.textMuted }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
                 ) : (
-                  <div style={{ overflowX: 'auto' }}>
+                  <div style={styles.tableWrap}>
                     <table style={styles.table}>
                       <thead>
                         <tr>
@@ -601,13 +651,13 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                         {dailyExpenseBreakdown.groups.map((group, groupIndex) => (
                           <React.Fragment key={`${group.type}-${group.category}-${groupIndex}`}>
                             <tr>
-                              <td style={{ ...styles.td, background: '#f9fafb' }} colSpan={5}>
+                              <td style={{ ...styles.td, ...styles.groupCell }} colSpan={5}>
                                 <strong>{group.typeLabel} - {group.title}</strong>
                               </td>
-                              <td style={{ ...styles.td, background: '#f9fafb', color: '#6b7280' }}>
+                              <td style={{ ...styles.td, ...styles.groupCell, color: colors.textSecondary }}>
                                 {group.count} {'\u7b14'}
                               </td>
-                              <td style={{ ...styles.td, background: '#f9fafb', textAlign: 'right', fontWeight: '700', color: group.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>
+                              <td style={{ ...styles.td, ...styles.groupCell, textAlign: 'right', fontWeight: '700', color: group.type === 'purchase' ? colors.amber : colors.danger }}>
                                 {money(group.amount)}
                               </td>
                             </tr>
@@ -619,7 +669,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                                 <td style={styles.td}>{expense.description}</td>
                                 <td style={{ ...styles.td, textAlign: 'right' }}>{expense.quantity !== undefined ? expense.quantity : '-'}</td>
                                 <td style={{ ...styles.td, textAlign: 'right' }}>{expense.unitPrice !== undefined ? money(expense.unitPrice) : '-'}</td>
-                                <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? '#f59e0b' : '#ef4444' }}>{money(expense.amount)}</td>
+                                <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: expense.type === 'purchase' ? colors.amber : colors.danger }}>{money(expense.amount)}</td>
                               </tr>
                             ))}
                           </React.Fragment>
