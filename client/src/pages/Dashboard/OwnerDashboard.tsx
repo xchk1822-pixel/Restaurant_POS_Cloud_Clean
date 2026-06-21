@@ -19,6 +19,7 @@ import {
 } from '../../utils/ownerDashboardData';
 import { getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown } from '../../utils/financeMetrics';
 import { getLocalDateString, toTimestampMillis } from '../../utils/localTime';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface StoreStats {
   id: string;
@@ -44,7 +45,7 @@ interface OwnerCache {
 type TimeRange = 'today' | 'week' | 'month';
 
 const CACHE_KEY = 'owner_dashboard_cache_v1';
-const COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed'];
+const COLORS = [colors.blue, colors.success, colors.amber, colors.danger, '#7c3aed'];
 
 const money = (value: number) =>
   `C$ ${value.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -267,9 +268,10 @@ const OwnerDashboard: React.FC = () => {
       <style>{`
         .owner-page {
           min-height: 100vh;
-          background: #f4f6f8;
+          background: ${colors.page};
           padding: 18px;
-          color: #111827;
+          color: ${colors.textPrimary};
+          font-family: ${font.family};
         }
         .owner-shell {
           max-width: 1280px;
@@ -286,11 +288,12 @@ const OwnerDashboard: React.FC = () => {
           margin: 0;
           font-size: 28px;
           line-height: 1.2;
-          font-weight: 800;
+          font-weight: 760;
+          letter-spacing: 0;
         }
         .owner-subtitle {
           margin: 6px 0 0;
-          color: #6b7280;
+          color: ${colors.textSecondary};
           font-size: 14px;
         }
         .owner-actions {
@@ -301,21 +304,28 @@ const OwnerDashboard: React.FC = () => {
           flex-wrap: wrap;
         }
         .owner-sync-time {
-          color: #6b7280;
-          font-size: 13px;
+          color: ${colors.textSecondary};
+          font-size: ${font.caption};
           white-space: nowrap;
+          background: ${colors.surface};
+          border: 1px solid ${colors.border};
+          border-radius: ${radii.pill};
+          padding: 8px 12px;
         }
         .owner-refresh {
-          border: 0;
-          border-radius: 8px;
+          border: 1px solid ${colors.blue};
+          border-radius: ${radii.md};
           padding: 10px 14px;
-          background: #2563eb;
+          background: ${colors.blue};
           color: white;
           font-weight: 700;
           cursor: pointer;
+          box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
         }
         .owner-refresh:disabled {
-          background: #9ca3af;
+          background: ${colors.textMuted};
+          border-color: ${colors.textMuted};
+          box-shadow: none;
           cursor: not-allowed;
         }
         .owner-tabs {
@@ -325,18 +335,19 @@ const OwnerDashboard: React.FC = () => {
           margin-bottom: 14px;
         }
         .owner-tab {
-          border: 1px solid #d1d5db;
-          border-radius: 8px;
+          border: 1px solid ${colors.border};
+          border-radius: ${radii.md};
           padding: 10px;
-          background: white;
-          color: #374151;
+          background: ${colors.surface};
+          color: ${colors.textSecondary};
           font-weight: 700;
           cursor: pointer;
         }
         .owner-tab.active {
-          background: #111827;
-          border-color: #111827;
+          background: ${colors.blue};
+          border-color: ${colors.blue};
           color: white;
+          box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
         }
         .metric-grid {
           display: grid;
@@ -345,27 +356,30 @@ const OwnerDashboard: React.FC = () => {
           margin-bottom: 16px;
         }
         .metric-card, .panel, .store-card {
-          background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 8px;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+          background: ${colors.surface};
+          border: 1px solid ${colors.border};
+          border-radius: ${radii.lg};
+          box-shadow: ${shadows.soft};
         }
         .metric-card {
           padding: 14px;
+          border-top: 3px solid ${colors.blue};
         }
         .metric-label {
-          color: #6b7280;
-          font-size: 13px;
+          color: ${colors.textSecondary};
+          font-size: ${font.caption};
           margin-bottom: 8px;
+          font-weight: 650;
         }
         .metric-value {
           font-size: 24px;
           line-height: 1.1;
-          font-weight: 800;
+          font-weight: 760;
           word-break: break-word;
+          color: ${colors.textPrimary};
         }
         .metric-note {
-          color: #6b7280;
+          color: ${colors.textMuted};
           font-size: 12px;
           margin-top: 6px;
         }
@@ -381,7 +395,8 @@ const OwnerDashboard: React.FC = () => {
         .panel-title {
           margin: 0 0 12px;
           font-size: 17px;
-          font-weight: 800;
+          font-weight: 760;
+          color: ${colors.textPrimary};
         }
         .store-grid {
           display: grid;
@@ -395,23 +410,24 @@ const OwnerDashboard: React.FC = () => {
           transition: border-color 0.15s, box-shadow 0.15s;
         }
         .store-card.selected {
-          border-color: #2563eb;
+          border-color: ${colors.blue};
           box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
         }
         .store-name {
-          font-weight: 800;
+          font-weight: 760;
           margin-bottom: 10px;
+          color: ${colors.textPrimary};
         }
         .store-row {
           display: flex;
           justify-content: space-between;
           gap: 12px;
-          color: #4b5563;
+          color: ${colors.textSecondary};
           font-size: 13px;
           margin-top: 6px;
         }
         .store-row strong {
-          color: #111827;
+          color: ${colors.textPrimary};
         }
         .chart-box {
           height: 260px;
@@ -421,7 +437,7 @@ const OwnerDashboard: React.FC = () => {
           justify-content: space-between;
           gap: 10px;
           padding: 10px 0;
-          border-top: 1px solid #f3f4f6;
+          border-top: 1px solid ${colors.border};
           font-size: 14px;
         }
         .list-row:first-of-type {
@@ -429,8 +445,8 @@ const OwnerDashboard: React.FC = () => {
         }
         .alert-row {
           padding: 10px;
-          border-radius: 8px;
-          background: #fff7ed;
+          border-radius: ${radii.md};
+          background: ${colors.amberSoft};
           border: 1px solid #fed7aa;
           margin-top: 8px;
         }
@@ -444,13 +460,13 @@ const OwnerDashboard: React.FC = () => {
           border: 1px solid #fecaca;
           background: #fef2f2;
           color: #991b1b;
-          border-radius: 8px;
+          border-radius: ${radii.md};
           margin-bottom: 14px;
         }
         .empty-box {
           padding: 36px 12px;
           text-align: center;
-          color: #6b7280;
+          color: ${colors.textSecondary};
         }
         @media (max-width: 860px) {
           .owner-page {
@@ -479,7 +495,20 @@ const OwnerDashboard: React.FC = () => {
             height: 220px;
           }
         }
-        @media (max-width: 420px) {
+        @media (max-width: 520px) {
+          .owner-page {
+            padding: 10px;
+          }
+          .owner-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            width: 100%;
+          }
+          .owner-refresh,
+          .owner-sync-time {
+            width: 100%;
+            text-align: center;
+          }
           .metric-grid {
             grid-template-columns: 1fr;
           }

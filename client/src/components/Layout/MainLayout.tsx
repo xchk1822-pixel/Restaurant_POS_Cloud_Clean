@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canAccessPermission } from '../../utils/permissions';
@@ -92,6 +92,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const { user, logout } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showFullscreenMenu, setShowFullscreenMenu] = useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 720px)');
+    const update = () => setIsNarrowViewport(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   const filteredMenuItems = user ? menuItems.filter(item => {
     const permissionId = item.path === '/settings'
@@ -107,6 +116,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }) : [];
 
   const shouldHideSidebar = location.pathname === '/pos' || location.pathname === '/kitchen' || location.pathname === '/waiter';
+  const shouldUseFullscreenMenu = shouldHideSidebar || isNarrowViewport;
 
   const renderIcon = (icon: string, active = false) => (
     <span style={{
@@ -170,7 +180,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </button>
       )}
 
-      {shouldHideSidebar && showFullscreenMenu && (
+      {shouldUseFullscreenMenu && showFullscreenMenu && (
         <div
           style={{
             position: 'fixed',
@@ -290,7 +300,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', minWidth: 0 }}>
               {!shouldHideSidebar && (
                 <button
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  onClick={() => {
+                    if (isNarrowViewport) {
+                      setShowFullscreenMenu(true);
+                    } else {
+                      setSidebarCollapsed(!sidebarCollapsed);
+                    }
+                  }}
                   style={{
                     background: colors.surfaceMuted,
                     border: `1px solid ${colors.border}`,
@@ -301,9 +317,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     height: '2.45rem',
                     borderRadius: radii.md,
                   }}
-                  title={sidebarCollapsed ? '展开菜单' : '收起菜单'}
+                  title={isNarrowViewport ? '打开菜单' : sidebarCollapsed ? '展开菜单' : '收起菜单'}
                 >
-                  {sidebarCollapsed ? '→' : '←'}
+                  {isNarrowViewport ? '☰' : sidebarCollapsed ? '→' : '←'}
                 </button>
               )}
               <div style={{
@@ -363,7 +379,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </header>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {!shouldHideSidebar && (
+        {!shouldUseFullscreenMenu && (
           <aside style={{
             width: sidebarCollapsed ? '4.6rem' : '17rem',
             backgroundColor: colors.surface,
@@ -446,13 +462,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
         <main style={{
           flex: 1,
-          padding: shouldHideSidebar ? '0' : '1.2rem',
-          maxWidth: shouldHideSidebar ? '100%' : undefined,
-          width: shouldHideSidebar ? '100%' : undefined,
+          padding: shouldUseFullscreenMenu ? '0' : '1.2rem',
+          maxWidth: shouldUseFullscreenMenu ? '100%' : undefined,
+          width: shouldUseFullscreenMenu ? '100%' : undefined,
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          background: shouldHideSidebar ? colors.surface : colors.page,
+          background: shouldUseFullscreenMenu ? colors.surface : colors.page,
         }}>
           {children}
         </main>

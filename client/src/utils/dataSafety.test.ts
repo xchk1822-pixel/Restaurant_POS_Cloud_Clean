@@ -1517,6 +1517,23 @@ describe('production data safety guards', () => {
     expect(source).not.toContain('const timestamp = getRecordTime(order);');
   });
 
+  test('owner dashboard mobile UI polish uses shared tokens without changing aggregation reads', () => {
+    const ownerDashboardPath = path.join(process.cwd(), 'src/pages/Dashboard/OwnerDashboard.tsx');
+    const layoutPath = path.join(process.cwd(), 'src/components/Layout/MainLayout.tsx');
+    const source = fs.readFileSync(ownerDashboardPath, 'utf8');
+    const layoutSource = fs.readFileSync(layoutPath, 'utf8');
+
+    expect(source).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
+    expect(source).toContain("const CACHE_KEY = 'owner_dashboard_cache_v1'");
+    expect(source).toContain("smartGetDocuments('stores', true)");
+    expect(source).toContain("smartGetDocuments(`stores/${store.id}/${collectionName}`, true)");
+    expect(source).toContain('dedupeOwnerRecordsById(loadedStores)');
+    expect(source).toContain('localStorage.setItem(CACHE_KEY, JSON.stringify(nextCache))');
+    expect(source).toContain('@media (max-width: 520px)');
+    expect(layoutSource).toContain("window.matchMedia('(max-width: 720px)')");
+    expect(layoutSource).toContain('const shouldUseFullscreenMenu = shouldHideSidebar || isNarrowViewport');
+  });
+
   test('DataService does not expose legacy bulk overwrite sync entry points', () => {
     const servicePath = path.join(process.cwd(), 'src/services/DataService.ts');
     const source = fs.readFileSync(servicePath, 'utf8');
