@@ -29,6 +29,7 @@ import {
   type RankingSortBy,
   type SalesRanking as AnalyticsSalesRanking,
 } from '../../utils/dashboardAnalytics';
+import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface TimeRangeStats {
   totalSales: number;
@@ -173,9 +174,9 @@ const comparisonText = (comparison: PeriodComparison): string => {
 };
 
 const comparisonColor = (comparison: PeriodComparison): string => {
-  if (comparison.direction === 'up') return '#0f9488';
+  if (comparison.direction === 'up') return colors.teal;
   if (comparison.direction === 'down') return '#c2410c';
-  return '#64748b';
+  return colors.textSecondary;
 };
 
 const getOrderType = (order: any): DashboardOrderTypeFilter => order?.orderType || 'dine_in';
@@ -540,71 +541,72 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1.25rem 1.4rem',
-      background: '#f6f9fb',
-      color: '#243647',
+      padding: '1.1rem 1.25rem',
+      background: colors.page,
+      color: colors.textPrimary,
+      fontFamily: font.family,
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
       gap: '1rem',
-      marginBottom: '1rem',
+      marginBottom: '0.85rem',
       flexWrap: 'wrap' as const,
       flexShrink: 0 as const,
     },
     title: {
-      fontSize: '1.6rem',
-      fontWeight: 700,
+      fontSize: font.title,
+      fontWeight: 750,
       margin: 0,
-      color: '#142b3d',
+      color: colors.textPrimary,
       letterSpacing: 0,
     },
     subtitle: {
       marginTop: '0.35rem',
-      color: '#6b7f8f',
-      fontSize: '0.875rem',
+      color: colors.textSecondary,
+      fontSize: font.body,
     },
     toolbar: {
       display: 'flex',
       alignItems: 'center',
       flexWrap: 'wrap' as const,
-      gap: '0.5rem',
-      background: '#ffffff',
-      border: '1px solid #dce8ef',
-      borderRadius: '0.5rem',
+      gap: '0.45rem',
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.lg,
       padding: '0.55rem',
-      boxShadow: '0 10px 28px rgba(33, 53, 71, 0.07)',
+      boxShadow: shadows.soft,
     },
     segmentButton: (active: boolean) => ({
-      border: active ? '1px solid #0f9488' : '1px solid #dce8ea',
-      background: active ? 'linear-gradient(135deg, #0f9488, #2aa7c8)' : '#ffffff',
-      color: active ? '#ffffff' : '#496174',
-      borderRadius: '0.375rem',
+      border: active ? `1px solid ${colors.teal}` : `1px solid ${colors.borderStrong}`,
+      background: active ? colors.teal : colors.surface,
+      color: active ? colors.surface : colors.textPrimary,
+      borderRadius: radii.md,
       padding: '0.5rem 0.75rem',
-      fontSize: '0.8125rem',
-      fontWeight: 650,
+      fontSize: font.caption,
+      fontWeight: 700,
       cursor: 'pointer',
       whiteSpace: 'nowrap' as const,
-      boxShadow: active ? '0 8px 18px rgba(15, 148, 136, 0.18)' : 'none',
+      boxShadow: active ? '0 8px 18px rgba(15, 118, 110, 0.16)' : 'none',
     }),
     input: {
       height: '2.25rem',
-      border: '1px solid #d7e5e8',
-      borderRadius: '0.375rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
       padding: '0 0.5rem',
-      fontSize: '0.8125rem',
-      background: '#ffffff',
-      color: '#294052',
+      fontSize: font.caption,
+      background: colors.surface,
+      color: colors.textPrimary,
     },
     select: {
       height: '2.25rem',
-      border: '1px solid #d7e5e8',
-      borderRadius: '0.375rem',
+      border: `1px solid ${colors.borderStrong}`,
+      borderRadius: radii.md,
       padding: '0 0.5rem',
-      fontSize: '0.8125rem',
-      background: '#ffffff',
-      color: '#294052',
+      fontSize: font.caption,
+      background: colors.surface,
+      color: colors.textPrimary,
     },
     scroll: {
       flex: 1,
@@ -612,55 +614,55 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       paddingRight: '0.25rem',
     },
     card: {
-      background: '#ffffff',
-      border: '1px solid #d9e7ef',
-      borderRadius: '0.5rem',
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.lg,
       padding: '1.05rem',
-      boxShadow: '0 12px 28px rgba(37, 72, 88, 0.08)',
+      boxShadow: shadows.soft,
     },
     section: {
-      background: '#ffffff',
-      border: '1px solid #d9e7ef',
-      borderRadius: '0.5rem',
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radii.lg,
       padding: '1rem',
-      boxShadow: '0 12px 28px rgba(37, 72, 88, 0.08)',
+      boxShadow: shadows.soft,
       marginBottom: '1rem',
     },
     sectionTitle: {
       margin: 0,
-      fontSize: '1rem',
-      fontWeight: 700,
-      color: '#213547',
+      fontSize: font.section,
+      fontWeight: 750,
+      color: colors.textPrimary,
     },
     muted: {
-      color: '#6b7f8f',
-      fontSize: '0.8125rem',
+      color: colors.textSecondary,
+      fontSize: font.caption,
     },
     table: {
       width: '100%',
       borderCollapse: 'collapse' as const,
-      fontSize: '0.8125rem',
+      fontSize: font.caption,
     },
     th: {
       textAlign: 'left' as const,
       padding: '0.625rem',
-      color: '#577083',
-      background: '#f4fbfb',
-      borderBottom: '1px solid #e2eef1',
-      fontWeight: 650,
+      color: colors.textSecondary,
+      background: colors.surfaceMuted,
+      borderBottom: `1px solid ${colors.border}`,
+      fontWeight: 700,
     },
     td: {
       padding: '0.625rem',
-      borderBottom: '1px solid #edf4f6',
-      color: '#334c5f',
+      borderBottom: `1px solid ${colors.border}`,
+      color: colors.textPrimary,
     },
   };
 
   const kpiCards = [
-    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales, accent: '#22c55e', soft: '#dcfce7', mark: '￥' },
-    { label: '订单', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount, accent: '#3b82f6', soft: '#dbeafe', mark: '单' },
-    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment, accent: '#14b8a6', soft: '#ccfbf1', mark: '$' },
-    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment, accent: '#2563eb', soft: '#dbeafe', mark: '卡' },
+    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales, accent: colors.success, soft: colors.successSoft, mark: '￥' },
+    { label: '订单', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount, accent: colors.blue, soft: colors.blueSoft, mark: '单' },
+    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment, accent: colors.teal, soft: colors.tealSoft, mark: '$' },
+    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment, accent: colors.blue, soft: colors.blueSoft, mark: '卡' },
     { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit, accent: '#fb6f55', soft: '#ffe4df', mark: '↗' },
   ];
 
