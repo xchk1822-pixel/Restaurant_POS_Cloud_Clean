@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChange, getFirebaseUserProfile } from '../services/FirebaseAuthService';
 import { dataService } from '../services/DataService';
+import { clearAuthenticatedSession, persistAuthenticatedSession } from '../utils/storeSessionIsolation';
 
 export type UserRole = 'super_admin' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
 
@@ -56,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const verifiedUser = await getFirebaseUserProfile(firebaseUser);
           setUser(verifiedUser);
-          localStorage.setItem('current_user', JSON.stringify(verifiedUser));
+          persistAuthenticatedSession(verifiedUser);
           syncUserDataInBackground(verifiedUser);
         } catch (error) {
           console.error('Firebase user profile verification failed:', error);
@@ -71,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setUser(null);
             }
           } else {
-            localStorage.removeItem('current_user');
+            clearAuthenticatedSession();
             setUser(null);
           }
         } finally {
@@ -88,6 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(null);
         }
       } else {
+        clearAuthenticatedSession();
         setUser(null);
       }
       setIsLoading(false);
@@ -99,14 +101,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (userData: User) => {
     setUser(userData);
     setIsLoading(false);
-    localStorage.setItem('current_user', JSON.stringify(userData));
+    persistAuthenticatedSession(userData);
 
     window.dispatchEvent(new Event('userLoggedIn'));
   };
 
   const logout = async () => {
     setUser(null);
-    localStorage.removeItem('current_user');
+    clearAuthenticatedSession();
 
     try {
       const { firebaseLogout } = await import('../services/FirebaseAuthService');
@@ -120,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user) {
       const updatedUser = { ...user, storeId, storeName };
       setUser(updatedUser);
-      localStorage.setItem('current_user', JSON.stringify(updatedUser));
+      persistAuthenticatedSession(updatedUser);
     }
   };
 

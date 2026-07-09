@@ -5,6 +5,7 @@ import { smartAddDocument, smartGetDocuments, smartIncrementField, smartSubscrib
 import { uploadCachedMenuImage } from '../services/menuImageService';
 import { getLocalDateString } from '../utils/localTime';
 import { buildStockDeductionPlan, type StockDeductionRequest } from '../utils/stockDeduction';
+import { STORE_SESSION_CHANGED_EVENT } from '../utils/storeSessionIsolation';
 
 // 库存物品接口
 export interface InventoryItem {
@@ -233,41 +234,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         // 重新加载库存数据
         const inventoryData = dataService.getData('inventory_items');
-        if (inventoryData.length > 0) {
-          setInventoryItems(inventoryData);
-        }
+        setInventoryItems(Array.isArray(inventoryData) ? inventoryData : []);
 
         // 重新加载菜单数据
         const menuData = dataService.getData('menu_items');
-        if (menuData.length > 0) {
-          setMenuItems(menuData);
-        }
+        setMenuItems(Array.isArray(menuData) ? menuData : []);
 
         // 重新加载订单数据
         const ordersData = dataService.getData('pos_orders');
-        if (ordersData.length > 0) {
-          setOrders(ordersData);
-        }
+        setOrders(Array.isArray(ordersData) ? ordersData : []);
 
         const purchaseData = dataService.getData('purchase_orders');
-        if (purchaseData.length > 0) {
-          setPurchaseOrders(purchaseData);
-        }
+        setPurchaseOrders(Array.isArray(purchaseData) ? purchaseData : []);
 
         const supplierData = dataService.getData('suppliers');
-        if (supplierData.length > 0) {
-          setSuppliers(supplierData);
-        }
+        setSuppliers(Array.isArray(supplierData) ? supplierData : []);
 
         const fridgesData = dataService.getData('fridges');
-        if (fridgesData.length > 0) {
-          setFridges(fridgesData);
-        }
+        setFridges(Array.isArray(fridgesData) ? fridgesData : []);
 
         const fridgeInventoryData = dataService.getData('fridge_inventory');
-        if (fridgeInventoryData.length > 0) {
-          setFridgeInventory(fridgeInventoryData);
-        }
+        setFridgeInventory(Array.isArray(fridgeInventoryData) ? fridgeInventoryData : []);
+      } else {
+        setInventoryItems([]);
+        setMenuItems([]);
+        setOrders([]);
+        setPurchaseOrders([]);
+        setSuppliers([]);
+        setFridges([]);
+        setFridgeInventory([]);
       }
     };
 
@@ -279,6 +274,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 监听自定义事件（当前标签页登录）
     window.addEventListener('userLoggedIn', checkUserAndReload);
+    window.addEventListener(STORE_SESSION_CHANGED_EVENT, checkUserAndReload);
 
     // 🔥 监听数据同步完成事件
     window.addEventListener('dataSynced', checkUserAndReload);
@@ -286,6 +282,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => {
       window.removeEventListener('storage', checkUserAndReload);
       window.removeEventListener('userLoggedIn', checkUserAndReload);
+      window.removeEventListener(STORE_SESSION_CHANGED_EVENT, checkUserAndReload);
       window.removeEventListener('dataSynced', checkUserAndReload);
     };
   }, []);

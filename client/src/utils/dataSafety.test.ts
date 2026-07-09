@@ -4625,7 +4625,27 @@ describe('production data safety guards', () => {
     expect(authSource.indexOf('getFirebaseUserProfile(firebaseUser)')).toBeLessThan(
       authSource.indexOf("localStorage.getItem('current_user')")
     );
-    expect(authSource).toContain("localStorage.setItem('current_user', JSON.stringify(verifiedUser))");
+    expect(authSource).toContain('persistAuthenticatedSession(verifiedUser)');
+  });
+
+  test('branch account switching resets active memory state without deleting store-scoped caches', () => {
+    const authPath = path.join(process.cwd(), 'src/contexts/AuthContext.tsx');
+    const appContextPath = path.join(process.cwd(), 'src/contexts/AppContext.tsx');
+    const isolationPath = path.join(process.cwd(), 'src/utils/storeSessionIsolation.ts');
+    const authSource = fs.readFileSync(authPath, 'utf8');
+    const appSource = fs.readFileSync(appContextPath, 'utf8');
+    const isolationSource = fs.readFileSync(isolationPath, 'utf8');
+
+    expect(authSource).toContain('persistAuthenticatedSession(userData)');
+    expect(authSource).toContain('clearAuthenticatedSession()');
+    expect(authSource).toContain('persistAuthenticatedSession(updatedUser)');
+    expect(appSource).toContain('STORE_SESSION_CHANGED_EVENT');
+    expect(appSource).toContain('window.addEventListener(STORE_SESSION_CHANGED_EVENT, checkUserAndReload)');
+    expect(appSource).toContain('setOrders(Array.isArray(ordersData) ? ordersData : [])');
+    expect(appSource).toContain('setOrders([])');
+    expect(isolationSource).not.toContain("localStorage.clear()");
+    expect(isolationSource).not.toContain("removeItem(`store_");
+    expect(isolationSource).not.toContain("removeItem('store_");
   });
 
   test('store scoped background sync does not request global users and stores for branch users', () => {
