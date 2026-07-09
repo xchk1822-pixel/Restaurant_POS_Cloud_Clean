@@ -1,28 +1,25 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  memoryLocalCache,
+  setLogLevel,
+} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { firebaseConfig } from './config';
 
-// 初始化Firebase应用
+// Initialize Firebase.
 const app = initializeApp(firebaseConfig);
 
-// 初始化Firestore
-export const db = getFirestore(app);
+// Keep Firestore itself memory-only. The app's offline durability is handled by
+// store-scoped localStorage and the pending sync queue in smartSyncService.
+setLogLevel('silent');
+export const db = initializeFirestore(app, {
+  localCache: memoryLocalCache(),
+});
 
-// 初始化Auth
 export const auth = getAuth(app);
 
 export const storage = getStorage(app);
-
-// 启用离线持久化（离线同步）
-enableIndexedDbPersistence(db)
-  .catch((err) => {
-    if (err.code === 'failed-precondition') {
-      console.warn('多个标签页打开，离线功能可能受限');
-    } else if (err.code === 'unimplemented') {
-      console.warn('浏览器不支持离线功能');
-    }
-  });
 
 export default app;

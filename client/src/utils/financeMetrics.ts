@@ -1,6 +1,7 @@
 import { getLocalDateString } from './exchangeRate';
 import { toTimestampMillis } from './localTime';
 import { getExpenseCategoryPath, normalizeExpenseCategories } from './expenseCategories';
+import { findExpensePurchaseOrder } from './expensePurchaseLink';
 
 export const isPurchaseRelatedExpense = (expense: any): boolean => {
   return expense?.relatedType === 'purchase' ||
@@ -112,26 +113,6 @@ const getExpenseCategoryLabels = (
 
 const normalizeText = (value: any): string => String(value || '').trim();
 
-const findMatchingPurchaseOrder = (expense: any, purchaseOrders: any[]): any | undefined => {
-  const expenseOrderId = normalizeText(expense?.orderId || expense?.purchaseOrderId);
-  const expenseOrderNumber = normalizeText(expense?.orderNumber || expense?.invoiceNumber);
-  const expenseSupplierId = normalizeText(expense?.supplierId);
-  const expenseSupplierName = normalizeText(expense?.supplierName);
-
-  return purchaseOrders.find((order: any) => {
-    const orderId = normalizeText(order?.id);
-    const orderNumber = normalizeText(order?.orderNumber || order?.invoiceNumber);
-    const supplierId = normalizeText(order?.supplierId);
-    const supplierName = normalizeText(order?.supplierName);
-
-    if (expenseOrderId && orderId === expenseOrderId) return true;
-    if (!expenseOrderNumber || orderNumber !== expenseOrderNumber) return false;
-    if (expenseSupplierId && supplierId) return expenseSupplierId === supplierId;
-    if (expenseSupplierName && supplierName) return expenseSupplierName === supplierName;
-    return true;
-  });
-};
-
 const buildExpenseDetailRows = (
   expense: any,
   date: string,
@@ -154,7 +135,7 @@ const buildExpenseDetailRows = (
   };
 
   if (type === 'purchase') {
-    const order = findMatchingPurchaseOrder(expense, purchaseOrders);
+    const order = findExpensePurchaseOrder(expense, purchaseOrders);
     const orderItems = Array.isArray(order?.items) ? order.items : [];
     if (orderItems.length > 0) {
       return orderItems.map((item: any, index: number) => ({
@@ -346,6 +327,9 @@ export const getOrderFinancialDateKey = (order: any): string => {
 
 export interface OrderStatusSummary {
   completedOrders: number;
+  dineInOrders: number;
+  takeoutOrders: number;
+  deliveryOrders: number;
   cancelledOrders: number;
   cancelledItems: number;
 }
@@ -441,13 +425,21 @@ export const calculateOrderStatusSummary = (orders: any[], date: string): OrderS
   return (Array.isArray(orders) ? orders : []).reduce((summary: OrderStatusSummary, order: any) => {
     if (getOrderFinancialDateKey(order) === date && getOrderCollectedAmount(order) > 0) {
       summary.completedOrders += 1;
+      const orderType = order?.orderType || 'dine_in';
+      if (orderType === 'delivery') {
+        summary.deliveryOrders += 1;
+      } else if (orderType === 'takeout') {
+        summary.takeoutOrders += 1;
+      } else {
+        summary.dineInOrders += 1;
+      }
     }
     if (getOrderCancellationDateKey(order) === date) {
       summary.cancelledOrders += 1;
     }
     summary.cancelledItems += getCancelledItemCountForDate(order, date);
     return summary;
-  }, { completedOrders: 0, cancelledOrders: 0, cancelledItems: 0 });
+  }, { completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0 });
 };
 
 export const getExpenseDateKey = (expense: any): string => {

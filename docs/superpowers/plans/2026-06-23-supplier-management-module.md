@@ -4,7 +4,7 @@
 
 **Goal:** Move Supplier Management into an independent store-scoped accounts-payable module with supplier profiles, debt orders, payment records, and reconciliation print.
 
-**Architecture:** Keep existing Firestore collection names and store scoping. Add a canonical `/suppliers` route and redirect the old `/inventory/suppliers` route. Refactor supplier calculations into focused helpers so the page derives debt from `purchase_orders` and reads repayments from `supplier_payments`.
+**Architecture:** Keep existing Firestore collection names and store scoping. Add a canonical `/suppliers` route and remove the old `/inventory/suppliers` route because the system is not yet commercially live. Refactor supplier calculations into focused helpers so the page derives debt from `purchase_orders` and reads repayments from `supplier_payments`.
 
 **Tech Stack:** React, TypeScript, React Router, Firebase Firestore through `smartSyncService`, local store cache through `DataService` and `dataManager`, Jest via `react-scripts test`.
 
@@ -17,12 +17,12 @@
 - Modify: `client/src/components/Layout/MainLayout.tsx`
 - Test: `client/src/utils/dataSafety.test.ts`
 
-- [ ] **Step 1: Write the failing route/navigation test**
+- [x] **Step 1: Write the failing route/navigation test**
 
 Add this test near the existing route/navigation guards in `client/src/utils/dataSafety.test.ts`:
 
 ```ts
-  test('supplier management is a first-level module with old route redirect compatibility', () => {
+  test('supplier management is a first-level module without legacy inventory route compatibility', () => {
     const appPath = path.join(process.cwd(), 'src/App.tsx');
     const appSource = fs.readFileSync(appPath, 'utf8');
     const layoutPath = path.join(process.cwd(), 'src/components/Layout/MainLayout.tsx');
@@ -30,8 +30,8 @@ Add this test near the existing route/navigation guards in `client/src/utils/dat
 
     expect(appSource).toContain('path="/suppliers"');
     expect(appSource).toContain('permissionId="suppliers:manage"');
-    expect(appSource).toContain('path="/inventory/suppliers"');
-    expect(appSource).toContain('<Navigate to="/suppliers" replace />');
+    expect(appSource).not.toContain('path="/inventory/suppliers"');
+    expect(appSource).not.toContain('<Navigate to="/suppliers" replace />');
     expect(layoutSource).toContain("path: '/suppliers'");
     expect(layoutSource).toContain("label: '供应商管理'");
     expect(layoutSource).toContain("roles: ['store_manager']");
@@ -42,7 +42,7 @@ Add this test near the existing route/navigation guards in `client/src/utils/dat
   });
 ```
 
-- [ ] **Step 2: Run the failing test**
+- [x] **Step 2: Run the failing test**
 
 Run:
 
@@ -52,7 +52,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts -t "s
 
 Expected: FAIL because `/suppliers` does not exist and supplier navigation is still under inventory.
 
-- [ ] **Step 3: Add canonical and compatibility routes**
+- [x] **Step 3: Add canonical route and remove old supplier route**
 
 In `client/src/App.tsx`, keep the existing import:
 
@@ -60,16 +60,15 @@ In `client/src/App.tsx`, keep the existing import:
 import SupplierManagement from './pages/Inventory/SupplierManagement';
 ```
 
-Change the supplier routes to:
+Change the supplier route to:
 
 ```tsx
-            <Route path="/inventory/suppliers" element={<Navigate to="/suppliers" replace />} />
             <Route path="/suppliers" element={<ProtectedRoute permissionId="suppliers:manage"><SupplierManagement /></ProtectedRoute>} />
 ```
 
-Keep the route near inventory routes for compatibility or near manager routes for readability; the path is what matters.
+Do not keep the old `/inventory/suppliers` route.
 
-- [ ] **Step 4: Move supplier navigation to first-level bottom**
+- [x] **Step 4: Move supplier navigation to first-level bottom**
 
 In `client/src/components/Layout/MainLayout.tsx`, remove this child from the Inventory group:
 
@@ -85,7 +84,7 @@ Add a first-level item after the Manager group and before Customer Management:
 
 If Customer Management is still under Manager in the current file, do not move it in this task; keep this task scoped to suppliers.
 
-- [ ] **Step 5: Map new permission id without breaking old permission data**
+- [x] **Step 5: Map new permission id without breaking old permission data**
 
 In `client/src/components/Layout/MainLayout.tsx`, update `getPermissionId` so `/suppliers` maps to the new permission id:
 
@@ -100,9 +99,9 @@ In `client/src/utils/permissions.ts`, add a compatibility rule so store managers
   'suppliers:manage': ['store_manager'],
 ```
 
-If the permission file stores defaults in another object shape, add the same permission key to the default store-manager permissions and leave existing `inventory:suppliers` permission intact for old data.
+If the permission file stores defaults in another object shape, add `suppliers:manage` to the default store-manager permissions and do not keep `inventory:suppliers`.
 
-- [ ] **Step 6: Verify route/navigation test passes**
+- [x] **Step 6: Verify route/navigation test passes**
 
 Run:
 
@@ -121,7 +120,7 @@ Expected: PASS.
 - Test: `client/src/utils/supplierAccounts.test.ts`
 - Modify: `client/src/utils/dataSafety.test.ts`
 
-- [ ] **Step 1: Create failing helper tests**
+- [x] **Step 1: Create failing helper tests**
 
 Create `client/src/utils/supplierAccounts.test.ts`:
 
@@ -172,7 +171,7 @@ describe('supplier account helpers', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing helper tests**
+- [x] **Step 2: Run failing helper tests**
 
 Run:
 
@@ -182,7 +181,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/supplierAccounts.test.ts
 
 Expected: FAIL because `supplierAccounts.ts` does not exist.
 
-- [ ] **Step 3: Implement supplier account helpers**
+- [x] **Step 3: Implement supplier account helpers**
 
 Create `client/src/utils/supplierAccounts.ts`:
 
@@ -305,7 +304,7 @@ export const buildSupplierAccountSummary = (
 };
 ```
 
-- [ ] **Step 4: Add data safety guard for helper usage**
+- [x] **Step 4: Add data safety guard for helper usage**
 
 Add this test to `client/src/utils/dataSafety.test.ts`:
 
@@ -325,7 +324,7 @@ Add this test to `client/src/utils/dataSafety.test.ts`:
   });
 ```
 
-- [ ] **Step 5: Run helper tests**
+- [x] **Step 5: Run helper tests**
 
 Run:
 
@@ -343,7 +342,7 @@ Expected: PASS.
 - Modify: `client/src/pages/Inventory/SupplierManagement.tsx`
 - Test: `client/src/utils/dataSafety.test.ts`
 
-- [ ] **Step 1: Write failing data-flow test**
+- [x] **Step 1: Write failing data-flow test**
 
 Add this test to `client/src/utils/dataSafety.test.ts`:
 
@@ -361,7 +360,7 @@ Add this test to `client/src/utils/dataSafety.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run failing test**
+- [x] **Step 2: Run failing test**
 
 Run:
 
@@ -371,7 +370,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts -t "s
 
 Expected: FAIL because the page still keeps per-supplier localStorage payment helpers.
 
-- [ ] **Step 3: Replace per-supplier local payment storage**
+- [x] **Step 3: Replace per-supplier local payment storage**
 
 In `client/src/pages/Inventory/SupplierManagement.tsx`, import helpers:
 
@@ -436,7 +435,7 @@ In `refreshSupplierData`, replace the map-to-local-storage block with:
       saveStoreCollection('supplier_payments', normalizedSupplierPayments);
 ```
 
-- [ ] **Step 4: Update payment success local state**
+- [x] **Step 4: Update payment success local state**
 
 In `handlePayment`, after all cloud writes succeed, replace:
 
@@ -451,7 +450,7 @@ with:
     saveStoreCollection('supplier_payments', sortNewestFirstBySupplierDate([...supplierPayments, paymentRecord]));
 ```
 
-- [ ] **Step 5: Verify data-flow test passes**
+- [x] **Step 5: Verify data-flow test passes**
 
 Run:
 
@@ -469,7 +468,7 @@ Expected: PASS.
 - Modify: `client/src/pages/Inventory/SupplierManagement.tsx`
 - Test: `client/src/utils/dataSafety.test.ts`
 
-- [ ] **Step 1: Write failing repayment linkage test**
+- [x] **Step 1: Write failing repayment linkage test**
 
 Add this test to `client/src/utils/dataSafety.test.ts`:
 
@@ -492,7 +491,7 @@ Add this test to `client/src/utils/dataSafety.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run failing test**
+- [x] **Step 2: Run failing test**
 
 Run:
 
@@ -502,7 +501,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts -t "s
 
 Expected: FAIL until payment IDs and helper-derived debt are wired.
 
-- [ ] **Step 3: Use calculated debt for delete blocking**
+- [x] **Step 3: Use calculated debt for delete blocking**
 
 In `handleDeleteSupplier`, replace:
 
@@ -523,7 +522,7 @@ with:
     }
 ```
 
-- [ ] **Step 4: Use calculated debt for repayment validation**
+- [x] **Step 4: Use calculated debt for repayment validation**
 
 In `handlePayment`, replace:
 
@@ -537,7 +536,7 @@ with:
     const orderRemaining = getPurchaseOrderRemainingDebt(selectedOrder);
 ```
 
-- [ ] **Step 5: Add linked payment IDs**
+- [x] **Step 5: Add linked payment IDs**
 
 In `handlePayment`, before `paymentRecord`, add:
 
@@ -572,7 +571,7 @@ Update `paymentExpense` fields:
       orderNumber: selectedOrder.orderNumber,
 ```
 
-- [ ] **Step 6: Recalculate supplier balance cache from helper**
+- [x] **Step 6: Recalculate supplier balance cache from helper**
 
 Replace the supplier balance calculation in `supplierCloudUpdate` with:
 
@@ -584,7 +583,7 @@ Replace the supplier balance calculation in `supplierCloudUpdate` with:
       ).remainingDebt,
 ```
 
-- [ ] **Step 7: Verify repayment linkage test passes**
+- [x] **Step 7: Verify repayment linkage test passes**
 
 Run:
 
@@ -602,7 +601,7 @@ Expected: PASS.
 - Modify: `client/src/pages/Inventory/SupplierManagement.tsx`
 - Test: `client/src/utils/dataSafety.test.ts`
 
-- [ ] **Step 1: Write failing four-section UI test**
+- [x] **Step 1: Write failing four-section UI test**
 
 Add this test to `client/src/utils/dataSafety.test.ts`:
 
@@ -624,7 +623,7 @@ Add this test to `client/src/utils/dataSafety.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run failing UI test**
+- [x] **Step 2: Run failing UI test**
 
 Run:
 
@@ -634,7 +633,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts -t "s
 
 Expected: FAIL.
 
-- [ ] **Step 3: Add section state and tabs**
+- [x] **Step 3: Add section state and tabs**
 
 In `SupplierManagement.tsx`, add:
 
@@ -683,7 +682,7 @@ Render the tab row near the top of the page:
         </div>
 ```
 
-- [ ] **Step 4: Split render blocks without changing behavior**
+- [x] **Step 4: Split render blocks without changing behavior**
 
 Inside the component, create these render functions and move existing list/modal buttons into the relevant section:
 
@@ -722,11 +721,11 @@ At the main content location:
         {activeSection === 'reconciliation' && renderReconciliationPrint()}
 ```
 
-- [ ] **Step 5: Keep repayment modal shared**
+- [x] **Step 5: Keep repayment modal shared**
 
 Leave the existing repayment modal outside the section render functions so it can be opened from debt orders and supplier profile cards.
 
-- [ ] **Step 6: Verify UI section test passes**
+- [x] **Step 6: Verify UI section test passes**
 
 Run:
 
@@ -744,7 +743,7 @@ Expected: PASS.
 - Modify: `docs/2026-06-15_PROGRESS.md`
 - Create: `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md`
 
-- [ ] **Step 1: Run supplier helper tests**
+- [x] **Step 1: Run supplier helper tests**
 
 Run:
 
@@ -754,7 +753,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/supplierAccounts.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 2: Run full data safety tests**
+- [x] **Step 2: Run full data safety tests**
 
 Run:
 
@@ -764,7 +763,7 @@ npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 3: Build production bundle**
+- [x] **Step 3: Build production bundle**
 
 Run:
 
@@ -774,7 +773,7 @@ npm run build
 
 Expected: `Compiled successfully.`
 
-- [ ] **Step 4: Browser verify locally or against deployed site**
+- [x] **Step 4: Browser verify locally or against deployed site**
 
 Use Playwright CLI after deployment or local preview:
 
@@ -787,12 +786,12 @@ Verify without creating live data:
 
 - Login as `zeng/123456`.
 - `/suppliers` loads.
-- `/inventory/suppliers` redirects to `/suppliers`.
+- `/inventory/suppliers` is removed.
 - Four sections are visible.
 - Supplier list loads for the selected store.
 - No browser console errors.
 
-- [ ] **Step 5: Deploy**
+- [x] **Step 5: Deploy**
 
 Run:
 
@@ -802,7 +801,7 @@ firebase deploy --only hosting --project restaurant-pos-1b420
 
 Expected: Deploy complete with Hosting URL `https://restaurant-pos-1b420.web.app`.
 
-- [ ] **Step 6: Write archive note**
+- [x] **Step 6: Write archive note**
 
 Create `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md` with:
 
@@ -811,7 +810,7 @@ Create `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md` with:
 
 ## Completed
 - Supplier Management moved to canonical route `/suppliers`.
-- Old route `/inventory/suppliers` redirects to `/suppliers`.
+- Old route `/inventory/suppliers` is removed.
 - Supplier data remains store-scoped.
 - Supplier account helpers calculate debt from purchase orders.
 - Supplier page exposes Supplier Profiles, Debt Orders, Payment Records, and Reconciliation Print sections.
@@ -822,7 +821,7 @@ Create `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md` with:
 - `npm test -- --watchAll=false --runTestsByPath src/utils/dataSafety.test.ts`
 - `npm run build`
 - Firebase Hosting deploy to `restaurant-pos-1b420`
-- Browser verification on `/suppliers` and `/inventory/suppliers`
+- Browser verification on `/suppliers`
 
 ## Data Rule
 - Supplier debt is calculated from purchase orders.
@@ -830,7 +829,7 @@ Create `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md` with:
 - Supplier receipt evidence remains in Expense Records.
 ```
 
-- [ ] **Step 7: Append progress entry**
+- [x] **Step 7: Append progress entry**
 
 Append a short entry to `docs/2026-06-15_PROGRESS.md` linking to `docs/2026-06-24_SUPPLIER_MANAGEMENT_MODULE.md`.
 

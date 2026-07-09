@@ -266,6 +266,7 @@ const EmployeesModule: React.FC = () => {
           <SalarySettlement
             employees={employees}
             attendanceRecords={attendanceRecords}
+            setAttendanceRecords={setAttendanceRecords}
             salaryRecords={salaryRecords}
             setSalaryRecords={setSalaryRecords}
             loanRecords={loanRecords}

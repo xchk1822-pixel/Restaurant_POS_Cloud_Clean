@@ -144,20 +144,17 @@ export const getExpenseCategoryPath = (
 export const canDeleteExpenseCategory = (
   categoryId: string,
   categories: ExpenseCategory[],
-  expenses: any[]
-): { allowed: boolean; reason?: string } => {
+  _expenses: any[]
+): { allowed: boolean; reason?: string; categoryIdsToDelete?: string[] } => {
   const category = categories.find(item => item.id === categoryId);
-  if (!category) return { allowed: false, reason: '类别不存在' };
+  if (!category) return { allowed: false, reason: 'Category does not exist' };
 
   if (category.level === 'parent') {
-    const hasChildren = categories.some(item => item.level === 'child' && item.parentId === categoryId);
-    if (hasChildren) return { allowed: false, reason: '该父类下面还有子类，不能删除' };
-    const hasParentReferences = expenses.some(expense => expense.parentCategoryId === categoryId);
-    if (hasParentReferences) return { allowed: false, reason: '该父类已有开支记录，不能删除' };
+    const childCategoryIds = categories
+      .filter(item => item.level === 'child' && item.parentId === categoryId)
+      .map(item => item.id);
+    return { allowed: true, categoryIdsToDelete: [categoryId, ...childCategoryIds] };
   }
 
-  const hasChildReferences = expenses.some(expense => expense.categoryId === categoryId);
-  if (hasChildReferences) return { allowed: false, reason: '该类别已有开支记录，不能删除' };
-
-  return { allowed: true };
+  return { allowed: true, categoryIdsToDelete: [categoryId] };
 };

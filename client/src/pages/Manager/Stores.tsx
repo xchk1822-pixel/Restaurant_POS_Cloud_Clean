@@ -15,6 +15,11 @@ interface Store {
   currency: string;
   taxRate: number;
   businessHours: string;
+  receiptName?: string;
+  receiptSubtitle?: string;
+  receiptAddress?: string;
+  receiptPhone?: string;
+  receiptFooter?: string;
 }
 
 const getStoreDedupeKey = (store: any): string => {
@@ -216,6 +221,11 @@ const StoresModule: React.FC = () => {
       currency: newStore.currency || 'C$',
       taxRate: newStore.taxRate || 0,
       businessHours: newStore.businessHours || '09:00-22:00',
+      receiptName: newStore.receiptName || '',
+      receiptSubtitle: newStore.receiptSubtitle || '',
+      receiptAddress: newStore.receiptAddress || newStore.address || '',
+      receiptPhone: newStore.receiptPhone || newStore.phone || '',
+      receiptFooter: newStore.receiptFooter || '',
     };
 
     const wizardUsernames = [
@@ -1028,6 +1038,56 @@ const StoresModule: React.FC = () => {
               <div style={styles.formGroup}>
                 <label style={styles.label}>营业时间</label>
                 <input type="text" value={editingStore.businessHours} onChange={(e) => setEditingStore({ ...editingStore, businessHours: e.target.value })} style={styles.input} />
+              </div>
+              <div style={{ ...styles.formGroup, gridColumn: '1 / -1', borderTop: `1px solid ${colors.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+                <label style={styles.label}>小票抬头名称</label>
+                <input
+                  type="text"
+                  value={editingStore.receiptName || ''}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptName: e.target.value })}
+                  placeholder="例如 REST ANO NUEVO CHINO"
+                  style={styles.input}
+                />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>小票副标题</label>
+                <input
+                  type="text"
+                  value={editingStore.receiptSubtitle || ''}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptSubtitle: e.target.value })}
+                  placeholder="例如 COMIDA CHINA BLUEFIELDS"
+                  style={styles.input}
+                />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>小票电话</label>
+                <input
+                  type="text"
+                  value={editingStore.receiptPhone || ''}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptPhone: e.target.value })}
+                  placeholder="例如 Tigo 7542 4688 Claro 5830 1539"
+                  style={styles.input}
+                />
+              </div>
+              <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                <label style={styles.label}>小票地址</label>
+                <input
+                  type="text"
+                  value={editingStore.receiptAddress || ''}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptAddress: e.target.value })}
+                  placeholder="为空时使用分店地址"
+                  style={styles.input}
+                />
+              </div>
+              <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                <label style={styles.label}>小票底部文字</label>
+                <input
+                  type="text"
+                  value={editingStore.receiptFooter || ''}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptFooter: e.target.value })}
+                  placeholder="例如 bluefields 或欢迎语"
+                  style={styles.input}
+                />
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>状态</label>

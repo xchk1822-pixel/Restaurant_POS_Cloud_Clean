@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { dataManager } from '../../services/dataManager';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import {
   formatNicaraguaDate,
@@ -16,6 +15,7 @@ import {
   groupOrdersByDate,
   normalizeOrderType,
 } from '../../utils/orderHistory';
+import { calculateOrderStatusSummary, getOrderCollectedAmount } from '../../utils/financeMetrics';
 
 const STATUS_LABELS: Record<string, string> = {
   all: '全部状态',
@@ -109,8 +109,9 @@ const escapeHtml = (value: any) => {
 };
 
 const OrderHistoryPage: React.FC = () => {
-  const [allOrders, setAllOrders] = useState<any[]>(() => dataManager.getData('orders'));
+  const [allOrders, setAllOrders] = useState<any[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedCloud, setHasLoadedCloud] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -124,9 +125,8 @@ const OrderHistoryPage: React.FC = () => {
     setIsRefreshing(true);
     try {
       const cloudOrders = await smartGetDocuments('pos_orders', true);
-      await dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false });
-      dataManager.clearCache('orders');
       setAllOrders(cloudOrders);
+      setHasLoadedCloud(true);
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新历史订单失败:', error);
@@ -163,16 +163,13 @@ const OrderHistoryPage: React.FC = () => {
     [sortedOrders]
   );
 
-  const todayOrderCount = useMemo(() => {
+  const todayOrderSummary = useMemo(() => {
     const today = getLocalDateString();
-    return allOrders.filter(order => {
-      const timestamp = getOrderTimestamp(order);
-      return timestamp > 0 && getLocalDateString(new Date(timestamp)) === today;
-    }).length;
+    return calculateOrderStatusSummary(allOrders, today);
   }, [allOrders]);
 
   const filteredTotal = sortedOrders.reduce(
-    (sum: number, order: any) => sum + (Number(order.totalAmount) || 0),
+    (sum: number, order: any) => sum + getOrderCollectedAmount(order),
     0
   );
 
@@ -266,7 +263,7 @@ const OrderHistoryPage: React.FC = () => {
         <div class="info">
           打印时间：${escapeHtml(formatNicaraguaDateTime(new Date()))}
           | 订单数：${sortedOrders.length}
-          | 总金额：C$ ${filteredTotal.toFixed(2)}
+          | 已收金额：C$ ${filteredTotal.toFixed(2)}
         </div>
         <table>
           <thead>
@@ -282,7 +279,7 @@ const OrderHistoryPage: React.FC = () => {
           </thead>
           <tbody>${groupedRows || '<tr><td colspan="7" class="center">暂无订单数据</td></tr>'}</tbody>
         </table>
-        <div class="total">总计：C$ ${filteredTotal.toFixed(2)}</div>
+        <div class="total">已收金额：C$ ${filteredTotal.toFixed(2)}</div>
         <div class="no-print"><button onclick="window.print()">打印</button></div>
       </body>
       </html>
@@ -444,12 +441,17 @@ const OrderHistoryPage: React.FC = () => {
           <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{sortedOrders.length}</div>
         </div>
         <div style={styles.stat('#fef3c7', '#92400e')}>
-          <div style={{ fontSize: '0.8rem' }}>筛选总额</div>
+          <div style={{ fontSize: '0.8rem' }}>筛选已收金额</div>
           <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>C$ {filteredTotal.toFixed(2)}</div>
         </div>
         <div style={styles.stat('#fce7f3', '#9d174d')}>
           <div style={{ fontSize: '0.8rem' }}>今日订单</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{todayOrderCount}</div>
+          <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>
+            完成 {todayOrderSummary.completedOrders} / 取消 {todayOrderSummary.cancelledOrders}
+          </div>
+          <div style={{ fontSize: '0.78rem', marginTop: '0.25rem' }}>
+            取消菜品 {todayOrderSummary.cancelledItems}
+          </div>
         </div>
       </div>
 
@@ -499,7 +501,11 @@ const OrderHistoryPage: React.FC = () => {
       </div>
 
       <div style={styles.card}>
-        {sortedOrders.length === 0 ? (
+        {!hasLoadedCloud && isRefreshing ? (
+          <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>
+            正在从云端读取历史订单...
+          </div>
+        ) : sortedOrders.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
             暂无订单数据
           </div>

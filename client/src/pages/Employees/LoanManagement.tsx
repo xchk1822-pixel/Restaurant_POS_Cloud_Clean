@@ -3,6 +3,7 @@ import { getLocalDateString } from '../../utils/exchangeRate';
 import { dataManager } from '../../services/dataManager';
 import { smartAddDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
+import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
@@ -60,9 +61,9 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   setCashFlowRecords,
 }) => {
   const [showLoanModal, setShowLoanModal] = useState(false);
+  const [loanAmountInput, setLoanAmountInput] = useState('');
   const [loanFormData, setLoanFormData] = useState<Partial<LoanRecord>>({
     employeeId: '',
-    amount: 0,
     date: getLocalDateString(),
   });
 
@@ -86,7 +87,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   };
 
   const handleAddLoan = async () => {
-    if (!loanFormData.employeeId || !loanFormData.amount) {
+    const loanAmount = Number(loanFormData.amount || 0);
+    if (!loanFormData.employeeId || loanAmount <= 0) {
       alert('请填写完整信息');
       return;
     }
@@ -102,8 +104,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       employeeName: employee?.name || '',
       expenseId,
       date: loanFormData.date || getLocalDateString(),
-      amount: loanFormData.amount || 0,
-      remainingAmount: loanFormData.amount || 0,
+      amount: loanAmount,
+      remainingAmount: loanAmount,
       status: 'active',
       notes: loanFormData.notes,
     };
@@ -118,7 +120,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       date: expenseDate,
       categoryId: 'employee_loan', // 员工借款分类
       categoryName: '员工借款',
-      amount: loanFormData.amount || 0,
+      amount: loanAmount,
       description: `员工借款 - ${employee?.name}`,
       employeeId: loanFormData.employeeId,
       employeeName: employee?.name,
@@ -132,7 +134,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       await smartAddDocument('expenses', newExpense);
       await recordCashFlow({
         type: 'loan_out',
-        amount: loanFormData.amount || 0,
+        amount: loanAmount,
         employeeId: loanFormData.employeeId,
         employeeName: employee?.name || '',
         date: loanFormData.date || getLocalDateString(),
@@ -151,11 +153,11 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     setShowLoanModal(false);
     setLoanFormData({
       employeeId: '',
-      amount: 0,
       date: getLocalDateString(),
     });
+    setLoanAmountInput('');
     
-    alert(`✅ 借款成功！\n\n员工：${employee?.name}\n金额：C$ ${loanFormData.amount.toFixed(2)}\n\n⚠️ 该借款已从当天营业额中扣除，并将在薪资结算时自动扣回。`);
+    alert(`✅ 借款成功！\n\n员工：${employee?.name}\n金额：C$ ${loanAmount.toFixed(2)}\n\n⚠️ 该借款已从当天营业额中扣除，并将在薪资结算时自动扣回。`);
   };
 
   const styles = {
@@ -366,8 +368,12 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                 <label style={styles.label}>借款金额 (C$) *</label>
                 <input
                   type="number"
-                  value={loanFormData.amount}
-                  onChange={(e) => setLoanFormData({ ...loanFormData, amount: parseFloat(e.target.value) || 0 })}
+                  value={loanAmountInput}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setLoanAmountInput(nextValue);
+                    setLoanFormData({ ...loanFormData, amount: parseOptionalMoneyInput(nextValue) });
+                  }}
                   style={styles.input}
                   placeholder="0.00"
                 />

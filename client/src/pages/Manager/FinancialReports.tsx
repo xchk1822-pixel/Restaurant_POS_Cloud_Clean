@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
-import { smartGetDocuments } from '../../services/smartSyncService';
+import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
+import { buildMissingPurchaseExpenses } from '../../utils/purchaseExpenseRepair';
 import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
@@ -11,6 +11,9 @@ interface DailyReport {
   totalSales: number;
   orderCount: number;
   completedOrders: number;
+  dineInOrders: number;
+  takeoutOrders: number;
+  deliveryOrders: number;
   cancelledOrders: number;
   cancelledItems: number;
   cashPayment: number;
@@ -40,8 +43,8 @@ const signedMoney = (value: number | undefined | null): string => {
   return `${amount > 0 ? '+' : ''}${money(amount)}`;
 };
 
-const formatTodayOrders = (report: Pick<DailyReport, 'completedOrders' | 'cancelledOrders' | 'cancelledItems'>): string =>
-  `\u5b8c\u6210 ${report.completedOrders} \u5355 / \u53d6\u6d88\u6574\u5355 ${report.cancelledOrders} \u5355 / \u53d6\u6d88\u83dc\u54c1 ${report.cancelledItems} \u9053`;
+const formatTodayOrders = (report: Pick<DailyReport, 'completedOrders' | 'dineInOrders' | 'takeoutOrders' | 'deliveryOrders' | 'cancelledOrders' | 'cancelledItems'>): string =>
+  `\u5b8c\u6210 ${report.completedOrders} \u5355 / Mesa ${report.dineInOrders} / Barra ${report.takeoutOrders} / Delivery ${report.deliveryOrders} / \u53d6\u6d88\u6574\u5355 ${report.cancelledOrders} \u5355 / \u53d6\u6d88\u83dc\u54c1 ${report.cancelledItems} \u9053`;
 
 const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -52,9 +55,10 @@ const htmlEscape = (value: any): string => String(value ?? '')
 
 const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders: propOrders }) => {
   const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
-  const [orders, setOrders] = useState<any[]>(() => {
-    return propOrders || dataManager.getData('orders');
-  });
+  const [orders, setOrders] = useState<any[]>(() => propOrders || []);
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [handovers, setHandovers] = useState<any[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<any[]>(() => {
     try {
       const saved = localStorage.getItem(expenseCategoryStorageKey);
@@ -86,15 +90,18 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         smartGetDocuments('expense_categories', true),
       ]);
 
-      await Promise.all([
-        dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false }),
-        dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false }),
-        dataManager.saveData('purchases', cloudPurchases, { syncFirestore: false, notify: false }),
-        dataManager.saveData('handovers', cloudHandovers, { syncFirestore: false, notify: false }),
-      ]);
+      const repairedExpenses = buildMissingPurchaseExpenses(cloudPurchases, cloudExpenses);
+      if (repairedExpenses.length > 0) {
+        await Promise.all(repairedExpenses.map(expense =>
+          smartSetDocument('expenses', expense.id, expense)
+        ));
+      }
+      const nextExpenses = [...repairedExpenses, ...cloudExpenses];
 
-      dataManager.clearCache();
       setOrders(cloudOrders);
+      setExpenses(nextExpenses);
+      setPurchaseOrders(cloudPurchases);
+      setHandovers(cloudHandovers);
       if (cloudExpenseCategories.length > 0) {
         setExpenseCategories(cloudExpenseCategories);
         localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudExpenseCategories));
@@ -112,6 +119,19 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   useEffect(() => {
     refreshFinancialData();
   }, [refreshFinancialData]);
+
+  useEffect(() => {
+    const handleFinancialSourceUpdated = () => {
+      setDataVersion(version => version + 1);
+    };
+
+    window.addEventListener('expensesUpdated', handleFinancialSourceUpdated);
+    window.addEventListener('purchasesUpdated', handleFinancialSourceUpdated);
+    return () => {
+      window.removeEventListener('expensesUpdated', handleFinancialSourceUpdated);
+      window.removeEventListener('purchasesUpdated', handleFinancialSourceUpdated);
+    };
+  }, []);
 
   const generateDailyReport = React.useCallback((date: string): DailyReport => {
     const dayOrders = orders.filter((order: any) => getOrderFinancialDateKey(order) === date);
@@ -142,8 +162,6 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       });
     }
 
-    const expenses = dataManager.getData('expenses');
-
     const purchaseAmount = expenses.reduce((sum: number, exp: any) => {
       if (!isPurchaseRelatedExpense(exp)) {
         return sum;
@@ -165,7 +183,6 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     }, 0);
 
     // Read shift handover records.
-    const handovers = dataManager.getData('handovers');
     const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
     const { totalSales, profit, difference } = calculateFinancialReportTotals({
       cashPayment,
@@ -180,6 +197,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       totalSales,
       orderCount,
       completedOrders: orderStatusSummary.completedOrders,
+      dineInOrders: orderStatusSummary.dineInOrders,
+      takeoutOrders: orderStatusSummary.takeoutOrders,
+      deliveryOrders: orderStatusSummary.deliveryOrders,
       cancelledOrders: orderStatusSummary.cancelledOrders,
       cancelledItems: orderStatusSummary.cancelledItems,
       cashPayment,
@@ -190,7 +210,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       handoverAmount,
       difference
     };
-  }, [orders]);
+  }, [orders, expenses, handovers]);
 
   // Load report data.
   const loadReports = React.useCallback(() => {
@@ -215,13 +235,16 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     loadReports();
   }, [loadReports, dataVersion]);
 
-  const supplierDebtTotal = getSupplierDebtTotal(dataManager.getData('purchases'));
+  const supplierDebtTotal = getSupplierDebtTotal(purchaseOrders);
 
   // Calculate summary totals.
   const summary = dailyReports.reduce((acc, report) => ({
     totalSales: acc.totalSales + report.totalSales,
     orderCount: acc.orderCount + report.orderCount,
     completedOrders: acc.completedOrders + report.completedOrders,
+    dineInOrders: acc.dineInOrders + report.dineInOrders,
+    takeoutOrders: acc.takeoutOrders + report.takeoutOrders,
+    deliveryOrders: acc.deliveryOrders + report.deliveryOrders,
     cancelledOrders: acc.cancelledOrders + report.cancelledOrders,
     cancelledItems: acc.cancelledItems + report.cancelledItems,
     cashPayment: acc.cashPayment + report.cashPayment,
@@ -233,9 +256,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     handoverAmount: acc.handoverAmount + (report.handoverAmount || 0),
     hasHandover: acc.hasHandover || report.handoverAmount !== undefined,
     supplierDebt: supplierDebtTotal
-  }), { totalSales: 0, orderCount: 0, completedOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
+  }), { totalSales: 0, orderCount: 0, completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
-    ? buildDailyExpenseBreakdown(dataManager.getData('expenses'), selectedDate, expenseCategories, dataManager.getData('purchases'))
+    ? buildDailyExpenseBreakdown(expenses, selectedDate, expenseCategories, purchaseOrders)
     : { summaries: [], details: [], groups: [] };
 
   const styles = {
@@ -576,7 +599,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard(colors.blue, colors.blue)}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue(colors.blue)}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
             <div style={styles.statCard(colors.success, colors.success)}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue(colors.success)}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#7c3aed', '#7c3aed')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#7c3aed')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '1rem' }}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div><div style={styles.statSub}>{'\u53d6\u6d88\u6574\u5355'} {summary.cancelledOrders} {'\u5355'} / {'\u53d6\u6d88\u83dc\u54c1'} {summary.cancelledItems} {'\u9053'}</div></div>
+            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '0.86rem', lineHeight: 1.35 }}>{formatTodayOrders(summary)}</div><div style={styles.statSub}>Mesa / Barra / Delivery</div></div>
             <div style={styles.statCard(summary.profit >= 0 ? colors.success : colors.danger, summary.profit >= 0 ? colors.success : colors.danger)}><div style={styles.statLabel}>{'\u76c8\u4e8f'}</div><div style={styles.statValue(summary.profit >= 0 ? colors.success : colors.danger)}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f + \u8bef\u5dee'} | {'\u76c8\u4e8f\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
             <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success, summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5b9e\u4ea4 - \u5e94\u4ea4\u73b0\u91d1'}</div></div>

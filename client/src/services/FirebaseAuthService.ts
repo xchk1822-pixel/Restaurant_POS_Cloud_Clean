@@ -1,6 +1,6 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { 
-  createUserWithEmailAndPassword, 
+import {
+  createUserWithEmailAndPassword,
   getAuth,
   signInWithEmailAndPassword,
   signOut,
@@ -19,46 +19,47 @@ export interface AppUser {
   storeId?: string;
   storeName?: string;
   email?: string;
+  status?: 'active' | 'inactive';
 }
 
 const getUserCreationApp = (): FirebaseApp => {
   return getApps().find(app => app.name === 'user-creation') || initializeApp(firebaseConfig, 'user-creation');
 };
 
-/**
- * 🔥 使用 Firebase Authentication 登录
- */
+export const getFirebaseUserProfile = async (firebaseUser: FirebaseUser): Promise<AppUser> => {
+  const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+
+  if (!userDoc.exists()) {
+    throw new Error('用户数据不存在');
+  }
+
+  const userData = userDoc.data() as AppUser;
+
+  if (userData.status === 'inactive') {
+    throw new Error('账号已停用');
+  }
+
+  return {
+    id: firebaseUser.uid,
+    username: userData.username,
+    name: userData.name,
+    role: userData.role,
+    storeId: userData.storeId,
+    storeName: userData.storeName,
+    email: userData.email,
+    status: userData.status || 'active'
+  };
+};
+
 export const firebaseLogin = async (username: string, password: string): Promise<AppUser> => {
   try {
-    // 用户名作为邮箱登录（添加 @restaurant.local 后缀）
     const email = `${username}@restaurant.local`;
-    
-    // 使用 Firebase Auth 登录
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-    
-    // 从 Firestore 获取用户详细信息
-    const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-    
-    if (!userDoc.exists()) {
-      throw new Error('用户数据不存在');
-    }
-    
-    const userData = userDoc.data() as AppUser;
-    
-    return {
-      id: firebaseUser.uid,
-      username: userData.username,
-      name: userData.name,
-      role: userData.role,
-      storeId: userData.storeId,
-      storeName: userData.storeName,
-      email: userData.email
-    };
+
+    return await getFirebaseUserProfile(userCredential.user);
   } catch (error: any) {
-    console.error('❌ Firebase Auth 登录失败:', error.code, error.message);
-    
-    // 友好的错误提示
+    console.error('Firebase Auth login failed:', error.code, error.message);
+
     if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
       throw new Error('用户名或密码错误');
     } else if (error.code === 'auth/too-many-requests') {
@@ -69,41 +70,30 @@ export const firebaseLogin = async (username: string, password: string): Promise
   }
 };
 
-/**
- * 🔥 使用 Firebase Authentication 登出
- */
 export const firebaseLogout = async (): Promise<void> => {
   try {
     await signOut(auth);
   } catch (error) {
-    console.error('❌ Firebase Auth 登出失败:', error);
+    console.error('Firebase Auth logout failed:', error);
     throw error;
   }
 };
 
-/**
- * 🔥 创建新用户（仅超级管理员可用）
- */
 export const createFirebaseUser = async (
   username: string,
   password: string,
   userData: Omit<AppUser, 'id'>
 ): Promise<AppUser> => {
   try {
-    // 用户名作为邮箱
     const email = `${username}@restaurant.local`;
-    
-    // 创建 Firebase Auth 用户
     const userCreationAuth = getAuth(getUserCreationApp());
     const userCredential = await createUserWithEmailAndPassword(userCreationAuth, email, password);
     const firebaseUser = userCredential.user;
-    
-    // 更新显示名称
+
     await updateProfile(firebaseUser, {
       displayName: userData.name
     });
-    
-    // 保存用户详细信息到 Firestore
+
     const appUser: AppUser = {
       id: firebaseUser.uid,
       username,
@@ -111,15 +101,16 @@ export const createFirebaseUser = async (
       role: userData.role,
       storeId: userData.storeId,
       storeName: userData.storeName,
-      email
+      email,
+      status: userData.status || 'active'
     };
-    
+
     await setDoc(doc(db, 'users', firebaseUser.uid), appUser);
-    
+
     return appUser;
   } catch (error: any) {
-    console.error('❌ 创建 Firebase Auth 用户失败:', error.code, error.message);
-    
+    console.error('Create Firebase Auth user failed:', error.code, error.message);
+
     if (error.code === 'auth/email-already-in-use') {
       throw new Error('用户名已存在');
     } else if (error.code === 'auth/weak-password') {
@@ -130,16 +121,10 @@ export const createFirebaseUser = async (
   }
 };
 
-/**
- * 🔥 检查当前 Firebase Auth 状态
- */
 export const getCurrentFirebaseUser = (): FirebaseUser | null => {
   return auth.currentUser;
 };
 
-/**
- * 🔥 监听认证状态变化
- */
 export const onAuthStateChange = (callback: (user: FirebaseUser | null) => void) => {
   return auth.onAuthStateChanged(callback);
 };

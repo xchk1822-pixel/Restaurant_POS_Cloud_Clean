@@ -11,27 +11,26 @@ import {
   where,
   onSnapshot,
   orderBy,
+  limit,
   increment,
+  arrayUnion,
   Timestamp,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dataService } from './DataService';
 
 /**
- * 🔥 将 Firestore Timestamp 转换为本地时间字符串
  */
 const convertTimestampsToLocalTime = (data: any): any => {
   if (!data || typeof data !== 'object') return data;
 
   const converted = { ...data };
 
-  // 处理 createdAt 和 updatedAt 字段
   ['createdAt', 'updatedAt'].forEach(field => {
     if (converted[field]) {
-      // 如果是 Firestore Timestamp
       if (converted[field].toDate) {
         const date = converted[field].toDate();
-        // 转换为本地时间字符串
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
@@ -40,7 +39,6 @@ const convertTimestampsToLocalTime = (data: any): any => {
         const seconds = String(date.getSeconds()).padStart(2, '0');
         converted[field] = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
-      // 如果已经是字符串，保持不变
     }
   });
 
@@ -50,8 +48,60 @@ const convertTimestampsToLocalTime = (data: any): any => {
 const FIRESTORE_ENABLED = true;
 const REALTIME_SYNC_ENABLED = true;
 const GLOBAL_COLLECTIONS = ['users', 'stores', 'system_roles'];
+const WEAK_NETWORK_TIMEOUT_MS = 4500;
+const FRIDGE_TRANSFER_TIMEOUT_MS = 15000;
+const SYNC_CONFLICTS_KEY = 'local_pending_sync_conflicts';
 
-// 🔥 获取当前用户的 storeId
+class WeakNetworkTimeoutError extends Error {
+  constructor(label: string) {
+    super(`weak-network-timeout:${label}`);
+    this.name = 'WeakNetworkTimeoutError';
+  }
+}
+
+const withWeakNetworkTimeout = async <T,>(
+  operation: () => Promise<T>,
+  label: string,
+  timeoutMs = WEAK_NETWORK_TIMEOUT_MS
+): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new WeakNetworkTimeoutError(label)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const isWeakNetworkTimeout = (error: any): boolean => {
+  return error instanceof WeakNetworkTimeoutError || error?.name === 'WeakNetworkTimeoutError';
+};
+
+const isExpectedOfflineReadError = (error: any): boolean => {
+  const message = String(error?.message || error || '');
+  return isWeakNetworkTimeout(error)
+    || error?.code === 'unavailable'
+    || message.includes('Failed to get documents from server')
+    || message.includes('Could not reach Cloud Firestore backend');
+};
+
+type SmartWriteResult = {
+  success: boolean;
+  cloudSynced?: boolean;
+  pending?: boolean;
+  offline?: boolean;
+  localOnly?: boolean;
+  weakNetworkFallback?: boolean;
+  skipped?: boolean;
+  error?: any;
+};
+
 const getCurrentStoreId = (): string | null => {
   try {
     const userStr = localStorage.getItem('current_user');
@@ -60,9 +110,20 @@ const getCurrentStoreId = (): string | null => {
       return user.storeId || null;
     }
   } catch (error) {
-    console.error('❌ 获取 storeId 失败:', error);
+    console.error('Smart sync operation failed:', error);
   }
   return null;
+};
+
+const getCurrentOperatorName = (): string => {
+  try {
+    const userStr = localStorage.getItem('current_user');
+    if (!userStr) return '系统操作';
+    const user = JSON.parse(userStr);
+    return user.name || user.username || user.displayName || '系统操作';
+  } catch {
+    return '系统操作';
+  }
 };
 
 const getCollectionKey = (collectionName: string): string => {
@@ -80,7 +141,6 @@ const requiresStoreScope = (collectionName: string): boolean => {
   return !GLOBAL_COLLECTIONS.includes(collectionKey) && !collectionName.includes('/');
 };
 
-// 🔥 构建带 storeId 的集合路径
 const getStoreCollectionPath = (collectionName: string): string | null => {
   if (collectionName.includes('/')) {
     return collectionName;
@@ -103,6 +163,7 @@ const getStoreCollectionPath = (collectionName: string): string | null => {
   return collectionName;
 };
 
+// Local cache keys must stay store-scoped for business collections.
 const getLocalStorageKey = (collectionName: string): string | null => {
   const collectionKey = getCollectionKey(collectionName);
   const explicitStoreId = getStoreIdFromExplicitPath(collectionName);
@@ -161,6 +222,79 @@ const getRecordVersion = (record: any): number => {
   );
 };
 
+const normalizePosOrderLifecycle = (record: any): any => {
+  if (!record || typeof record !== 'object') return record;
+  if (record.status === 'cancelled') return record;
+  const hasCompletionSignal = record.status === 'completed' || Boolean(record.completedAt || record.clearedAt);
+  if (!hasCompletionSignal) return record;
+
+  const totalAmount = Number(record.totalAmount) || 0;
+  const recordedPaymentAmount = Math.max(
+    Number(record.paidAmount) || 0,
+    Number(record.settledAmount) || 0,
+    (Number(record.cashAmount) || 0) + (Number(record.cardAmount) || 0)
+  );
+  const paymentLooksComplete = totalAmount > 0 && recordedPaymentAmount >= totalAmount - 0.001;
+  const normalizedPaidAmount = paymentLooksComplete ? Math.min(recordedPaymentAmount, totalAmount) : recordedPaymentAmount;
+
+  return {
+    ...record,
+    status: 'completed',
+    paymentStatus: paymentLooksComplete ? 'paid' : record.paymentStatus,
+    paidAmount: normalizedPaidAmount,
+    settledAmount: normalizedPaidAmount,
+  };
+};
+
+const normalizeRecordForCollection = (collectionName: string, record: any): any => {
+  return getCollectionKey(collectionName) === 'pos_orders'
+    ? normalizePosOrderLifecycle(record)
+    : record;
+};
+
+const isTerminalPosOrderRecord = (record: any): boolean => {
+  if (!record || typeof record !== 'object') return false;
+  return record.status === 'completed'
+    || record.status === 'cancelled'
+    || Boolean(record.completedAt || record.clearedAt);
+};
+
+const getPosOrderStatusRank = (status?: string): number => {
+  switch (status) {
+    case 'cancelled':
+    case 'completed': return 5;
+    case 'paid': return 4;
+    case 'served': return 3;
+    case 'preparing': return 2;
+    case 'confirmed': return 1;
+    case 'draft':
+    default: return 0;
+  }
+};
+
+const getPosPaymentRank = (paymentStatus?: string): number => {
+  switch (paymentStatus) {
+    case 'paid': return 3;
+    case 'partial': return 2;
+    case 'refunded': return 1;
+    case 'unpaid':
+    default: return 0;
+  }
+};
+
+const isPosOrderLifecycleRegression = (current: any, incoming: any): boolean => {
+  if (!current || !incoming) return false;
+  if (current.stockDeducted && !incoming.stockDeducted) return true;
+  if (current.completedAt && !incoming.completedAt) return true;
+  if (current.clearedAt && !incoming.clearedAt) return true;
+
+  const currentStatusRank = getPosOrderStatusRank(current.status);
+  const incomingStatusRank = getPosOrderStatusRank(incoming.status);
+  if (currentStatusRank > incomingStatusRank) return true;
+
+  return getPosPaymentRank(current.paymentStatus) > getPosPaymentRank(incoming.paymentStatus);
+};
+
 const withSyncMetadata = (
   collectionName: string,
   data: any,
@@ -191,7 +325,7 @@ const withSyncMetadata = (
     normalized.storeId = storeId;
   }
 
-  return normalized;
+  return normalizeRecordForCollection(collectionName, normalized);
 };
 
 const shouldReplaceLocalRecord = (existing: any, incoming: any): boolean => {
@@ -203,6 +337,30 @@ const shouldReplaceLocalRecord = (existing: any, incoming: any): boolean => {
 
 const excludeDeletedRecords = (records: any[]): any[] => {
   return records.filter(record => !record?.isDeleted);
+};
+
+const getPendingPosOrderSyncIds = (): Set<string> => {
+  try {
+    const storeId = getCurrentStoreId();
+    const storageKey = storeId ? `store_${storeId}_pos_pending_order_sync` : 'pos_pending_order_sync';
+    const stored = localStorage.getItem(storageKey);
+    return stored ? new Set(JSON.parse(stored)) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+
+const replaceLocalPosOrdersForDatePrefix = (datePrefix: string, cloudOrders: any[]) => {
+  const localStorageKey = getLocalStorageKey('pos_orders');
+  if (!localStorageKey) return;
+
+  const pendingOrderIds = getPendingPosOrderSyncIds();
+  const localOrders = getFromLocalStorage('pos_orders');
+  const retainedOrders = localOrders.filter(order => {
+    if (pendingOrderIds.has(String(order?.id || ''))) return true;
+    return !String(order?.orderNumber || '').startsWith(datePrefix);
+  });
+  localStorage.setItem(localStorageKey, JSON.stringify([...retainedOrders, ...cloudOrders]));
 };
 
 const CLOUD_AUTHORITATIVE_SUBSCRIPTIONS = new Set(['pos_tables']);
@@ -259,30 +417,22 @@ const toFirestoreData = (data: any, includeCreatedAt = false): any => {
 };
 
 /**
- * 智能数据同步服务
- * - 优先使用Firestore
- * - 断网时自动降级到localStorage
- * - 网络恢复后自动同步
  */
 
-// ==================== 网络状态监听 ====================
 
 let isOnline = navigator.onLine;
 
 window.addEventListener('online', () => {
   isOnline = true;
-  console.log('🌐 网络已连接，开始同步数据...');
   syncPendingChanges();
 });
 
 window.addEventListener('offline', () => {
   isOnline = false;
-  console.log('⚠️ 网络已断开，切换到本地模式');
 });
 
 export const getNetworkStatus = () => isOnline;
 
-// ==================== 待同步队列 ====================
 
 interface PendingChange {
   id: string;
@@ -294,20 +444,45 @@ interface PendingChange {
 
 const PENDING_CHANGES_KEY = 'pending_firestore_changes';
 
+const coalescePendingChanges = (changes: PendingChange[]): PendingChange[] => {
+  const result: PendingChange[] = [];
+  const posOrderUpdateIndex = new Map<string, number>();
+
+  changes.forEach(change => {
+    if (change.collection === 'pos_orders' && change.operation === 'update') {
+      const existingIndex = posOrderUpdateIndex.get(change.id);
+      if (existingIndex !== undefined) {
+        result[existingIndex] = change;
+        return;
+      }
+      posOrderUpdateIndex.set(change.id, result.length);
+    }
+
+    result.push(change);
+  });
+
+  return result;
+};
+
 const getPendingChanges = (): PendingChange[] => {
   try {
     const changes = localStorage.getItem(PENDING_CHANGES_KEY);
-    return changes ? JSON.parse(changes) : [];
+    const parsed = changes ? JSON.parse(changes) : [];
+    if (!Array.isArray(parsed)) return [];
+
+    const coalesced = coalescePendingChanges(parsed);
+    if (coalesced.length !== parsed.length) {
+      localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(coalesced));
+    }
+    return coalesced;
   } catch {
     return [];
   }
 };
 
 const savePendingChange = (change: PendingChange) => {
-  const changes = getPendingChanges();
-  changes.push(change);
+  const changes = coalescePendingChanges([...getPendingChanges(), change]);
   localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(changes));
-  console.log(`💾 保存待同步操作: ${change.operation} ${change.collection}`);
 };
 
 const clearPendingChanges = () => {
@@ -322,12 +497,193 @@ const setPendingChanges = (changes: PendingChange[]) => {
   localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(changes));
 };
 
-// ==================== 智能CRUD操作 ====================
+let pendingSyncRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+const schedulePendingSyncRetry = (delayMs = 3000) => {
+  if (pendingSyncRetryTimer || !FIRESTORE_ENABLED) return;
+
+  pendingSyncRetryTimer = setTimeout(() => {
+    pendingSyncRetryTimer = null;
+    if (!isOnline || getPendingChanges().length === 0) return;
+
+    syncPendingChanges()
+      .catch(error => {
+        console.error('Pending sync retry failed:', error);
+      })
+      .finally(() => {
+        if (getPendingChanges().length > 0) {
+          schedulePendingSyncRetry(10000);
+        }
+      });
+  }, delayMs);
+};
+
+const getSyncConflictsKey = () => {
+  const storeId = getCurrentStoreId();
+  return storeId ? `${storeId}_${SYNC_CONFLICTS_KEY}` : SYNC_CONFLICTS_KEY;
+};
+
+const saveSyncConflict = (conflict: Record<string, any>) => {
+  try {
+    const storageKey = getSyncConflictsKey();
+    const existing = localStorage.getItem(storageKey);
+    const conflicts = existing ? JSON.parse(existing) : [];
+    conflicts.push({
+      ...conflict,
+      id: conflict.id || `conflict_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      detectedAt: Date.now(),
+    });
+    localStorage.setItem(storageKey, JSON.stringify(conflicts));
+  } catch (error) {
+    console.error('Smart sync operation failed:', error);
+  }
+};
+
+const applyIncrementToLocalStorage = (
+  collectionName: string,
+  docId: string,
+  fieldName: string,
+  amount: number,
+  extraData: Record<string, any>
+) => {
+  const existing = getFromLocalStorage(collectionName);
+  const existingIndex = existing.findIndex(item => item.id === docId);
+  const nextRecord = existingIndex >= 0
+    ? {
+      ...existing[existingIndex],
+      ...extraData,
+      [fieldName]: (Number(existing[existingIndex]?.[fieldName]) || 0) + amount,
+    }
+    : {
+      id: docId,
+      ...extraData,
+      [fieldName]: amount,
+    };
+  const updated = existingIndex >= 0
+    ? existing.map((item, index) => index === existingIndex ? nextRecord : item)
+    : [...existing, nextRecord];
+  const localStorageKey = getLocalStorageKey(collectionName);
+  if (!localStorageKey) {
+    return false;
+  }
+  localStorage.setItem(localStorageKey, JSON.stringify(updated));
+  return true;
+};
+
+const applyIdempotentIncrement = async (
+  collectionPath: string,
+  docId: string,
+  fieldName: string,
+  amount: number,
+  extraData: Record<string, any>,
+  operationId: string
+) => {
+  return runTransaction(db, async transaction => {
+    const docRef = doc(db, collectionPath, docId);
+    const snapshot = await transaction.get(docRef);
+    const currentData = snapshot.exists() ? snapshot.data() : {};
+    const appliedOperationIds = Array.isArray(currentData.appliedIncrementOperationIds)
+      ? currentData.appliedIncrementOperationIds
+      : [];
+
+    if (appliedOperationIds.includes(operationId)) {
+      return { success: true, duplicate: true, operationId };
+    }
+
+    transaction.set(docRef, {
+      ...toFirestoreData(extraData),
+      id: docId,
+      [fieldName]: increment(amount),
+      appliedIncrementOperationIds: arrayUnion(operationId),
+    }, { merge: true });
+
+    return { success: true, operationId };
+  });
+};
+
+const formatOrderNumberDateParts = (date: Date) => {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const year = date.getFullYear();
+  return {
+    datePrefix: `${month}${day}`,
+    dayKey: `${year}-${month}-${day}`,
+  };
+};
+
+const generateLocalDailyOrderNumber = (datePrefix: string, dayKey: string) => {
+  const storeId = getCurrentStoreId() || 'no_store';
+  const counterKey = `pos_local_order_counter_${storeId}_${dayKey}`;
+  const rawCurrentSequence = Number(localStorage.getItem(counterKey) || '0');
+  const currentSequence = Number.isFinite(rawCurrentSequence) ? rawCurrentSequence : 0;
+  const localMaxSequence = getMaxLocalOrderSequence(datePrefix);
+  const nextSequence = Math.max(currentSequence, localMaxSequence) + 1;
+  localStorage.setItem(counterKey, String(nextSequence));
+  return `${datePrefix}${String(nextSequence).padStart(3, '0')}`;
+};
+
+const getMaxLocalOrderSequence = (datePrefix: string): number => {
+  try {
+    const localStorageKey = getLocalStorageKey('pos_orders');
+    if (!localStorageKey) return 0;
+    const rawOrders = localStorage.getItem(localStorageKey);
+    const orders = rawOrders ? JSON.parse(rawOrders) : [];
+    if (!Array.isArray(orders)) return 0;
+
+    return orders.reduce((maxSequence, order) => {
+      const orderNumber = String(order?.orderNumber || '');
+      if (!orderNumber.startsWith(datePrefix)) return maxSequence;
+      const sequence = Number(orderNumber.slice(datePrefix.length));
+      return Number.isFinite(sequence) ? Math.max(maxSequence, sequence) : maxSequence;
+    }, 0);
+  } catch (error) {
+    console.error('Smart sync operation failed:', error);
+    return 0;
+  }
+};
+
+export const smartGenerateDailyOrderNumber = async (date = new Date()) => {
+  const { datePrefix, dayKey } = formatOrderNumberDateParts(date);
+  const counterCollectionPath = getStoreCollectionPath('order_counters');
+  const localMaxSequence = getMaxLocalOrderSequence(datePrefix);
+
+  if (!counterCollectionPath || !FIRESTORE_ENABLED || !isOnline) {
+    return generateLocalDailyOrderNumber(datePrefix, dayKey);
+  }
+
+  try {
+    const nextSequence = await withWeakNetworkTimeout(
+      () => runTransaction(db, async transaction => {
+        const counterRef = doc(db, counterCollectionPath, dayKey);
+        const snapshot = await transaction.get(counterRef);
+        const currentData = snapshot.exists() ? snapshot.data() : {};
+        const rawCurrentSequence = Number(currentData.sequence || 0);
+        const currentSequence = Number.isFinite(rawCurrentSequence) ? rawCurrentSequence : 0;
+        const nextSequence = Math.max(currentSequence, localMaxSequence) + 1;
+
+        transaction.set(counterRef, {
+          id: dayKey,
+          date: dayKey,
+          sequence: nextSequence,
+          lastModified: Date.now(),
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+
+        return nextSequence;
+      }),
+      `order-counter:${dayKey}`
+    );
+
+    isOnline = true;
+    return `${datePrefix}${String(nextSequence).padStart(3, '0')}`;
+  } catch (error) {
+    console.warn('Order number cloud counter unavailable, using local daily counter:', error);
+    return generateLocalDailyOrderNumber(datePrefix, dayKey);
+  }
+};
+
 
 /**
- * 智能添加文档
- * - 在线：直接写入Firestore + 实时监听自动同步到其他设备
- * - 离线：写入localStorage + 加入待同步队列
  */
 export const smartAddDocument = async (collectionName: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
@@ -339,7 +695,6 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
   const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
 
   if (!FIRESTORE_ENABLED) {
-    console.log('⚠️ Firestore已禁用，仅使用本地存储');
     saveToLocalStorage(collectionName, normalizedData, docId);
     return { id: docId, success: true };
   }
@@ -353,27 +708,20 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
     try {
       const docRef = doc(db, storeCollectionPath, docId);
       await setDoc(docRef, docData, { merge: true });
-      console.log(`✅ 已同步到云端: ${storeCollectionPath}/${docId}`);
 
-      // 🔥 保存到localStorage作为缓存（实时监听会自动更新）
       saveToLocalStorage(collectionName, docData, docId);
 
       return { id: docId, ...docData };
     } catch (error) {
-      console.error('❌ Firestore写入失败，降级到本地', error);
+      console.error('Firestore add failed, falling back to local:', error);
       return fallbackToLocalAdd(collectionName, { ...data, id: docId });
     }
   } else {
-    // 离线模式
-    console.log('⚠️ 离线模式，保存到本地');
     return fallbackToLocalAdd(collectionName, normalizedData);
   }
 };
 
 /**
- * 智能设置文档（支持指定ID）
- * - 如果文档存在则更新，不存在则创建
- * - 用于初始化默认数据
  */
 export const smartSetDocument = async (collectionName: string, docId: string, data: any) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
@@ -390,52 +738,48 @@ export const smartSetDocument = async (collectionName: string, docId: string, da
   if (isOnline) {
     try {
       const docRef = doc(db, storeCollectionPath, docId);
-      // 检查文档是否存在
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
-        // 存在则更新
         await updateDoc(docRef, docData);
-        console.log(`✅ 已更新云端文档: ${collectionName}/${docId}`);
       } else {
-        // 不存在则创建
         await setDoc(docRef, {
           ...docData,
           createdAt: Timestamp.now(),
         });
-        console.log(`✅ 已创建云端文档: ${collectionName}/${docId}`);
       }
 
-      // 同时保存到localStorage
       saveToLocalStorage(collectionName, docData, docId);
 
       return { id: docId, ...docData };
     } catch (error) {
-      console.error('❌ Firestore操作失败，降级到本地', error);
+      console.error('Firestore update failed, falling back to local:', error);
       saveToLocalStorage(collectionName, docData, docId);
       return { id: docId, ...docData };
     }
   } else {
-    // 离线模式
-    console.log('⚠️ 离线模式，保存到本地');
     saveToLocalStorage(collectionName, docData, docId);
     return { id: docId, ...docData };
   }
 };
 
 /**
- * 智能更新文档
- * - 🔥 关键：使用 Firestore 事务保证原子性
- * - 🔥 冲突解决：以服务器时间戳为准（last-write-wins）
  */
-export const smartUpdateDocument = async (collectionName: string, docId: string, data: any) => {
+export const smartUpdateDocument = async (
+  collectionName: string,
+  docId: string,
+  data: any
+): Promise<SmartWriteResult> => {
   const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
-  const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal);
+  const collectionKey = getCollectionKey(collectionName);
+  const dataForWrite = collectionKey === 'pos_orders' && isPosOrderLifecycleRegression(existingLocal, data)
+    ? existingLocal
+    : data;
+  const normalizedData = withSyncMetadata(collectionName, dataForWrite, docId, existingLocal);
 
   if (!FIRESTORE_ENABLED) {
-    console.log('⚠️ Firestore已禁用，仅使用本地存储');
     updateInLocalStorage(collectionName, docId, normalizedData);
-    return { success: true };
+    return { success: true, localOnly: true };
   }
 
   const storeCollectionPath = getStoreCollectionPath(collectionName);
@@ -450,27 +794,59 @@ export const smartUpdateDocument = async (collectionName: string, docId: string,
   if (isOnline) {
       try {
         const docRef = doc(db, storeCollectionPath, docId);
-        await setDoc(docRef, firestoreUpdateData, { merge: true });
-        console.log(`✅ 已同步更新到云端: ${collectionName}/${docId}`);
+        if (collectionKey === 'pos_orders') {
+          const result = await withWeakNetworkTimeout(
+            () => runTransaction(db, async transaction => {
+              const snapshot = await transaction.get(docRef);
+              const remoteData = snapshot.exists()
+                ? normalizeRecordForCollection(collectionName, { id: docId, ...snapshot.data() })
+                : null;
+
+              if (remoteData && isPosOrderLifecycleRegression(remoteData, normalizedData)) {
+                return { skipped: true, remoteData };
+              }
+
+              transaction.set(docRef, firestoreUpdateData, { merge: true });
+              return { skipped: false };
+            }),
+            `update:${collectionName}/${docId}`
+          );
+
+          if (result?.skipped && result.remoteData) {
+            updateInLocalStorage(collectionName, docId, normalizeRecordForCollection(collectionName, result.remoteData));
+            return { success: true, cloudSynced: true, skipped: true };
+          }
+        } else {
+          await withWeakNetworkTimeout(
+            () => setDoc(docRef, firestoreUpdateData, { merge: true }),
+            `update:${collectionName}/${docId}`
+          );
+        }
 
       updateInLocalStorage(collectionName, docId, normalizedData);
+      return { success: true, cloudSynced: true };
     } catch (error) {
-      console.error('❌ Firestore更新失败，降级到本地', error);
+      if (!isWeakNetworkTimeout(error)) {
+        console.error('Firestore update failed, falling back to local:', error);
+      }
       fallbackToLocalUpdate(collectionName, docId, normalizedData);
+      return {
+        success: false,
+        pending: true,
+        weakNetworkFallback: isWeakNetworkTimeout(error),
+        error,
+      };
     }
   } else {
-    // 离线模式
-    console.log('⚠️ 离线模式，更新本地数据');
     fallbackToLocalUpdate(collectionName, docId, normalizedData);
+    return { success: true, pending: true, offline: true };
   }
 };
 
 /**
- * 智能删除文档
  */
 export const smartDeleteDocument = async (collectionName: string, docId: string) => {
   if (!FIRESTORE_ENABLED) {
-    console.log('⚠️ Firestore已禁用，仅使用本地存储');
     deleteFromLocalStorage(collectionName, docId);
     return { success: true };
   }
@@ -484,16 +860,13 @@ export const smartDeleteDocument = async (collectionName: string, docId: string)
     try {
       const docRef = doc(db, storeCollectionPath, docId);
       await deleteDoc(docRef);
-      console.log(`✅ 已从云端删除: ${collectionName}/${docId}`);
 
       deleteFromLocalStorage(collectionName, docId);
     } catch (error) {
-      console.error('❌ Firestore删除失败，降级到本地', error);
+      console.error('Firestore delete failed, falling back to local:', error);
       fallbackToDelete(collectionName, docId);
     }
   } else {
-    // 离线模式
-    console.log('⚠️ 离线模式，从本地删除');
     fallbackToDelete(collectionName, docId);
   }
 };
@@ -509,54 +882,488 @@ export const smartIncrementField = async (
   if (!storeCollectionPath) {
     return { success: false, error: 'missing-store-id' };
   }
-  const updateData = {
-    ...toFirestoreData(extraData),
-    id: docId,
-    [fieldName]: increment(amount),
-  };
+  const operationId = extraData.syncOperationId || `increment-${collectionName}-${docId}-${fieldName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const { syncOperationId, ...incrementExtraData } = extraData;
 
   if (isOnline && FIRESTORE_ENABLED) {
     try {
-      await setDoc(doc(db, storeCollectionPath, docId), updateData, { merge: true });
-      console.log(`✅ 原子更新 ${collectionName}/${docId}.${fieldName}: ${amount}`);
-      return { success: true };
+      await withWeakNetworkTimeout(
+        () => applyIdempotentIncrement(storeCollectionPath, docId, fieldName, amount, incrementExtraData, operationId),
+        `increment:${collectionName}/${docId}.${fieldName}`
+      );
+      applyIncrementToLocalStorage(collectionName, docId, fieldName, amount, incrementExtraData);
+      return { success: true, operationId };
     } catch (error) {
-      console.error(`❌ 原子更新失败: ${collectionName}/${docId}.${fieldName}`, error);
+      if (!isWeakNetworkTimeout(error)) {
+        console.error(`Inventory increment failed: ${collectionName}/${docId}.${fieldName}`, error);
+      }
     }
   }
 
-  const existing = getFromLocalStorage(collectionName);
-  const updated = existing.map(item => {
-    if (item.id !== docId) return item;
-    return {
-      ...item,
-      ...extraData,
-      [fieldName]: (Number(item[fieldName]) || 0) + amount,
-    };
-  });
-  const localStorageKey = getLocalStorageKey(collectionName);
-  if (!localStorageKey) {
+  if (!applyIncrementToLocalStorage(collectionName, docId, fieldName, amount, incrementExtraData)) {
     return { success: false, error: 'missing-store-id' };
   }
-  localStorage.setItem(localStorageKey, JSON.stringify(updated));
 
   savePendingChange({
     id: docId,
     collection: collectionName,
     operation: 'update',
     data: {
-      ...extraData,
-      __increment: { fieldName, amount },
+      ...incrementExtraData,
+      __increment: { fieldName, amount, operationId },
     },
     timestamp: Date.now(),
   });
-  return { success: false };
+  return { success: false, weakNetworkFallback: true, operationId };
+};
+
+export const getStableStockDeductionOperationId = (orderId: string) => `stock-${orderId}`;
+
+type FridgeTransferDirection = 'warehouse_to_fridge' | 'fridge_to_warehouse';
+
+const formatManaguaDate = (timestamp: number) => {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Managua',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(timestamp));
+};
+
+export const smartTransferFridgeStock = async ({
+  itemId,
+  itemName,
+  unit,
+  fridgeId,
+  fridgeName,
+  quantity,
+  direction,
+  sortOrder,
+  operationId = `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  allowPendingFallback = true,
+}: {
+  itemId: string;
+  itemName?: string;
+  unit?: string;
+  fridgeId: string;
+  fridgeName?: string;
+  quantity: number;
+  direction: FridgeTransferDirection;
+  sortOrder?: number;
+  operationId?: string;
+  allowPendingFallback?: boolean;
+}) => {
+  const storeId = getCurrentStoreId();
+  if (!storeId) {
+    return { success: false, error: 'missing-store-id' };
+  }
+  if (!FIRESTORE_ENABLED) {
+    return { success: false, error: 'firestore-disabled', operationId };
+  }
+  if (!itemId || !fridgeId || !Number.isFinite(quantity) || quantity <= 0) {
+    return { success: false, error: 'invalid-transfer-request', operationId };
+  }
+
+  const now = Date.now();
+  const basePath = `stores/${storeId}`;
+  const fridgeInventoryId = `${fridgeId}-${itemId}`;
+  const transferRecordId = operationId;
+
+  const buildFridgeTransferStockRecords = ({
+    transferRecord,
+    beforeWarehouseStock,
+    afterWarehouseStock,
+    beforeFridgeStock,
+    afterFridgeStock,
+    pendingCloudSync = false,
+  }: {
+    transferRecord: any;
+    beforeWarehouseStock: number;
+    afterWarehouseStock: number;
+    beforeFridgeStock: number;
+    afterFridgeStock: number;
+    pendingCloudSync?: boolean;
+  }) => {
+    const directionText = direction === 'warehouse_to_fridge' ? '仓库调拨到冰箱' : '冰箱退回仓库';
+    const warehouseSignedQuantity = direction === 'warehouse_to_fridge' ? -quantity : quantity;
+    const fridgeSignedQuantity = direction === 'warehouse_to_fridge' ? quantity : -quantity;
+    const commonRecord = {
+      operationId,
+      storeId,
+      itemId,
+      itemName: transferRecord.itemName,
+      unit: transferRecord.unit,
+      type: 'transfer',
+      quantity,
+      direction,
+      reason: directionText,
+      source: 'fridge_transfer',
+      sourceId: operationId,
+      fridgeId,
+      fridgeName: transferRecord.fridgeName,
+      date: transferRecord.date,
+      createdAtMs: transferRecord.createdAtMs,
+      lastModified: transferRecord.createdAtMs,
+      operator: getCurrentOperatorName(),
+      ...(pendingCloudSync ? { pendingCloudSync: true } : {}),
+    };
+
+    return [
+      {
+        ...commonRecord,
+        id: `${operationId}-warehouse`,
+        locationType: 'warehouse',
+        signedQuantity: warehouseSignedQuantity,
+        beforeStock: beforeWarehouseStock,
+        afterStock: afterWarehouseStock,
+      },
+      {
+        ...commonRecord,
+        id: `${operationId}-fridge`,
+        locationType: 'fridge',
+        signedQuantity: fridgeSignedQuantity,
+        beforeStock: beforeFridgeStock,
+        afterStock: afterFridgeStock,
+      },
+    ];
+  };
+
+  const fallbackToPendingFridgeTransfer = () => {
+    const inventoryRecords = getFromLocalStorage('inventory_items');
+    const fridgeRecords = getFromLocalStorage('fridge_inventory');
+    const inventoryData = inventoryRecords.find(record => record.id === itemId) || {};
+    const fridgeData = fridgeRecords.find(record => record.id === fridgeInventoryId) || {};
+    const warehouseStock = Number(inventoryData.currentStock) || 0;
+    const fridgeStock = Number(fridgeData.quantity) || 0;
+
+    if (direction === 'warehouse_to_fridge' && warehouseStock < quantity) {
+      return { success: false, error: 'insufficient-warehouse-stock', operationId };
+    }
+    if (direction === 'fridge_to_warehouse' && fridgeStock < quantity) {
+      return { success: false, error: 'insufficient-fridge-stock', operationId };
+    }
+
+    const afterWarehouseStock = direction === 'warehouse_to_fridge'
+      ? warehouseStock - quantity
+      : warehouseStock + quantity;
+    const afterFridgeStock = direction === 'warehouse_to_fridge'
+      ? fridgeStock + quantity
+      : fridgeStock - quantity;
+    const transferRecord = {
+      id: transferRecordId,
+      operationId,
+      storeId,
+      itemId,
+      itemName: itemName || inventoryData.name || fridgeData.itemName || '',
+      unit: unit || inventoryData.unit || fridgeData.unit || '',
+      fridgeId,
+      fridgeName: fridgeName || fridgeData.fridgeName || '',
+      direction,
+      quantity,
+      beforeWarehouseStock: warehouseStock,
+      afterWarehouseStock,
+      beforeFridgeStock: fridgeStock,
+      afterFridgeStock,
+      createdAtMs: now,
+      date: formatManaguaDate(now),
+      source: 'fridge_stocktake_transfer_pending',
+      pendingCloudSync: true,
+    };
+    const stockRecords = buildFridgeTransferStockRecords({
+      transferRecord,
+      beforeWarehouseStock: warehouseStock,
+      afterWarehouseStock,
+      beforeFridgeStock: fridgeStock,
+      afterFridgeStock,
+      pendingCloudSync: true,
+    });
+
+    updateInLocalStorage('inventory_items', itemId, {
+      currentStock: afterWarehouseStock,
+      lastModified: now,
+      lastUpdated: new Date(now),
+      pendingCloudSync: true,
+    });
+    updateInLocalStorage('fridge_inventory', fridgeInventoryId, {
+      id: fridgeInventoryId,
+      fridgeId,
+      itemId,
+      itemName: transferRecord.itemName,
+      unit: transferRecord.unit,
+      quantity: afterFridgeStock,
+      sortOrder,
+      lastModified: now,
+      pendingCloudSync: true,
+    });
+    saveToLocalStorage('stock_transfer_records', transferRecord, transferRecordId);
+    stockRecords.forEach(record => saveToLocalStorage('inventory_stock_records', record, record.id));
+    savePendingChange({
+      id: operationId,
+      collection: 'stock_transfer_records',
+      operation: 'update',
+      data: {
+        ...transferRecord,
+        __fridgeTransfer: {
+          itemId,
+          itemName: transferRecord.itemName,
+          unit: transferRecord.unit,
+          fridgeId,
+          fridgeName: transferRecord.fridgeName,
+          quantity,
+          direction,
+          sortOrder,
+        },
+      },
+      timestamp: now,
+    });
+    schedulePendingSyncRetry();
+
+    return {
+      success: true,
+      pending: true,
+      operationId,
+      warehouseStock: afterWarehouseStock,
+      fridgeStock: afterFridgeStock,
+      record: transferRecord,
+    };
+  };
+
+  try {
+    const result = await withWeakNetworkTimeout(() => runTransaction(db, async transaction => {
+      const inventoryRef = doc(db, `${basePath}/inventory_items`, itemId);
+      const fridgeRef = doc(db, `${basePath}/fridge_inventory`, fridgeInventoryId);
+      const transferRef = doc(db, `${basePath}/stock_transfer_records`, operationId);
+      const warehouseStockRecordRef = doc(db, `${basePath}/inventory_stock_records`, `${operationId}-warehouse`);
+      const fridgeStockRecordRef = doc(db, `${basePath}/inventory_stock_records`, `${operationId}-fridge`);
+
+      const [inventorySnapshot, fridgeSnapshot, transferSnapshot] = await Promise.all([
+        transaction.get(inventoryRef),
+        transaction.get(fridgeRef),
+        transaction.get(transferRef),
+      ]);
+
+      if (transferSnapshot.exists()) {
+        const existingRecord = transferSnapshot.data();
+        return {
+          success: true,
+          duplicate: true,
+          operationId,
+          warehouseStock: Number(existingRecord.afterWarehouseStock ?? existingRecord.warehouseStock ?? 0),
+          fridgeStock: Number(existingRecord.afterFridgeStock ?? existingRecord.fridgeStock ?? 0),
+          record: convertTimestampsToLocalTime({ id: transferRecordId, ...existingRecord }),
+        };
+      }
+
+      const inventoryData = inventorySnapshot.exists() ? inventorySnapshot.data() : {};
+      const fridgeData = fridgeSnapshot.exists() ? fridgeSnapshot.data() : {};
+      const warehouseStock = Number(inventoryData.currentStock) || 0;
+      const fridgeStock = Number(fridgeData.quantity) || 0;
+
+      if (direction === 'warehouse_to_fridge' && warehouseStock < quantity) {
+        throw new Error(`insufficient-warehouse-stock:${warehouseStock}`);
+      }
+      if (direction === 'fridge_to_warehouse' && fridgeStock < quantity) {
+        throw new Error(`insufficient-fridge-stock:${fridgeStock}`);
+      }
+
+      const afterWarehouseStock = direction === 'warehouse_to_fridge'
+        ? warehouseStock - quantity
+        : warehouseStock + quantity;
+      const afterFridgeStock = direction === 'warehouse_to_fridge'
+        ? fridgeStock + quantity
+        : fridgeStock - quantity;
+
+      const transferRecord = {
+        id: transferRecordId,
+        operationId,
+        storeId,
+        itemId,
+        itemName: itemName || inventoryData.name || fridgeData.itemName || '',
+        unit: unit || inventoryData.unit || fridgeData.unit || '',
+        fridgeId,
+        fridgeName: fridgeName || fridgeData.fridgeName || '',
+        direction,
+        quantity,
+        beforeWarehouseStock: warehouseStock,
+        afterWarehouseStock,
+        beforeFridgeStock: fridgeStock,
+        afterFridgeStock,
+        createdAtMs: now,
+        date: formatManaguaDate(now),
+        source: 'fridge_stocktake_transfer',
+      };
+      const stockRecords = buildFridgeTransferStockRecords({
+        transferRecord,
+        beforeWarehouseStock: warehouseStock,
+        afterWarehouseStock,
+        beforeFridgeStock: fridgeStock,
+        afterFridgeStock,
+      });
+
+      transaction.set(inventoryRef, toFirestoreData({
+        id: itemId,
+        currentStock: afterWarehouseStock,
+        lastModified: now,
+        lastUpdated: new Date(now),
+      }), { merge: true });
+      transaction.set(fridgeRef, toFirestoreData({
+        id: fridgeInventoryId,
+        fridgeId,
+        itemId,
+        itemName: transferRecord.itemName,
+        unit: transferRecord.unit,
+        quantity: afterFridgeStock,
+        sortOrder,
+        lastModified: now,
+      }, !fridgeSnapshot.exists()), { merge: true });
+      transaction.set(transferRef, toFirestoreData(transferRecord, true), { merge: false });
+      transaction.set(warehouseStockRecordRef, toFirestoreData(stockRecords[0], true), { merge: false });
+      transaction.set(fridgeStockRecordRef, toFirestoreData(stockRecords[1], true), { merge: false });
+
+      return {
+        success: true,
+        operationId,
+        warehouseStock: afterWarehouseStock,
+        fridgeStock: afterFridgeStock,
+        record: transferRecord,
+        stockRecords,
+      };
+    }), `fridge-transfer:${fridgeId}/${itemId}`, FRIDGE_TRANSFER_TIMEOUT_MS);
+
+    isOnline = true;
+
+    updateInLocalStorage('inventory_items', itemId, {
+      currentStock: result.warehouseStock,
+      lastModified: now,
+      lastUpdated: new Date(now),
+    });
+    updateInLocalStorage('fridge_inventory', fridgeInventoryId, {
+      id: fridgeInventoryId,
+      fridgeId,
+      itemId,
+      itemName,
+      unit,
+      quantity: result.fridgeStock,
+      sortOrder,
+      lastModified: now,
+    });
+    saveToLocalStorage('stock_transfer_records', result.record, transferRecordId);
+    result.stockRecords?.forEach((record: any) => saveToLocalStorage('inventory_stock_records', record, record.id));
+
+    return result;
+  } catch (error: any) {
+    const message = String(error?.message || error || '');
+    if (message.includes('insufficient-warehouse-stock')) {
+      return { success: false, error: 'insufficient-warehouse-stock', operationId };
+    }
+    if (message.includes('insufficient-fridge-stock')) {
+      return { success: false, error: 'insufficient-fridge-stock', operationId };
+    }
+    if (message.includes('permission-denied') || error?.code === 'permission-denied') {
+      return { success: false, error: 'permission-denied', operationId };
+    }
+    if (isWeakNetworkTimeout(error)) {
+      if (allowPendingFallback) {
+        return fallbackToPendingFridgeTransfer();
+      }
+      return { success: false, error: 'fridge-transfer-unconfirmed', operationId };
+    }
+    return { success: false, error, operationId };
+  }
+};
+
+export const smartClaimOrderStockDeduction = async (
+  collectionName: string,
+  docId: string,
+  claimData: Record<string, any> = {}
+) => {
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return { success: false, error: 'missing-store-id' };
+  }
+
+  const now = Date.now();
+  const operationId = claimData.stockDeductionOperationId || getStableStockDeductionOperationId(docId);
+
+  if (!isOnline || !FIRESTORE_ENABLED) {
+    return {
+      success: true,
+      claimed: true,
+      offline: true,
+      operationId,
+    };
+  }
+
+  try {
+    return await withWeakNetworkTimeout(() => runTransaction(db, async transaction => {
+      const docRef = doc(db, storeCollectionPath, docId);
+      const snapshot = await transaction.get(docRef);
+      const currentData = snapshot.exists() ? snapshot.data() : {};
+
+      if (currentData.stockDeducted) {
+        return {
+          success: true,
+          alreadyDeducted: true,
+          operationId: currentData.stockDeductionOperationId || operationId,
+          data: convertTimestampsToLocalTime({ id: docId, ...currentData }),
+        };
+      }
+
+      const claimedAt = Number(currentData.stockDeductionClaimedAt || 0);
+      const currentOperationId = currentData.stockDeductionOperationId;
+      const isSameOperation = Boolean(currentOperationId && currentOperationId === operationId);
+      const claimIsFresh = Boolean(
+        currentData.stockDeductionInProgress &&
+        !isSameOperation &&
+        claimedAt &&
+        now - claimedAt < 120000
+      );
+      if (claimIsFresh) {
+        return {
+          success: false,
+          inProgress: true,
+          operationId: currentData.stockDeductionOperationId || operationId,
+          data: convertTimestampsToLocalTime({ id: docId, ...currentData }),
+        };
+      }
+
+      transaction.set(docRef, {
+        ...toFirestoreData({
+          ...claimData,
+          id: docId,
+          stockDeductionInProgress: true,
+          stockDeductionClaimedAt: now,
+          stockDeductionOperationId: operationId,
+          lastModified: now,
+        }),
+        id: docId,
+      }, { merge: true });
+
+      return {
+        success: true,
+        claimed: true,
+        operationId,
+      };
+    }), `claim-stock:${collectionName}/${docId}`);
+  } catch (error) {
+    if (isWeakNetworkTimeout(error)) {
+      return {
+        success: true,
+        claimed: true,
+        offline: true,
+        weakNetworkFallback: true,
+        operationId,
+      };
+    }
+    console.error('Smart sync operation failed:', error);
+    return {
+      success: false,
+      error,
+    };
+  }
 };
 
 /**
- * 智能获取文档列表
- * - 在线：从Firestore读取（实时监听）
- * - 离线：从localStorage读取
  */
 export const smartGetDocuments = async (collectionName: string, forceServer = false) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
@@ -568,46 +1375,39 @@ export const smartGetDocuments = async (collectionName: string, forceServer = fa
     try {
       const collectionRef = collection(db, storeCollectionPath);
       const querySnapshot = forceServer
-        ? await getDocsFromServer(collectionRef)
+        ? await withWeakNetworkTimeout(() => getDocsFromServer(collectionRef), `read:${collectionName}`)
         : await getDocs(collectionRef);
       const docs = querySnapshot.docs.map(doc => {
         const rawData = {
           id: doc.id,
           ...doc.data(),
         };
-        // 🔥 转换 Timestamp 为本地时间字符串
-        return convertTimestampsToLocalTime(rawData);
+        return normalizeRecordForCollection(collectionName, convertTimestampsToLocalTime(rawData));
       });
 
-      // ⚠️ 不再自动覆盖localStorage，避免云端脏数据污染本地
       // localStorage.setItem(collectionName, JSON.stringify(docs));
-      console.log(`✅ 从云端获取: ${collectionName} (${docs.length}条)`);
 
       return excludeDeletedRecords(docs);
     } catch (error) {
-      console.error('❌ Firestore读取失败，从本地读取', error);
+      if (!isExpectedOfflineReadError(error)) {
+        console.error('Firestore read failed, reading local cache:', error);
+      }
       return excludeDeletedRecords(getFromLocalStorage(collectionName));
     }
   } else {
-    // 离线模式
-    console.log('⚠️ 离线模式，从本地读取');
     return excludeDeletedRecords(getFromLocalStorage(collectionName));
   }
 };
 
 /**
- * 实时监听集合
- * 🔥 使用 Firestore onSnapshot 实时监听数据变化
  */
 export const smartSubscribeToCollection = (
   collectionName: string,
   callback: (data: any[]) => void
 ) => {
-  console.log(`🔔 开始实时订阅: ${collectionName}`);
   let lastSerialized: string | null = null;
 
   if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED) {
-    console.warn(`⚠️ Firestore未初始化，使用本地数据: ${collectionName}`);
     const localData = getFromLocalStorage(collectionName);
     callback(localData);
     return () => {};
@@ -623,19 +1423,17 @@ export const smartSubscribeToCollection = (
     } else if (storeId) {
       collectionRef = collection(db, 'stores', storeId, collectionName);
     } else {
-      console.warn(`⚠️ 没有storeId，使用本地数据: ${collectionName}`);
       const localData = getFromLocalStorage(collectionName);
       callback(localData);
       return () => {};
     }
 
-    // 🔥 实时监听 Firestore 变化
     const unsubscribe = onSnapshot(
       collectionRef,
       (snapshot) => {
         const data: any[] = [];
         snapshot.forEach((doc) => {
-          data.push(convertTimestampsToLocalTime({ id: doc.id, ...doc.data() }));
+          data.push(normalizeRecordForCollection(collectionName, convertTimestampsToLocalTime({ id: doc.id, ...doc.data() })));
         });
 
         const serialized = JSON.stringify(data);
@@ -644,9 +1442,7 @@ export const smartSubscribeToCollection = (
         }
         lastSerialized = serialized;
 
-        console.log(`📡 Firestore实时更新 ${collectionName}: ${data.length}条`);
 
-        // 🔥 同步到 localStorage（分店专属key），但不能让旧云端快照覆盖本地新编辑
         if (isCloudAuthoritativeSubscription(collectionName)) {
           const activeData = excludeDeletedRecords(data);
           const localStorageKey = getLocalStorageKey(collectionName);
@@ -684,15 +1480,13 @@ export const smartSubscribeToCollection = (
           callback(mergedData);
           return;
         } catch (error) {
-          console.error('保存localStorage失败:', error);
+          console.error('Smart sync operation failed:', error);
         }
 
-        // 通知回调
         callback(data);
       },
       (error) => {
-        console.error(`❌ 订阅 ${collectionName} 失败:`, error);
-        // 出错时使用本地数据
+        console.error('Subscription failed:', error);
         const localData = getFromLocalStorage(collectionName);
         callback(localData);
       }
@@ -700,20 +1494,132 @@ export const smartSubscribeToCollection = (
 
     return unsubscribe;
   } catch (error) {
-    console.error(`❌ 设置订阅失败:`, error);
+    console.error('Subscription setup failed:', error);
     const localData = getFromLocalStorage(collectionName);
     callback(localData);
     return () => {};
   }
 };
 
-// ==================== localStorage辅助函数 ====================
+export const smartSubscribeToPosOrdersByDatePrefix = (
+  datePrefix: string,
+  callback: (data: any[]) => void
+) => {
+  let lastSerialized: string | null = null;
+  let fallbackRequested = false;
+
+  const filterLocalOrders = () => {
+    return excludeDeletedRecords(getFromLocalStorage('pos_orders')).filter(order =>
+      String(order?.orderNumber || '').startsWith(datePrefix)
+    );
+  };
+
+  if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED) {
+    callback(filterLocalOrders());
+    return () => {};
+  }
+
+  try {
+    const storeId = dataService.getCurrentStoreId();
+    if (!storeId) {
+      callback(filterLocalOrders());
+      return () => {};
+    }
+
+    const collectionRef = collection(db, 'stores', storeId, 'pos_orders');
+    const orderQuery = query(
+      collectionRef,
+      where('orderNumber', '>=', datePrefix),
+      where('orderNumber', '<=', `${datePrefix}\uf8ff`),
+      orderBy('orderNumber', 'asc')
+    );
+
+    const loadRecentPosOrdersFallback = async () => {
+      if (fallbackRequested) return;
+      fallbackRequested = true;
+      try {
+        const recentQuery = query(collectionRef, orderBy('orderNumber', 'desc'), limit(80));
+        const snapshot = await getDocsFromServer(recentQuery);
+        const recentData: any[] = [];
+        snapshot.forEach((doc: any) => {
+          recentData.push(normalizeRecordForCollection('pos_orders', convertTimestampsToLocalTime({ id: doc.id, ...doc.data() })));
+        });
+        const activeRecent = excludeDeletedRecords(recentData);
+        if (activeRecent.length === 0) return;
+
+        const latestPrefix = String(activeRecent[0]?.orderNumber || '').slice(0, 4);
+        const fallbackData = activeRecent
+          .filter(order => String(order?.orderNumber || '').startsWith(latestPrefix))
+          .reverse();
+        if (fallbackData.length === 0) return;
+
+        replaceLocalPosOrdersForDatePrefix(latestPrefix, fallbackData);
+        callback(fallbackData);
+      } catch (error) {
+        console.warn('POS recent order fallback failed:', error);
+      }
+    };
+
+    let cancelled = false;
+    const applyOrderSnapshot = (snapshot: any) => {
+      if (cancelled) return;
+      const data: any[] = [];
+      snapshot.forEach((doc: any) => {
+        data.push(normalizeRecordForCollection('pos_orders', convertTimestampsToLocalTime({ id: doc.id, ...doc.data() })));
+      });
+
+      const activeData = excludeDeletedRecords(data);
+      const serialized = JSON.stringify(activeData);
+      if (activeData.length > 0) {
+        replaceLocalPosOrdersForDatePrefix(datePrefix, activeData);
+      } else {
+        console.warn('POS current-day order snapshot is empty; keeping local orders to avoid clearing an active terminal.');
+        loadRecentPosOrdersFallback();
+      }
+      if (serialized === lastSerialized) {
+        callback(activeData);
+        return;
+      }
+      lastSerialized = serialized;
+      callback(activeData);
+    };
+
+    getDocsFromServer(orderQuery)
+      .then(applyOrderSnapshot)
+      .catch(error => {
+        console.warn('POS current-day server refresh failed, keeping realtime/local fallback:', error);
+      });
+
+    const unsubscribe = onSnapshot(
+      orderQuery,
+      (snapshot) => {
+        if (snapshot.metadata.fromCache && navigator.onLine) {
+          return;
+        }
+        applyOrderSnapshot(snapshot);
+      },
+      (error) => {
+        console.error('POS current-day order subscription failed:', error);
+        callback(filterLocalOrders());
+      }
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  } catch (error) {
+    console.error('POS current-day order subscription setup failed:', error);
+    callback(filterLocalOrders());
+    return () => {};
+  }
+};
+
 
 const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
   try {
     const existing = getFromLocalStorage(collectionName);
     const currentItem = existing.find(item => item.id === id);
-    const incomingItem = { id, ...data };
+    const incomingItem = normalizeRecordForCollection(collectionName, { id, ...data });
     if (currentItem && !shouldReplaceLocalRecord(currentItem, incomingItem)) {
       return;
     }
@@ -722,7 +1628,7 @@ const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
     if (!localStorageKey) return;
     localStorage.setItem(localStorageKey, JSON.stringify(updated));
   } catch (error) {
-    console.error('❌ localStorage保存失败', error);
+    console.error('localStorage save failed:', error);
   }
 };
 
@@ -730,7 +1636,7 @@ const updateInLocalStorage = (collectionName: string, id: string, data: any) => 
   try {
     const existing = getFromLocalStorage(collectionName);
     const currentItem = existing.find(item => item.id === id);
-    const incomingItem = { ...currentItem, ...data, id };
+    const incomingItem = normalizeRecordForCollection(collectionName, { ...currentItem, ...data, id });
     const updated = existing.map(item =>
       item.id === id && shouldReplaceLocalRecord(item, incomingItem) ? incomingItem : item
     );
@@ -739,7 +1645,7 @@ const updateInLocalStorage = (collectionName: string, id: string, data: any) => 
     if (!localStorageKey) return;
     localStorage.setItem(localStorageKey, JSON.stringify(next));
   } catch (error) {
-    console.error('❌ localStorage更新失败', error);
+    console.error('localStorage update failed:', error);
   }
 };
 
@@ -751,7 +1657,7 @@ const deleteFromLocalStorage = (collectionName: string, id: string) => {
     if (!localStorageKey) return;
     localStorage.setItem(localStorageKey, JSON.stringify(updated));
   } catch (error) {
-    console.error('❌ localStorage删除失败', error);
+    console.error('localStorage write failed:', error);
   }
 };
 
@@ -770,7 +1676,6 @@ const fallbackToLocalAdd = (collectionName: string, data: any) => {
   const id = data.id || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   saveToLocalStorage(collectionName, { ...data, id }, id);
 
-  // 加入待同步队列
   savePendingChange({
     id,
     collection: collectionName,
@@ -792,6 +1697,7 @@ const fallbackToLocalUpdate = (collectionName: string, id: string, data: any) =>
     data,
     timestamp: Date.now(),
   });
+  schedulePendingSyncRetry();
 };
 
 const fallbackToDelete = (collectionName: string, id: string) => {
@@ -805,30 +1711,126 @@ const fallbackToDelete = (collectionName: string, id: string) => {
   });
 };
 
-// ==================== 同步待处理更改 ====================
+const syncPendingPosOrderUpdate = async (change: PendingChange, collectionPath: string) => {
+  let conflictToSave: Record<string, any> | null = null;
+  let skippedBecauseRemoteIsTerminal = false;
+
+  const result = await runTransaction(db, async transaction => {
+    const updateDocRef = doc(db, collectionPath, change.id);
+    const snapshot = await transaction.get(updateDocRef);
+    const remoteData = snapshot.exists() ? snapshot.data() : {};
+    const localData = change.data || {};
+    const localTerminal = isTerminalPosOrderRecord(localData);
+    const remoteTerminal = isTerminalPosOrderRecord(remoteData);
+
+    if (remoteTerminal && !localTerminal) {
+      skippedBecauseRemoteIsTerminal = true;
+      return { success: true, skipped: true, reason: 'remote-terminal-order' };
+    }
+
+    const localOperationId = localData.stockDeductionOperationId;
+    const remoteOperationId = remoteData.stockDeductionOperationId;
+    const hasStockConflict = Boolean(
+      remoteData.stockDeducted &&
+      localData.stockDeducted &&
+      remoteOperationId &&
+      localOperationId &&
+      remoteOperationId !== localOperationId
+    );
+
+    if (hasStockConflict) {
+      conflictToSave = {
+        collection: change.collection,
+        docId: change.id,
+        type: 'stock-deduction-operation-mismatch',
+        localOperationId,
+        remoteOperationId,
+      };
+      transaction.set(updateDocRef, {
+        syncConflict: true,
+        syncConflictType: 'stock-deduction-operation-mismatch',
+        syncConflictAt: Date.now(),
+        localPendingStockDeductionOperationId: localOperationId,
+        remoteStockDeductionOperationId: remoteOperationId,
+      }, { merge: true });
+      return { success: false, conflict: true };
+    }
+
+    transaction.set(updateDocRef, toFirestoreData(normalizeRecordForCollection(change.collection, { ...localData, id: change.id })), { merge: true });
+    return { success: true };
+  });
+
+  if (skippedBecauseRemoteIsTerminal) {
+    return result;
+  }
+
+  if (conflictToSave) {
+    saveSyncConflict({
+      ...(conflictToSave as Record<string, any>),
+      id: `pos_order_${change.id}_${Date.now()}`,
+    });
+  }
+
+  return result;
+};
+
+const getOrderIdFromStockDeductionIncrementId = (operationId: string): string | null => {
+  const match = String(operationId || '').match(/^stock-(order-\d+-[a-z0-9]+)/i);
+  return match?.[1] || null;
+};
+
+const shouldSkipPendingStockIncrement = async (
+  change: PendingChange,
+  collectionPath: string,
+  operationId: string
+): Promise<boolean> => {
+  const collectionKey = getCollectionKey(change.collection);
+  if (collectionKey !== 'inventory_items' && collectionKey !== 'fridge_inventory') {
+    return false;
+  }
+
+  const orderId = getOrderIdFromStockDeductionIncrementId(operationId);
+  if (!orderId) {
+    return false;
+  }
+
+  const posOrdersPath = getStoreCollectionPath('pos_orders');
+  if (posOrdersPath) {
+    const orderSnapshot = await getDoc(doc(db, posOrdersPath, orderId));
+    const remoteOrder = orderSnapshot.exists() ? orderSnapshot.data() : null;
+    if (remoteOrder && remoteOrder.stockDeducted) {
+      return true;
+    }
+  }
+
+  const targetSnapshot = await getDoc(doc(db, collectionPath, change.id));
+  const targetData = targetSnapshot.exists() ? targetSnapshot.data() : {};
+  const appliedOperationIds = Array.isArray(targetData.appliedIncrementOperationIds)
+    ? targetData.appliedIncrementOperationIds
+    : [];
+  return appliedOperationIds.some(appliedId =>
+    appliedId !== operationId &&
+    getOrderIdFromStockDeductionIncrementId(appliedId) === orderId
+  );
+};
+
 
 /**
- * 同步所有待处理的更改到Firestore
  */
 export const syncPendingChanges = async () => {
   const changes = getPendingChanges();
 
   if (changes.length === 0) {
-    console.log('✅ 没有待同步的更改');
     return;
   }
 
-  console.log(`🔄 开始同步 ${changes.length} 条待处理更改...`);
-
   let successCount = 0;
-  let failCount = 0;
   const failedChanges: PendingChange[] = [];
 
   for (const change of changes) {
       try {
         const collectionPath = getStoreCollectionPath(change.collection);
         if (!collectionPath) {
-          failCount++;
           failedChanges.push(change);
           continue;
         }
@@ -837,15 +1839,27 @@ export const syncPendingChanges = async () => {
           await setDoc(doc(db, collectionPath, change.id), toFirestoreData({ ...change.data, id: change.id }, true), { merge: true });
           break;
         case 'update':
-          const updateDocRef = doc(db, collectionPath, change.id);
-          if (change.data?.__increment) {
+          if (change.data?.__fridgeTransfer) {
+            const result = await smartTransferFridgeStock({
+              ...change.data.__fridgeTransfer,
+              operationId: change.id,
+              allowPendingFallback: false,
+            });
+            if (!result.success) {
+              throw new Error(`pending-fridge-transfer-failed:${change.id}:${String((result as any).error || 'unknown')}`);
+            }
+          } else if (change.collection === 'pos_orders') {
+            await syncPendingPosOrderUpdate(change, collectionPath);
+          } else if (change.data?.__increment) {
             const { fieldName, amount } = change.data.__increment;
+            const operationId = change.data.__increment.operationId || `pending-${change.collection}-${change.id}-${change.timestamp}`;
             const { __increment, ...rest } = change.data;
-            await setDoc(updateDocRef, {
-              ...toFirestoreData({ ...rest, id: change.id }),
-              [fieldName]: increment(amount),
-            }, { merge: true });
+            if (await shouldSkipPendingStockIncrement(change, collectionPath, operationId)) {
+              break;
+            }
+            await applyIdempotentIncrement(collectionPath, change.id, fieldName, amount, rest, operationId);
           } else {
+            const updateDocRef = doc(db, collectionPath, change.id);
             await setDoc(updateDocRef, toFirestoreData({ ...change.data, id: change.id }), { merge: true });
           }
           break;
@@ -855,22 +1869,17 @@ export const syncPendingChanges = async () => {
           break;
       }
       successCount++;
-      console.log(`✅ 同步成功: ${change.operation} ${change.collection}/${change.id}`);
     } catch (error) {
-      failCount++;
       failedChanges.push(change);
-      console.error(`❌ 同步失败: ${change.operation} ${change.collection}/${change.id}`, error);
+      console.error('Smart sync operation failed:', error);
     }
   }
 
-  // 清除已成功同步的记录
   if (successCount > 0) {
     setPendingChanges(failedChanges);
-    console.log(`✅ 同步完成: 成功${successCount}条, 失败${failCount}条`);
   }
 };
 
-// ==================== 分店数据隔离 ====================
 
 export const smartGetStoreDocuments = async (collectionName: string, storeId: string) => {
   if (isOnline) {
@@ -882,11 +1891,10 @@ export const smartGetStoreDocuments = async (collectionName: string, storeId: st
           id: doc.id,
           ...doc.data(),
         };
-        // 🔥 转换 Timestamp 为本地时间字符串
         return convertTimestampsToLocalTime(rawData);
       });
     } catch (error) {
-      console.error('❌ Firestore查询失败', error);
+      console.error('Firestore store query failed:', error);
       return getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
     }
   } else {
@@ -918,24 +1926,20 @@ export const smartSubscribeToStoreCollection = (
           id: doc.id,
           ...doc.data(),
         };
-        // 🔥 转换 Timestamp 为本地时间字符串
         return convertTimestampsToLocalTime(rawData);
       });
 
-      // 缓存到localStorage
-      localStorage.setItem(`${collectionName}_${storeId}`, JSON.stringify(data));
+      localStorage.setItem(`_$storeId`, JSON.stringify(data));
       callback(data);
     }, (error) => {
-      console.error('❌ 监听失败', error);
+      console.error('Store subscription failed:', error);
       const localData = getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
       callback(localData);
     });
   } catch (error) {
-    console.error('❌ 设置监听失败', error);
+    console.error('Store data query failed:', error);
     const localData = getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
     callback(localData);
     return () => {};
   }
 };
-
-

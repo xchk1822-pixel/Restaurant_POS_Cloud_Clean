@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
@@ -25,6 +25,8 @@ const WarehouseStocktake: React.FC = () => {
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isStocktakeSubmitting, setIsStocktakeSubmitting] = useState(false);
+  const isStocktakeSubmittingRef = useRef(false);
   const inventoryCategoryStorageKey = dataService.getStoreKey('inventory_categories');
   
   // 库存分类（从 localStorage 加载）
@@ -173,20 +175,27 @@ const WarehouseStocktake: React.FC = () => {
       }
     }
 
-    const now = Date.now();
-    const updatedItems = filteredItems
-      .filter(item => actualQuantities[item.id] !== undefined)
-      .map(item => ({
-        ...item,
-        currentStock: actualQuantities[item.id],
-        lastUpdated: new Date(),
-        lastModified: now
-      }));
+    if (isStocktakeSubmittingRef.current) {
+      return;
+    }
 
-    await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)));
+    isStocktakeSubmittingRef.current = true;
+    setIsStocktakeSubmitting(true);
 
-    // 保存盘点历史
     try {
+      const now = Date.now();
+      const updatedItems = filteredItems
+        .filter(item => actualQuantities[item.id] !== undefined)
+        .map(item => ({
+          ...item,
+          currentStock: actualQuantities[item.id],
+          lastUpdated: new Date(),
+          lastModified: now
+        }));
+
+      await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)));
+
+      // 保存盘点历史
       const saved = localStorage.getItem(stocktakeHistoryStorageKey);
       const history = saved ? JSON.parse(saved) : [];
       const stocktakeRecord = {
@@ -210,6 +219,33 @@ const WarehouseStocktake: React.FC = () => {
         totalDiscrepancies: discrepancies.length
       };
       await smartAddDocument('warehouse_stocktake_history', stocktakeRecord);
+      await Promise.all(
+        stocktakeRecord.items
+          .filter((record: any) => record.difference !== 0)
+          .map((item: any) => {
+            const record = {
+              id: `stock-record-${stocktakeRecord.id}-${item.itemId}`,
+              itemId: item.itemId,
+              itemName: item.itemName,
+              type: 'adjust',
+              quantity: Math.abs(item.difference),
+              signedQuantity: item.difference,
+              reason: 'warehouse stocktake',
+              source: 'warehouse_stocktake',
+              sourceId: stocktakeRecord.id,
+              locationType: 'warehouse',
+              beforeStock: item.systemStock,
+              afterStock: item.actualStock,
+              unit: item.unit,
+              date: stocktakeRecord.createdAt,
+              createdAt: stocktakeRecord.createdAt,
+              createdAtMs: now,
+              lastModified: now,
+              operator: 'system'
+            };
+            return smartAddDocument('inventory_stock_records', record);
+          })
+      );
 
       // 更新库存
       setInventoryItems(items => {
@@ -222,13 +258,15 @@ const WarehouseStocktake: React.FC = () => {
         });
       });
       cacheStocktakeHistory([stocktakeRecord, ...history]);
+
+      alert('盘点完成！');
     } catch (error) {
       console.error('保存盘点历史失败:', error);
       alert('保存盘点结果失败，请检查网络后重试');
-      return;
+    } finally {
+      isStocktakeSubmittingRef.current = false;
+      setIsStocktakeSubmitting(false);
     }
-
-    alert('盘点完成！');
   };
 
   // 导出CSV
@@ -382,19 +420,21 @@ const WarehouseStocktake: React.FC = () => {
         </div>
         <button
           onClick={completeStocktake}
+          disabled={isStocktakeSubmitting}
           style={{
             padding: '0.5rem 1.2rem',
-            backgroundColor: '#10b981',
+            backgroundColor: isStocktakeSubmitting ? '#9ca3af' : '#10b981',
             color: 'white',
             border: 'none',
             borderRadius: '0.375rem',
-            cursor: 'pointer',
+            cursor: isStocktakeSubmitting ? 'not-allowed' : 'pointer',
             fontSize: '0.9rem',
             fontWeight: '600',
-            whiteSpace: 'nowrap'
+            whiteSpace: 'nowrap',
+            opacity: isStocktakeSubmitting ? 0.75 : 1
           }}
         >
-          ✅ 完成盘点
+          {isStocktakeSubmitting ? '处理中...' : '✅ 完成盘点'}
         </button>
       </div>
 
@@ -519,16 +559,16 @@ const WarehouseStocktake: React.FC = () => {
               backgroundColor: 'white',
               borderRadius: '0.5rem',
               padding: '2rem',
-              width: '90vw',
-              maxWidth: '1000px',
-              height: '80vh',
+              width: '96vw',
+              maxWidth: '1320px',
+              height: '90vh',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden'
             }} id="warehouse-stocktake-print" className="print-container">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.65rem', flexWrap: 'wrap' }}>
                 <h3 style={{ margin: 0 }}>📋 今日盘点汇总</h3>
-                <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.75rem' }}>
+                <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <input
                     type="date"
                     value={selectedHistoryDate}
@@ -585,7 +625,7 @@ const WarehouseStocktake: React.FC = () => {
                 </div>
               </div>
 
-              <div style={{ flex: 1, overflowY: 'auto', maxHeight: 'calc(80vh - 120px)' }}>
+              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: '0.25rem' }}>
                 {(() => {
                   const filteredHistory = currentHistory.filter((record: any) => {
                     const recordDate = getStocktakeRecordDateKey(record);
@@ -602,7 +642,7 @@ const WarehouseStocktake: React.FC = () => {
                   }
 
                   return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                       {filteredHistory.map((record: any) => {
                         return (
                           <div key={record.id} style={{
@@ -611,7 +651,7 @@ const WarehouseStocktake: React.FC = () => {
                             overflow: 'hidden'
                           }}>
                             <div style={{
-                              padding: '1rem',
+                              padding: '0.55rem 0.75rem',
                               backgroundColor: '#f9fafb',
                               borderBottom: '1px solid #e5e7eb',
                               display: 'flex',
@@ -627,7 +667,7 @@ const WarehouseStocktake: React.FC = () => {
                                 </div>
                               </div>
                               <div style={{
-                                padding: '0.4rem 0.8rem',
+                                padding: '0.25rem 0.6rem',
                                 backgroundColor: record.totalDiscrepancies > 0 ? '#fef3c7' : '#d1fae5',
                                 color: record.totalDiscrepancies > 0 ? '#92400e' : '#065f46',
                                 borderRadius: '0.375rem',
@@ -637,7 +677,7 @@ const WarehouseStocktake: React.FC = () => {
                               </div>
                             </div>
 
-                            <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                            <div style={{ overflowX: 'auto' }}>
                               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                                 <thead style={{ backgroundColor: 'white', position: 'sticky', top: 0 }}>
                                   <tr>

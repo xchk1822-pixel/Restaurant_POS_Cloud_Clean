@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { dataService } from '../services/DataService';
 import { dataManager } from '../services/dataManager';
-import { smartGetDocuments, smartIncrementField, smartSubscribeToCollection, smartUpdateDocument } from '../services/smartSyncService';
+import { smartAddDocument, smartGetDocuments, smartIncrementField, smartSubscribeToPosOrdersByDatePrefix, smartUpdateDocument } from '../services/smartSyncService';
 import { uploadCachedMenuImage } from '../services/menuImageService';
+import { getLocalDateString } from '../utils/localTime';
+import { buildStockDeductionPlan, type StockDeductionRequest } from '../utils/stockDeduction';
 
 // 库存物品接口
 export interface InventoryItem {
@@ -146,6 +148,14 @@ export interface Order {
   cardAmount?: number;
 }
 
+interface StockDeductionSource {
+  operationId?: string;
+  orderId?: string;
+  orderNumber?: string;
+  orderType?: Order['orderType'];
+  completedAt?: Date;
+}
+
 interface AppContextType {
   // 库存
   inventoryItems: InventoryItem[];
@@ -180,13 +190,22 @@ interface AppContextType {
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
 
   // 扣减库存（销售时调用）
-  deductStock: (orderItems: OrderItem[]) => Promise<void>;
+  deductStock: (orderItems: OrderItem[], source?: StockDeductionSource) => Promise<void>;
 
   // 增加库存（采购入库时调用）
   addStock: (itemId: string, quantity: number) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
+
+const getTodayOrderPrefix = (): string => {
+  const today = getLocalDateString();
+  return `${today.slice(5, 7)}${today.slice(8, 10)}`;
+};
+
+const isOrderFromPrefix = (order: Partial<Order>, orderPrefix: string): boolean => {
+  return String(order?.orderNumber || '').startsWith(orderPrefix);
+};
 
 const getActiveStoreId = (): string | null => {
   try {
@@ -201,6 +220,7 @@ const getActiveStoreId = (): string | null => {
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activeStoreId, setActiveStoreId] = useState<string | null>(() => getActiveStoreId());
+  const [currentOrderPrefix, setCurrentOrderPrefix] = useState(() => getTodayOrderPrefix());
 
   // 🔥 监听用户登录，重新加载分店专属数据
   useEffect(() => {
@@ -210,51 +230,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setActiveStoreId(prev => prev === nextStoreId ? prev : nextStoreId);
 
       if (currentUser) {
-        console.log('🔄 检测到用户登录，重新加载分店数据...');
 
         // 重新加载库存数据
         const inventoryData = dataService.getData('inventory_items');
         if (inventoryData.length > 0) {
           setInventoryItems(inventoryData);
-          console.log(`✅ 已重新加载库存数据: ${inventoryData.length} 个物品`);
         }
 
         // 重新加载菜单数据
         const menuData = dataService.getData('menu_items');
         if (menuData.length > 0) {
           setMenuItems(menuData);
-          console.log(`✅ 已重新加载菜单数据: ${menuData.length} 个菜品`);
         }
 
         // 重新加载订单数据
         const ordersData = dataService.getData('pos_orders');
         if (ordersData.length > 0) {
           setOrders(ordersData);
-          console.log(`✅ 已重新加载订单数据: ${ordersData.length} 个订单`);
         }
 
         const purchaseData = dataService.getData('purchase_orders');
         if (purchaseData.length > 0) {
           setPurchaseOrders(purchaseData);
-          console.log(`✅ 已重新加载采购数据: ${purchaseData.length} 个订单`);
         }
 
         const supplierData = dataService.getData('suppliers');
         if (supplierData.length > 0) {
           setSuppliers(supplierData);
-          console.log(`✅ 已重新加载供应商数据: ${supplierData.length} 个供应商`);
         }
 
         const fridgesData = dataService.getData('fridges');
         if (fridgesData.length > 0) {
           setFridges(fridgesData);
-          console.log(`✅ 已重新加载冰箱数据: ${fridgesData.length} 个`);
         }
 
         const fridgeInventoryData = dataService.getData('fridge_inventory');
         if (fridgeInventoryData.length > 0) {
           setFridgeInventory(fridgeInventoryData);
-          console.log(`✅ 已重新加载冰箱库存数据: ${fridgeInventoryData.length} 条`);
         }
       }
     };
@@ -278,6 +290,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentOrderPrefix(prev => {
+        const next = getTodayOrderPrefix();
+        return prev === next ? prev : next;
+      });
+    }, 60000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
   // 🔥 标记是否已经加载过真实数据
   const [, setHasLoadedRealData] = useState(false);
 
@@ -286,7 +309,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // 🔥 使用 dataService 读取数据（支持分店隔离）
       const items = dataService.getData('inventory_items');
       if (items.length > 0) {
-        console.log(`📂 从 DataService 加载库存数据，共 ${items.length} 个物品`);
         setHasLoadedRealData(true); // 标记已加载真实数据
         return items;
       }
@@ -295,7 +317,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // 🔥 只有在没有任何数据时才返回默认值
-    console.log('⚠️ 未找到库存数据，使用默认值（不会自动保存）');
     return [];
   });
 
@@ -305,7 +326,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // 🔥 使用 dataService 读取数据（支持分店隔离）
       const items = dataService.getData('menu_items');
       if (items.length > 0) {
-        console.log(`📂 从 DataService 加载菜单数据，共 ${items.length} 个菜品`);
         setHasLoadedRealData(true);
         return items;
       }
@@ -314,7 +334,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // 🔥 只有在没有任何数据时才返回默认值
-    console.log('⚠️ 未找到菜单数据，使用默认值（不会自动保存）');
     return [];
   });
 
@@ -328,7 +347,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const saved = dataService.getData('purchase_orders');
       if (saved.length > 0) {
-        console.log(`📂 从 DataService 加载采购订单，共 ${saved.length} 个订单`);
         return saved;
       }
     } catch (error) {
@@ -341,7 +359,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const saved = dataService.getData('suppliers');
       if (saved.length > 0) {
-        console.log(`📂 从 DataService 加载供应商数据，共 ${saved.length} 个供应商`);
         return saved;
       }
     } catch (error) {
@@ -356,7 +373,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const saved = dataService.getData('fridges');
       if (saved.length > 0) {
-        console.log(`📂 从 DataService 加载冰箱数据，共 ${saved.length} 个冰箱`);
         return saved;
       }
     } catch (error) {
@@ -372,7 +388,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const saved = dataService.getData('fridge_inventory');
       if (saved.length > 0) {
-        console.log(`📂 从 DataService 加载冰箱库存数据，共 ${saved.length} 条记录`);
         return saved;
       }
     } catch (error) {
@@ -389,7 +404,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // 🔥 使用 dataService 读取数据（支持分店隔离）
       const items = dataService.getData('pos_orders');
       if (items.length > 0) {
-        console.log(`📂 从 DataService 加载订单数据，共 ${items.length} 个订单`);
         return items;
       }
     } catch (error) {
@@ -521,18 +535,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (JSON.stringify(prev) === JSON.stringify(mergedData)) {
             return prev;
           }
-          console.log(`📡 实时同步 ${label}: 云端 ${data.length} 条，合并后 ${mergedData.length} 条`);
           return mergedData;
         });
       }
     };
 
     if (!activeStoreId) {
-      console.log('⚠️ 当前没有分店ID，跳过分店实时订阅');
       return;
     }
 
-    console.log('🔄 为分店重新建立实时订阅:', activeStoreId);
     let cancelled = false;
 
     const loadSnapshotData = async () => {
@@ -563,14 +574,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     loadSnapshotData();
 
+    const todayOrderPrefix = currentOrderPrefix;
     const unsubscribers = [
-      smartSubscribeToCollection('pos_orders', data => applyCloudData(data, setOrders, '订单', { merge: true })),
+      smartSubscribeToPosOrdersByDatePrefix(todayOrderPrefix, data => {
+        if (!data || data.length === 0) {
+          console.warn('AppContext received empty current-day POS order snapshot; preserving local orders.');
+          return;
+        }
+        setOrders(prevOrders => {
+          const nextOrders = [
+            ...prevOrders.filter(order => !isOrderFromPrefix(order, todayOrderPrefix)),
+            ...(data as Order[]),
+          ];
+          if (JSON.stringify(prevOrders) === JSON.stringify(nextOrders)) {
+            return prevOrders;
+          }
+          return nextOrders;
+        });
+      }),
     ];
     return () => {
       cancelled = true;
       unsubscribers.forEach(unsubscribe => unsubscribe());
     };
-  }, [activeStoreId, mergeCloudDataByVersion]);
+  }, [activeStoreId, currentOrderPrefix, mergeCloudDataByVersion]);
 
   // 扣减库存
   const getFridgeDeductionKey = (fridgeId: string, itemId: string) => JSON.stringify([fridgeId, itemId]);
@@ -589,11 +616,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       : [key.slice(0, lastDash), key.slice(lastDash + 1)];
   };
 
-  const deductStock = async (orderItems: OrderItem[]) => {
-    console.log('🔧 AppContext.deductStock 被调用');
-    console.log('📋 orderItems:', orderItems);
-    console.log('📋 menuItems:', menuItems.length, '个菜品');
-    console.log('📋 inventoryItems:', inventoryItems.length, '个库存物品');
+  const deductStock = async (orderItems: OrderItem[], source?: StockDeductionSource) => {
 
     const [cloudMenuItems, cloudInventoryItems, cloudFridgeInventory] = await Promise.all([
       smartGetDocuments('menu_items', true),
@@ -622,42 +645,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // ✅ 先计算所有需要扣减的数量（不立即更新状态）
     const fridgeDeductionsMap: Map<string, number> = new Map(); // key: "fridgeId-itemId", value: deductQty
     const warehouseDeductionsMap: Map<string, number> = new Map(); // key: itemId, value: deductQty
+    const stockDeductionRequests: StockDeductionRequest[] = [];
 
     const planStockDeduction = (stockItem: InventoryItem, requiredQuantity: number) => {
       if (requiredQuantity <= 0) return;
-
-      let remainingQuantity = requiredQuantity;
-      const fridgeRecords = effectiveFridgeInventory
-        .filter(inv => inv.itemId === stockItem.id)
-        .sort((a, b) => String(a.fridgeId).localeCompare(String(b.fridgeId)));
-
-      fridgeRecords.forEach(fridgeRecord => {
-        if (remainingQuantity <= 0) return;
-
-        const mapKey = getFridgeDeductionKey(fridgeRecord.fridgeId, fridgeRecord.itemId);
-        const alreadyPlanned = fridgeDeductionsMap.get(mapKey) || 0;
-        const availableInFridge = Math.max(0, Number(fridgeRecord.quantity || 0) - alreadyPlanned);
-        const deductFromFridge = Math.min(remainingQuantity, availableInFridge);
-
-        if (deductFromFridge <= 0) return;
-
-        remainingQuantity -= deductFromFridge;
-        fridgeDeductionsMap.set(mapKey, alreadyPlanned + deductFromFridge);
-
-        console.log(`  🧊 计划从冰箱 ${fridgeRecord.fridgeId} 扣减 ${deductFromFridge}，冰箱剩余可用 ${availableInFridge - deductFromFridge}，还需 ${remainingQuantity}`);
-      });
-
-      if (remainingQuantity > 0) {
-        const currentWarehouseDeduct = warehouseDeductionsMap.get(stockItem.id) || 0;
-        warehouseDeductionsMap.set(stockItem.id, currentWarehouseDeduct + remainingQuantity);
-        console.log(`  🏪 冰箱不足，差额 ${remainingQuantity} 从仓库扣减`);
-      } else {
-        console.log('  ✅ 本次销售全部从冰箱扣减，仓库不扣');
-      }
+      stockDeductionRequests.push({ itemId: stockItem.id, quantity: requiredQuantity });
     };
 
     orderItems.forEach(orderItem => {
-      console.log('🔍 处理商品:', orderItem.name, 'menuItemId:', orderItem.menuItemId);
       const menuItem = effectiveMenuItems.find(m => m.id === orderItem.menuItemId);
       const ingredients = menuItem?.ingredients || orderItem.ingredients || [];
       const stockItemId = menuItem?.stockItemId || orderItem.stockItemId;
@@ -667,7 +662,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return;
       }
 
-      console.log('📝 菜单项:', menuItem?.name || orderItem.name, 'type:', menuItem?.type || orderItem.type);
 
       // 根据 type 决定扣库存方式（兼容旧数据）
       let deductionType: string = menuItem?.type || orderItem.type || (stockItemId ? 'direct' : 'recipe'); // 默认需要配方
@@ -675,13 +669,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (deductionType === 'dish') deductionType = 'recipe';
       if (deductionType === 'beverage' || deductionType === 'alcohol') deductionType = 'direct';
 
-      console.log('🎯 扣减方式:', deductionType);
 
       if (deductionType === 'recipe' && ingredients.length > 0) {
-        console.log('📝 配方模式，原料数量:', ingredients.length);
         // 配方模式：扣减原料
         ingredients.forEach(ing => {
-          console.log('  - 原料:', ing.itemName, '需要扣减:', ing.quantity * orderItem.quantity, ing.unit || '单位');
           const stockItem = effectiveInventoryItems.find(i => i.id === ing.itemId);
           if (!stockItem) {
             console.warn('  ❌ 未找到库存物品 ID:', ing.itemId);
@@ -698,27 +689,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             // 情况1：配方单位是克，库存单位是KG -> 克转KG：除以1000
             if (ing.unit === '克' && stockItem.unit === 'KG') {
               finalDeductQuantity = deductQuantity / 1000;
-              console.log('  🔄 单位换算:', deductQuantity, '克', '→', finalDeductQuantity, 'KG');
             }
             // 情况2：配方单位是KG，库存单位是克 -> KG转克：乘以1000
             else if (ing.unit === 'KG' && stockItem.unit === '克') {
               finalDeductQuantity = deductQuantity * 1000;
-              console.log('  🔄 单位换算:', deductQuantity, 'KG', '→', finalDeductQuantity, '克');
             }
             // 情况3：使用conversionRate进行通用转换
             else if (stockItem.conversionRate) {
               // 假设配方的unit是采购单位，库存unit是基础单位
               finalDeductQuantity = deductQuantity * stockItem.conversionRate;
-              console.log('  🔄 单位换算(通用):', deductQuantity, ing.unit, '→', finalDeductQuantity, stockItem.unit);
             }
           }
 
-          console.log('  ✅ 找到库存物品，当前库存:', stockItem.currentStock, stockItem.unit, '需要扣减:', finalDeductQuantity);
 
           planStockDeduction(stockItem, finalDeductQuantity);
         });
       } else if (deductionType === 'direct' && stockItemId) {
-        console.log('📦 直接扣库存模式，stockItemId:', stockItemId);
         // 直接扣库存模式 - 优先从冰箱扣减
         const stockItem = effectiveInventoryItems.find(i => i.id === stockItemId);
         if (!stockItem) {
@@ -738,7 +724,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
+    const stockDeductionPlan = buildStockDeductionPlan({
+      requests: stockDeductionRequests,
+      inventoryItems: effectiveInventoryItems,
+      fridgeInventory: effectiveFridgeInventory,
+    });
+
+    stockDeductionPlan.fridgeDeductions.forEach(deduction => {
+      const mapKey = getFridgeDeductionKey(deduction.fridgeId, deduction.itemId);
+      fridgeDeductionsMap.set(mapKey, (fridgeDeductionsMap.get(mapKey) || 0) + deduction.quantity);
+    });
+    stockDeductionPlan.warehouseDeductions.forEach(deduction => {
+      warehouseDeductionsMap.set(deduction.itemId, (warehouseDeductionsMap.get(deduction.itemId) || 0) + deduction.quantity);
+    });
+
     const stockWriteTasks: Promise<any>[] = [];
+    const sourceOperationId = source?.operationId || `sale-stock-${Date.now()}`;
+    const stockDeductedAt = source?.completedAt ? new Date(source.completedAt) : new Date();
+    const stockDeductedAtMs = stockDeductedAt.getTime();
 
     // ✅ 先同步云端/离线队列，成功或已进入待同步队列后再更新本地状态
     if (fridgeDeductionsMap.size > 0) {
@@ -749,14 +752,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         );
         if (!currentInv) return;
         const recordId = currentInv.id || `${currentInv.fridgeId}-${currentInv.itemId}`;
+        const stockItem = effectiveInventoryItems.find(item => item.id === itemId);
         stockWriteTasks.push(
           smartIncrementField('fridge_inventory', recordId, 'quantity', -deductQty, {
             fridgeId: currentInv.fridgeId,
             itemId: currentInv.itemId,
-            lastModified: Date.now()
-          }).then(result => {
+            lastModified: stockDeductedAtMs,
+            syncOperationId: `${sourceOperationId}-fridge-${recordId}`
+          }).then(async result => {
             if (result?.error) {
               throw new Error(`冰箱库存扣减失败: ${recordId} ${result.error}`);
+            }
+            const beforeStock = Number(currentInv.quantity || 0);
+            const stockRecord = {
+              id: `${sourceOperationId}-fridge-${recordId}`,
+              itemId,
+              itemName: stockItem?.name || itemId,
+              type: 'out',
+              quantity: deductQty,
+              signedQuantity: -deductQty,
+              reason: 'pos sale',
+              source: 'pos_sale',
+              sourceId: sourceOperationId,
+              orderId: source?.orderId,
+              orderNumber: source?.orderNumber,
+              orderType: source?.orderType,
+              locationType: 'fridge',
+              fridgeId: currentInv.fridgeId,
+              beforeStock,
+              afterStock: beforeStock - deductQty,
+              unit: stockItem?.unit || '',
+              date: stockDeductedAt,
+              createdAt: stockDeductedAt,
+              createdAtMs: stockDeductedAtMs,
+              lastModified: stockDeductedAtMs,
+              operator: 'pos'
+            };
+            const stockRecordResult: any = await smartAddDocument('inventory_stock_records', stockRecord);
+            if (stockRecordResult?.error) {
+              throw new Error(`库存流水写入失败: ${stockRecord.id} ${stockRecordResult.error}`);
             }
           })
         );
@@ -769,11 +803,40 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!item || deductQty <= 0) return;
         stockWriteTasks.push(
           smartIncrementField('inventory_items', item.id, 'currentStock', -deductQty, {
-            lastModified: Date.now(),
-            lastUpdated: new Date()
-          }).then(result => {
+            lastModified: stockDeductedAtMs,
+            lastUpdated: stockDeductedAt,
+            syncOperationId: `${sourceOperationId}-warehouse-${item.id}`
+          }).then(async result => {
             if (result?.error) {
               throw new Error(`仓库库存扣减失败: ${item.name} ${result.error}`);
+            }
+            const beforeStock = Number(item.currentStock || 0);
+            const stockRecord = {
+              id: `${sourceOperationId}-warehouse-${item.id}`,
+              itemId: item.id,
+              itemName: item.name,
+              type: 'out',
+              quantity: deductQty,
+              signedQuantity: -deductQty,
+              reason: 'pos sale',
+              source: 'pos_sale',
+              sourceId: sourceOperationId,
+              orderId: source?.orderId,
+              orderNumber: source?.orderNumber,
+              orderType: source?.orderType,
+              locationType: 'warehouse',
+              beforeStock,
+              afterStock: beforeStock - deductQty,
+              unit: item.unit || '',
+              date: stockDeductedAt,
+              createdAt: stockDeductedAt,
+              createdAtMs: stockDeductedAtMs,
+              lastModified: stockDeductedAtMs,
+              operator: 'pos'
+            };
+            const stockRecordResult: any = await smartAddDocument('inventory_stock_records', stockRecord);
+            if (stockRecordResult?.error) {
+              throw new Error(`库存流水写入失败: ${stockRecord.id} ${stockRecordResult.error}`);
             }
           })
         );
@@ -790,7 +853,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return {
           ...inv,
           id: inv.id || `${inv.fridgeId}-${inv.itemId}`,
-          quantity: Math.max(0, Number(inv.quantity || 0) - deductQty),
+          quantity: Number(inv.quantity || 0) - deductQty,
           lastModified: Date.now()
         };
       }));
@@ -802,14 +865,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (deductQty <= 0) return item;
         return {
           ...item,
-          currentStock: Math.max(0, Number(item.currentStock || 0) - deductQty),
+          currentStock: Number(item.currentStock || 0) - deductQty,
           lastUpdated: new Date(),
           lastModified: Date.now()
         };
       }));
     }
 
-    console.log('✅ 库存扣减完成');
   };
 
   // 增加库存
@@ -903,7 +965,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ✅ POS.tsx 已经通过 localStorage 保存，不需要在这里重复保存
   useEffect(() => {
     if (orders.length > 0) {
-      dataManager.saveData('orders', orders, { syncFirestore: false });
+      dataManager.saveData('orders', orders, { syncFirestore: false, persistLocal: false });
     }
 
     // 触发自定义事件，通知其他模块

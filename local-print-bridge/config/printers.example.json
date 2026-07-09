@@ -1,0 +1,23 @@
+{
+  "host": "127.0.0.1",
+  "port": 17777,
+  "dryRun": true,
+  "printers": {
+    "cashier": {
+      "enabled": true,
+      "printerName": "POS-80-Receipt"
+    },
+    "kitchen": {
+      "enabled": true,
+      "printerName": "Kitchen-Printer"
+    },
+    "bar": {
+      "enabled": false,
+      "printerName": "Bar-Printer"
+    },
+    "report": {
+      "enabled": false,
+      "printerName": "Office-A4"
+    }
+  }
+}

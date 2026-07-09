@@ -1,10 +1,14 @@
 import { getLocalDateString } from './exchangeRate';
-import { getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown } from './financeMetrics';
+import { getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from './financeMetrics';
+import { getExpenseCategoryPath, normalizeExpenseCategories } from './expenseCategories';
+import { findExpensePurchaseOrder } from './expensePurchaseLink';
 
 export type RankingScope = 'all' | 'dishes' | 'beverages';
 export type RankingSortBy = 'revenue' | 'quantity';
 export type BeverageCategoryFilter = 'all' | 'Cerveza' | 'Bebida' | 'Jugo';
 export type DashboardOrderTypeFilter = 'all' | 'dine_in' | 'takeout' | 'delivery';
+export type ExpenseRankingScope = 'all' | 'operating' | 'purchase';
+export type ExpenseRankingSortBy = 'amount' | 'count';
 
 export interface SalesRankingFilters {
   scope: RankingScope;
@@ -21,6 +25,42 @@ export interface SalesRanking {
   revenue: number;
   averagePrice: number;
   revenueShare: number;
+}
+
+export interface ExpenseRankingFilters {
+  scope: ExpenseRankingScope;
+  sortBy: ExpenseRankingSortBy;
+  topN: number;
+}
+
+export interface ExpenseRanking {
+  key: string;
+  label: string;
+  parentCategory: string;
+  fullCategory: string;
+  type: 'purchase' | 'operating';
+  typeLabel: string;
+  count: number;
+  amount: number;
+  averageAmount: number;
+  amountShare: number;
+}
+
+export interface ExpenseRankingMovement {
+  key: string;
+  label: string;
+  parentCategory: string;
+  fullCategory: string;
+  type: 'purchase' | 'operating';
+  typeLabel: string;
+  currentAmount: number;
+  previousAmount: number;
+  amountDelta: number;
+  amountPercent: number | null;
+  currentCount: number;
+  previousCount: number;
+  countDelta: number;
+  countPercent: number | null;
 }
 
 export interface RankingMovement {
@@ -351,6 +391,166 @@ export const buildRankingComparison = (
   });
 
   const sortKey = filters.sortBy === 'quantity' ? 'quantityDelta' : 'revenueDelta';
+  const increased = movements
+    .filter(item => (item as any)[sortKey] > 0)
+    .sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey])
+    .slice(0, filters.topN);
+  const decreased = movements
+    .filter(item => (item as any)[sortKey] < 0)
+    .sort((a, b) => (a as any)[sortKey] - (b as any)[sortKey])
+    .slice(0, filters.topN);
+
+  return { increased, decreased };
+};
+
+const expenseTypeLabel = (type: 'purchase' | 'operating'): string => (
+  type === 'purchase' ? '采购付款' : '日常开支'
+);
+
+const resolvePurchaseSupplierName = (expense: any, purchaseOrders: any[]): string => {
+  const matchingOrder = findExpensePurchaseOrder(expense, purchaseOrders);
+  const supplierName = String(expense?.supplierName || matchingOrder?.supplierName || '').trim();
+  const orderNumber = String(expense?.orderNumber || expense?.invoiceNumber || matchingOrder?.orderNumber || '').trim();
+
+  if (supplierName) return supplierName;
+  if (orderNumber) return `采购单 ${orderNumber}`;
+  return '采购付款';
+};
+
+const resolveExpenseRankingIdentity = (
+  expense: any,
+  categories: any[],
+  purchaseOrders: any[]
+): Pick<ExpenseRanking, 'key' | 'label' | 'parentCategory' | 'fullCategory' | 'type' | 'typeLabel'> => {
+  const type: 'purchase' | 'operating' = isPurchaseRelatedExpense(expense) ? 'purchase' : 'operating';
+  const typeLabel = expenseTypeLabel(type);
+
+  if (type === 'purchase') {
+    const label = resolvePurchaseSupplierName(expense, purchaseOrders);
+    return {
+      key: `purchase|${normalize(label)}`,
+      label,
+      parentCategory: typeLabel,
+      fullCategory: label,
+      type,
+      typeLabel,
+    };
+  }
+
+  const normalizedCategories = normalizeExpenseCategories(categories);
+  const path = getExpenseCategoryPath(String(expense?.categoryId || ''), normalizedCategories, expense);
+
+  return {
+    key: `operating|${normalize(path.fullName)}`,
+    label: path.categoryName,
+    parentCategory: path.parentName,
+    fullCategory: path.fullName,
+    type,
+    typeLabel,
+  };
+};
+
+const shouldIncludeExpenseRanking = (type: 'purchase' | 'operating', filters: ExpenseRankingFilters): boolean => (
+  filters.scope === 'all' || filters.scope === type
+);
+
+const collectExpenseRankingMap = (
+  expenses: any[],
+  categories: any[],
+  purchaseOrders: any[],
+  filters: ExpenseRankingFilters
+): Record<string, ExpenseRanking> => {
+  const rankingMap: Record<string, ExpenseRanking> = {};
+
+  (Array.isArray(expenses) ? expenses : []).forEach(expense => {
+    const amount = roundMoney(Number(expense?.amount) || 0);
+    if (amount <= 0) return;
+
+    const identity = resolveExpenseRankingIdentity(expense, categories, purchaseOrders);
+    if (!shouldIncludeExpenseRanking(identity.type, filters)) return;
+
+    const existing = rankingMap[identity.key] || {
+      ...identity,
+      count: 0,
+      amount: 0,
+      averageAmount: 0,
+      amountShare: 0,
+    };
+
+    existing.count += 1;
+    existing.amount = roundMoney(existing.amount + amount);
+    existing.averageAmount = existing.count > 0 ? roundMoney(existing.amount / existing.count) : 0;
+    rankingMap[identity.key] = existing;
+  });
+
+  return rankingMap;
+};
+
+export const buildExpenseRankings = (
+  expenses: any[],
+  categories: any[],
+  purchaseOrders: any[],
+  filters: ExpenseRankingFilters
+): ExpenseRanking[] => {
+  const rankingMap = collectExpenseRankingMap(expenses, categories, purchaseOrders, filters);
+  const rankings = Object.values(rankingMap);
+  const totalAmount = rankings.reduce((sum, item) => sum + item.amount, 0);
+
+  return rankings
+    .map(item => ({
+      ...item,
+      count: roundMoney(item.count),
+      amount: roundMoney(item.amount),
+      averageAmount: item.count > 0 ? roundMoney(item.amount / item.count) : 0,
+      amountShare: totalAmount > 0 ? roundMoney((item.amount / totalAmount) * 100) : 0,
+    }))
+    .sort((a, b) => {
+      const primary = filters.sortBy === 'count' ? b.count - a.count : b.amount - a.amount;
+      return primary || b.amount - a.amount || a.label.localeCompare(b.label);
+    })
+    .slice(0, filters.topN);
+};
+
+export const buildExpenseRankingComparison = (
+  currentExpenses: any[],
+  previousExpenses: any[],
+  categories: any[],
+  purchaseOrders: any[],
+  filters: ExpenseRankingFilters
+): { increased: ExpenseRankingMovement[]; decreased: ExpenseRankingMovement[] } => {
+  const allFilters = { ...filters, topN: Number.MAX_SAFE_INTEGER };
+  const currentMap = collectExpenseRankingMap(currentExpenses, categories, purchaseOrders, allFilters);
+  const previousMap = collectExpenseRankingMap(previousExpenses, categories, purchaseOrders, allFilters);
+  const keys = Array.from(new Set([...Object.keys(currentMap), ...Object.keys(previousMap)]));
+
+  const movements = keys.map(key => {
+    const current = currentMap[key];
+    const previous = previousMap[key];
+    const currentAmount = current?.amount || 0;
+    const previousAmount = previous?.amount || 0;
+    const currentCount = current?.count || 0;
+    const previousCount = previous?.count || 0;
+    const source = current || previous;
+
+    return {
+      key,
+      label: source?.label || key,
+      parentCategory: source?.parentCategory || '其他开支',
+      fullCategory: source?.fullCategory || source?.label || key,
+      type: source?.type || 'operating',
+      typeLabel: source?.typeLabel || expenseTypeLabel(source?.type || 'operating'),
+      currentAmount: roundMoney(currentAmount),
+      previousAmount: roundMoney(previousAmount),
+      amountDelta: roundMoney(currentAmount - previousAmount),
+      amountPercent: comparePercent(currentAmount, previousAmount),
+      currentCount: roundMoney(currentCount),
+      previousCount: roundMoney(previousCount),
+      countDelta: roundMoney(currentCount - previousCount),
+      countPercent: comparePercent(currentCount, previousCount),
+    };
+  });
+
+  const sortKey = filters.sortBy === 'count' ? 'countDelta' : 'amountDelta';
   const increased = movements
     .filter(item => (item as any)[sortKey] > 0)
     .sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey])

@@ -1,17 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { smartGetDocuments } from '../../services/smartSyncService';
 import { toTimestampMillis } from '../../utils/localTime';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import {
+  getCancelledItemCountForDate,
   getExpenseDateKey,
+  getOrderCancellationDateKey,
   getOrderCollectedAmount,
   getOrderFinancialDateKey,
   getOrderPaymentBreakdown,
-  isPurchaseRelatedExpense,
   sumExpensesByKind,
 } from '../../utils/financeMetrics';
 import {
+  buildExpenseRankingComparison,
+  buildExpenseRankings,
   buildKpis,
   buildMonthlySalesCalendar,
   buildPeriodComparison,
@@ -22,6 +25,10 @@ import {
   type BeverageCategoryFilter,
   type DashboardKpis,
   type DashboardOrderTypeFilter,
+  type ExpenseRanking,
+  type ExpenseRankingMovement,
+  type ExpenseRankingScope,
+  type ExpenseRankingSortBy,
   type MonthlySalesCalendar,
   type PeriodComparison,
   type RankingMovement,
@@ -42,9 +49,13 @@ interface TimeRangeStats {
   dineInOrders: number;
   takeoutOrders: number;
   deliveryOrders: number;
+  cancelledOrders: number;
+  cancelledItems: number;
   dineInRevenue: number;
   takeoutRevenue: number;
   deliveryRevenue: number;
+  soldQuantity: number;
+  soldProductCount: number;
 }
 
 interface DailyTrend {
@@ -93,6 +104,7 @@ interface ComparisonStats {
   averageTicket: PeriodComparison;
   cashPayment: PeriodComparison;
   cardPayment: PeriodComparison;
+  totalExpense: PeriodComparison;
   profit: PeriodComparison;
 }
 
@@ -107,9 +119,13 @@ const emptyStats: TimeRangeStats = {
   dineInOrders: 0,
   takeoutOrders: 0,
   deliveryOrders: 0,
+  cancelledOrders: 0,
+  cancelledItems: 0,
   dineInRevenue: 0,
   takeoutRevenue: 0,
   deliveryRevenue: 0,
+  soldQuantity: 0,
+  soldProductCount: 0,
 };
 
 const emptyKpis: DashboardKpis = {
@@ -127,6 +143,7 @@ const emptyComparison: ComparisonStats = {
   averageTicket: buildPeriodComparison(0, 0),
   cashPayment: buildPeriodComparison(0, 0),
   cardPayment: buildPeriodComparison(0, 0),
+  totalExpense: buildPeriodComparison(0, 0),
   profit: buildPeriodComparison(0, 0),
 };
 
@@ -159,13 +176,6 @@ const getStoreOrdersDirect = (): any[] => {
 
 const money = (value: number): string => `C$ ${Number(value || 0).toFixed(2)}`;
 const pct = (value: number): string => `${Number(value || 0).toFixed(1)}%`;
-const compactMoney = (value: number): string => {
-  const amount = Number(value || 0);
-  if (Math.abs(amount) >= 100000) return `C$${Math.round(amount / 1000)}k`;
-  if (Math.abs(amount) >= 10000) return `C$${(amount / 1000).toFixed(1)}k`;
-  return `C$${amount.toFixed(0)}`;
-};
-
 const comparisonText = (comparison: PeriodComparison): string => {
   if (comparison.direction === 'flat') return '与上期持平';
   const sign = comparison.value > 0 ? '+' : '';
@@ -181,10 +191,27 @@ const comparisonColor = (comparison: PeriodComparison): string => {
 
 const getOrderType = (order: any): DashboardOrderTypeFilter => order?.orderType || 'dine_in';
 
+const getDateKeysInRange = (startDate: string, endDateExclusive: string): string[] => {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00-06:00`);
+  const end = new Date(`${endDateExclusive}T00:00:00-06:00`);
+  while (cursor < end) {
+    dates.push(getLocalDateString(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+};
+
 const getRankingScopeLabel = (scope: RankingScope, beverageCategory: BeverageCategoryFilter): string => {
   if (scope === 'dishes') return '菜品';
   if (scope === 'beverages') return beverageCategory === 'all' ? '酒水饮料' : beverageCategory;
   return '全部商品';
+};
+
+const getExpenseScopeLabel = (scope: ExpenseRankingScope): string => {
+  if (scope === 'operating') return '日常开支';
+  if (scope === 'purchase') return '采购付款';
+  return '全部开支';
 };
 
 const getHeatBackground = (intensity: number, inMonth: boolean): string => {
@@ -197,14 +224,21 @@ const getHeatBackground = (intensity: number, inMonth: boolean): string => {
 };
 
 const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders }) => {
+  const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [startDate, setStartDate] = useState(getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
   const [endDate, setEndDate] = useState(getLocalDateString());
   const [calendarMonth, setCalendarMonth] = useState(getLocalDateString().slice(0, 7));
 
-  const [orders, setOrders] = useState<any[]>(() => propOrders || dataManager.getData('orders') || []);
-  const [menuItems, setMenuItems] = useState<any[]>(() => dataManager.getData('menuItems') || []);
-  const [inventoryItems, setInventoryItems] = useState<any[]>(() => dataManager.getData('inventory') || []);
+  const [orders, setOrders] = useState<any[]>(() => propOrders || []);
+  const [expenseRecords, setExpenseRecords] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [expenseCategoryConfig, setExpenseCategoryConfig] = useState<any[]>(() => {
+    const cached = localStorage.getItem(expenseCategoryStorageKey);
+    return cached ? JSON.parse(cached) : [];
+  });
   const [dataVersion, setDataVersion] = useState(0);
 
   const [rankingScope, setRankingScope] = useState<RankingScope>('all');
@@ -213,6 +247,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   const [rankingTopN, setRankingTopN] = useState<number>(10);
   const [beverageCategoryFilter, setBeverageCategoryFilter] = useState<BeverageCategoryFilter>('all');
   const [movementMetric, setMovementMetric] = useState<RankingSortBy>('revenue');
+  const [expenseRankingScope, setExpenseRankingScope] = useState<ExpenseRankingScope>('all');
+  const [expenseRankingSortBy, setExpenseRankingSortBy] = useState<ExpenseRankingSortBy>('amount');
+  const [expenseRankingTopN, setExpenseRankingTopN] = useState<number>(10);
 
   const [stats, setStats] = useState<TimeRangeStats>(emptyStats);
   const [currentKpis, setCurrentKpis] = useState<DashboardKpis>(emptyKpis);
@@ -221,7 +258,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   const [rankingMovement, setRankingMovement] = useState<{ increased: RankingMovement[]; decreased: RankingMovement[] }>({ increased: [], decreased: [] });
   const [monthlyCalendar, setMonthlyCalendar] = useState<MonthlySalesCalendar | null>(null);
   const [salesTrend, setSalesTrend] = useState<DailyTrend[]>([]);
-  const [expenseByCategory, setExpenseByCategory] = useState<Array<{ category: string; amount: number }>>([]);
+  const [expenseRankings, setExpenseRankings] = useState<ExpenseRanking[]>([]);
+  const [expenseMovement, setExpenseMovement] = useState<{ increased: ExpenseRankingMovement[]; decreased: ExpenseRankingMovement[] }>({ increased: [], decreased: [] });
   const [topPurchases, setTopPurchases] = useState<Array<{ name: string; quantity: number; amount: number }>>([]);
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile>({
     totalCustomers: 0,
@@ -240,26 +278,23 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   const refreshManagerData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudOrders, cloudExpenses, cloudPurchases, cloudMenuItems, cloudInventoryItems] = await Promise.all([
+      const [cloudOrders, cloudExpenses, cloudPurchases, cloudMenuItems, cloudInventoryItems, cloudExpenseCategories] = await Promise.all([
         smartGetDocuments('pos_orders', true),
         smartGetDocuments('expenses', true),
         smartGetDocuments('purchase_orders', true),
         smartGetDocuments('menu_items', true),
         smartGetDocuments('inventory_items', true),
+        smartGetDocuments('expense_categories', true),
       ]);
 
-      await Promise.all([
-        dataManager.saveData('orders', cloudOrders, { syncFirestore: false, notify: false }),
-        dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false }),
-        dataManager.saveData('purchases', cloudPurchases, { syncFirestore: false, notify: false }),
-        dataManager.saveData('menuItems', cloudMenuItems, { syncFirestore: false, notify: false }),
-        dataManager.saveData('inventory', cloudInventoryItems, { syncFirestore: false, notify: false }),
-      ]);
+      localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudExpenseCategories));
 
-      dataManager.clearCache();
       setOrders(cloudOrders);
+      setExpenseRecords(cloudExpenses);
+      setPurchaseOrders(cloudPurchases);
       setMenuItems(cloudMenuItems);
       setInventoryItems(cloudInventoryItems);
+      setExpenseCategoryConfig(cloudExpenseCategories);
       setDataVersion(version => version + 1);
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -268,7 +303,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [expenseCategoryStorageKey]);
 
   useEffect(() => {
     refreshManagerData();
@@ -387,8 +422,19 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const previousOrders = filterOrdersByRange(dashboardOrders, range.previousStartDate, range.previousEndDateExclusive);
       const financialOrders = filteredOrders.filter((order: any) => getOrderCollectedAmount(order) > 0);
       const previousFinancialOrders = previousOrders.filter((order: any) => getOrderCollectedAmount(order) > 0);
-      const expenses = dataManager.getData('expenses') || [];
-      const purchases = dataManager.getData('purchases') || [];
+      const expenses = expenseRecords;
+      const purchases = purchaseOrders;
+      const expenseCategories = expenseCategoryConfig.length > 0
+        ? expenseCategoryConfig
+        : JSON.parse(localStorage.getItem(expenseCategoryStorageKey) || '[]');
+      const currentExpenseRecords = expenses.filter((expense: any) => {
+        const dateKey = getExpenseDateKey(expense);
+        return dateKey >= range.startDate && dateKey < range.endDateExclusive;
+      });
+      const previousExpenseRecords = expenses.filter((expense: any) => {
+        const dateKey = getExpenseDateKey(expense);
+        return dateKey >= range.previousStartDate && dateKey < range.previousEndDateExclusive;
+      });
 
       const expenseAmount = sumExpensesByKind(expenses, range.startDate, range.endDateExclusive, 'operating');
       const purchaseAmount = sumExpensesByKind(expenses, range.startDate, range.endDateExclusive, 'purchase');
@@ -411,6 +457,14 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const dineInOrders = financialOrders.filter((order: any) => getOrderType(order) === 'dine_in').length;
       const takeoutOrders = financialOrders.filter((order: any) => getOrderType(order) === 'takeout').length;
       const deliveryOrders = financialOrders.filter((order: any) => getOrderType(order) === 'delivery').length;
+      const rangeDateKeys = getDateKeysInRange(range.startDate, range.endDateExclusive);
+      const cancelledOrders = dashboardOrders.filter((order: any) => {
+        const dateKey = getOrderCancellationDateKey(order);
+        return dateKey >= range.startDate && dateKey < range.endDateExclusive;
+      }).length;
+      const cancelledItems = dashboardOrders.reduce((sum: number, order: any) => (
+        sum + rangeDateKeys.reduce((dateSum, dateKey) => dateSum + getCancelledItemCountForDate(order, dateKey), 0)
+      ), 0);
       const dineInRevenue = financialOrders
         .filter((order: any) => getOrderType(order) === 'dine_in')
         .reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
@@ -420,6 +474,15 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const deliveryRevenue = financialOrders
         .filter((order: any) => getOrderType(order) === 'delivery')
         .reduce((sum: number, order: any) => sum + getOrderCollectedAmount(order), 0);
+      const soldProductNames = new Set<string>();
+      const soldQuantity = financialOrders.reduce((sum: number, order: any) => {
+        return sum + (Array.isArray(order.items) ? order.items : []).reduce((itemSum: number, item: any) => {
+          const name = String(item.name || item.itemName || '').trim();
+          if (name) soldProductNames.add(name.toLowerCase());
+          return itemSum + (Number(item.quantity) || 1);
+        }, 0);
+      }, 0);
+      const soldProductCount = soldProductNames.size;
 
       const currentKpiData = buildKpis(financialOrders, { purchaseAmount, expenseAmount });
       const previousKpiData = buildKpis(previousFinancialOrders, { purchaseAmount: previousPurchaseAmount, expenseAmount: previousExpenseAmount });
@@ -431,6 +494,11 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         beverageCategory: beverageCategoryFilter,
       };
       const movementFilters = { ...rankingFilters, sortBy: movementMetric };
+      const expenseRankingFilters = {
+        scope: expenseRankingScope,
+        sortBy: expenseRankingSortBy,
+        topN: expenseRankingTopN,
+      };
 
       const trendMap: Record<string, DailyTrend> = {};
       for (let date = new Date(`${range.startDate}T00:00:00`); getLocalDateString(date) < range.endDateExclusive; date.setDate(date.getDate() + 1)) {
@@ -457,15 +525,6 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         trendMap[dateKey].profit += trendMap[dateKey].sales;
       });
 
-      const expenseCategories: Record<string, number> = {};
-      expenses.forEach((expense: any) => {
-        const expenseDate = getExpenseDateKey(expense);
-        if (!isPurchaseRelatedExpense(expense) && expenseDate >= range.startDate && expenseDate < range.endDateExclusive) {
-          const category = expense.categoryName || expense.category || '其他';
-          expenseCategories[category] = (expenseCategories[category] || 0) + Number(expense.amount || 0);
-        }
-      });
-
       const purchaseItems: Record<string, { name: string; quantity: number; amount: number }> = {};
       purchases.forEach((purchase: any) => {
         const purchaseDate = getRecordDateString(purchase.date || purchase.createdAt);
@@ -489,9 +548,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         dineInOrders,
         takeoutOrders,
         deliveryOrders,
+        cancelledOrders,
+        cancelledItems,
         dineInRevenue,
         takeoutRevenue,
         deliveryRevenue,
+        soldQuantity,
+        soldProductCount,
       });
       setCurrentKpis(currentKpiData);
       setComparisonStats({
@@ -500,13 +563,15 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         averageTicket: buildPeriodComparison(currentKpiData.averageTicket, previousKpiData.averageTicket),
         cashPayment: buildPeriodComparison(currentKpiData.cashPayment, previousKpiData.cashPayment),
         cardPayment: buildPeriodComparison(currentKpiData.cardPayment, previousKpiData.cardPayment),
+        totalExpense: buildPeriodComparison(purchaseAmount + expenseAmount, previousPurchaseAmount + previousExpenseAmount),
         profit: buildPeriodComparison(currentKpiData.profit, previousKpiData.profit),
       });
       setFocusedRankings(buildSalesRankings(financialOrders, menuItems, inventoryItems, rankingFilters));
       setRankingMovement(buildRankingComparison(financialOrders, previousFinancialOrders, menuItems, inventoryItems, movementFilters));
       setMonthlyCalendar(buildMonthlySalesCalendar(dashboardOrders, calendarMonth));
       setSalesTrend(Object.values(trendMap).sort((a, b) => a.date.localeCompare(b.date)));
-      setExpenseByCategory(Object.entries(expenseCategories).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount));
+      setExpenseRankings(buildExpenseRankings(currentExpenseRecords, expenseCategories, purchases, expenseRankingFilters));
+      setExpenseMovement(buildExpenseRankingComparison(currentExpenseRecords, previousExpenseRecords, expenseCategories, purchases, expenseRankingFilters));
       setTopPurchases(Object.values(purchaseItems).sort((a, b) => b.amount - a.amount).slice(0, 10));
       setCustomerProfile(calculateCustomerProfile(financialOrders));
     } catch (error) {
@@ -520,8 +585,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     endDate,
     propOrders,
     orders,
+    expenseRecords,
+    purchaseOrders,
     menuItems,
     inventoryItems,
+    expenseCategoryConfig,
+    expenseCategoryStorageKey,
     rankingScope,
     rankingSortBy,
     rankingOrderType,
@@ -529,6 +598,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
     beverageCategoryFilter,
     calendarMonth,
     movementMetric,
+    expenseRankingScope,
+    expenseRankingSortBy,
+    expenseRankingTopN,
     calculateCustomerProfile,
   ]);
 
@@ -659,16 +731,19 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
   };
 
   const kpiCards = [
-    { label: '营业额', value: money(currentKpis.totalSales), sub: `${stats.orderCount} 笔订单`, comparison: comparisonStats.totalSales, accent: colors.success, soft: colors.successSoft, mark: '￥' },
-    { label: '订单', value: String(currentKpis.orderCount), sub: `客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.orderCount, accent: colors.blue, soft: colors.blueSoft, mark: '单' },
-    { label: '现金收入', value: money(currentKpis.cashPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cashPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cashPayment, accent: colors.teal, soft: colors.tealSoft, mark: '$' },
-    { label: '刷卡收入', value: money(currentKpis.cardPayment), sub: `占比 ${stats.totalSales > 0 ? pct((stats.cardPayment / stats.totalSales) * 100) : '0.0%'}`, comparison: comparisonStats.cardPayment, accent: colors.blue, soft: colors.blueSoft, mark: '卡' },
-    { label: '盈亏', value: money(currentKpis.profit), sub: `采购 ${money(stats.purchaseAmount)} / 开支 ${money(stats.expenseAmount)}`, comparison: comparisonStats.profit, accent: '#fb6f55', soft: '#ffe4df', mark: '↗' },
+    { key: 'revenue', label: '营业额', value: money(currentKpis.totalSales), sub: `现金 ${money(stats.cashPayment)} / 刷卡 ${money(stats.cardPayment)}`, comparison: comparisonStats.totalSales, accent: colors.success, soft: colors.successSoft, mark: '￥' },
+    { key: 'orders', label: '订单', value: `完成 ${currentKpis.orderCount}`, sub: `Mesa ${stats.dineInOrders} / Barra ${stats.takeoutOrders} / Delivery ${stats.deliveryOrders} / 取消 ${stats.cancelledOrders} / 取消菜品 ${stats.cancelledItems}`, comparison: comparisonStats.orderCount, accent: colors.blue, soft: colors.blueSoft, mark: '单' },
+    { key: 'sales', label: '销售', value: `${stats.soldQuantity.toFixed(1)} 份`, sub: `商品 ${stats.soldProductCount} 种 / 客单价 ${money(currentKpis.averageTicket)}`, comparison: comparisonStats.averageTicket, accent: '#7c74d8', soft: '#f5f3ff', mark: '售' },
+    { key: 'expense', label: '开支', value: money(stats.purchaseAmount + stats.expenseAmount), sub: `采购 ${money(stats.purchaseAmount)} / 日常 ${money(stats.expenseAmount)}`, comparison: comparisonStats.totalExpense, accent: '#b45309', soft: '#fff7ed', mark: '支' },
+    { key: 'profit', label: '盈亏', value: money(currentKpis.profit), sub: `营业额 - 采购 - 日常开支`, comparison: comparisonStats.profit, accent: '#fb6f55', soft: '#ffe4df', mark: '盈' },
   ];
 
   const maxRankingRevenue = Math.max(...focusedRankings.map(item => item.revenue), 0);
+  const maxExpenseAmount = Math.max(...expenseRankings.map(item => item.amount), 0);
   const rankMetricLabel = rankingSortBy === 'revenue' ? '金额' : '销量';
   const movementMetricLabel = movementMetric === 'revenue' ? '金额' : '销量';
+  const expenseMetricLabel = expenseRankingSortBy === 'amount' ? '金额' : '笔数';
+  const expenseScopeLabel = getExpenseScopeLabel(expenseRankingScope);
 
   const renderMovementRow = (item: RankingMovement, index: number, type: 'up' | 'down') => {
     const delta = movementMetric === 'revenue' ? item.revenueDelta : item.quantityDelta;
@@ -690,6 +765,31 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         <div style={{ textAlign: 'right', color, fontWeight: 700 }}>
           {delta > 0 ? '+' : ''}{formattedDelta}
           <div style={{ fontSize: '0.75rem', fontWeight: 650 }}>{percentValue === null ? '新增' : `${percentValue > 0 ? '+' : ''}${percentValue.toFixed(1)}%`}</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderExpenseMovementRow = (item: ExpenseRankingMovement, index: number, type: 'up' | 'down') => {
+    const delta = expenseRankingSortBy === 'amount' ? item.amountDelta : item.countDelta;
+    const current = expenseRankingSortBy === 'amount' ? item.currentAmount : item.currentCount;
+    const previous = expenseRankingSortBy === 'amount' ? item.previousAmount : item.previousCount;
+    const percentValue = expenseRankingSortBy === 'amount' ? item.amountPercent : item.countPercent;
+    const color = type === 'up' ? '#b45309' : '#0f9488';
+    const formattedDelta = expenseRankingSortBy === 'amount' ? money(delta) : `${delta.toFixed(0)} 笔`;
+    const formattedCurrent = expenseRankingSortBy === 'amount' ? money(current) : `${current.toFixed(0)} 笔`;
+    const formattedPrevious = expenseRankingSortBy === 'amount' ? money(previous) : `${previous.toFixed(0)} 笔`;
+
+    return (
+      <div key={`${item.key}-${index}`} style={{ display: 'grid', gridTemplateColumns: '30px minmax(0, 1fr) auto', gap: '0.65rem', alignItems: 'center', padding: '0.58rem 0', borderBottom: `1px solid ${colors.border}` }}>
+        <div style={{ width: 24, height: 24, borderRadius: 12, background: type === 'up' ? '#fff7ed' : '#ecfdf5', color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 750, fontSize: '0.72rem' }}>{index + 1}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 720, color: colors.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</div>
+          <div style={{ ...styles.muted, marginTop: 2 }}>{item.parentCategory} · 本期 {formattedCurrent} / 上期 {formattedPrevious}</div>
+        </div>
+        <div style={{ textAlign: 'right', color, fontWeight: 750 }}>
+          {delta > 0 ? '+' : ''}{formattedDelta}
+          <div style={{ fontSize: '0.72rem', fontWeight: 650 }}>{percentValue === null ? '新增' : `${percentValue > 0 ? '+' : ''}${percentValue.toFixed(1)}%`}</div>
         </div>
       </div>
     );
@@ -744,9 +844,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       </div>
 
       <div style={styles.scroll}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '0.8rem', marginBottom: '1rem' }}>
+        <div data-manager-kpi-strip="true" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(158px, 1fr))', gap: '0.8rem', marginBottom: '1rem' }}>
           {kpiCards.map(card => (
-            <div key={card.label} style={{ ...styles.card, minHeight: 122, overflow: 'hidden', padding: '0.9rem' }}>
+            <div key={card.key} data-kpi-card={card.key} style={{ ...styles.card, minHeight: 122, overflow: 'hidden', padding: '0.9rem' }}>
               <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center' }}>
                 <div style={{
                   width: 38,
@@ -770,7 +870,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '0.35rem', marginTop: '0.7rem' }}>
-                <span style={{ ...styles.muted, whiteSpace: 'nowrap', fontSize: '0.76rem' }}>{card.sub}</span>
+                <span style={{ ...styles.muted, fontSize: '0.74rem', lineHeight: 1.35 }}>{card.sub}</span>
                 <span style={{
                   alignSelf: 'flex-start',
                   color: comparisonColor(card.comparison),
@@ -788,8 +888,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
           ))}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(340px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
-          <div style={{ ...styles.section, marginBottom: 0 }}>
+        <div data-sales-analysis="true" style={{ marginBottom: '1rem' }}>
+          <div style={{ margin: '0 0 0.6rem' }}>
+            <h2 style={{ ...styles.sectionTitle, fontSize: '1rem' }}>销售分析</h2>
+            <div style={{ ...styles.muted, marginTop: 4 }}>月度销售、商品排行、销售本期对比上期集中呈现</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(340px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
+          <div data-monthly-sales-calendar="true" style={{ ...styles.section, marginBottom: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               <div>
                 <h2 style={styles.sectionTitle}>月度销售日历</h2>
@@ -808,14 +913,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             </div>
             <div style={{ overflowX: 'auto' }}>
               <div style={{ minWidth: 560 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 92px', gap: 6, marginBottom: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 8 }}>
                 {(monthlyCalendar?.weekdays || ['周一', '周二', '周三', '周四', '周五', '周六', '周日']).map(day => (
                   <div key={day} style={{ ...styles.muted, fontWeight: 650, textAlign: 'center' }}>{day}</div>
                 ))}
-                <div style={{ ...styles.muted, fontWeight: 650, textAlign: 'center' }}>周合计</div>
               </div>
               {(monthlyCalendar?.weeks || []).map((week, weekIndex) => (
-                <div key={weekIndex} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) 92px', gap: 6, marginBottom: 6 }}>
+                <div key={weekIndex} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6 }}>
                   {week.days.map(day => (
                     <div
                       key={day.date}
@@ -830,8 +934,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
                         boxShadow: day.inMonth && day.intensity > 0 ? 'inset 0 0 0 1px rgba(255,255,255,0.42)' : 'none',
                       }}
                     >
-                      <div style={{ fontWeight: 700, fontSize: '0.8125rem' }}>{day.day}</div>
-                      <div style={{ fontWeight: 720, marginTop: 6, fontSize: '0.76rem' }}>{compactMoney(day.revenue)}</div>
+                      <div style={{ fontWeight: 700, fontSize: '0.8125rem', textAlign: 'center' }}>{day.day}</div>
+                      <div style={{ fontWeight: 720, marginTop: 6, fontSize: '0.76rem' }}>{money(day.revenue)}</div>
                       <div style={{ fontSize: '0.72rem', marginTop: 3, color: '#557083' }}>{day.orderCount} 单</div>
                       {day.averageDeltaPercent !== null && (
                         <div style={{ fontSize: '0.7rem', color: day.averageDeltaPercent >= 0 ? '#0f9488' : '#c2410c' }}>
@@ -840,26 +944,13 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
                       )}
                     </div>
                   ))}
-                  <div style={{
-                    padding: '0.55rem',
-                    borderRadius: '0.5rem',
-                    background: 'linear-gradient(135deg, #e0f7fa, #effcf6)',
-                    border: '1px solid #bce5e8',
-                    color: '#17606d',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                  }}>
-                    <div style={{ fontWeight: 720 }}>{compactMoney(week.weeklyRevenue)}</div>
-                    <div style={{ fontSize: '0.75rem', marginTop: 4, color: '#5b7586' }}>{week.weeklyOrders} 单</div>
-                  </div>
                 </div>
               ))}
               </div>
             </div>
           </div>
 
-          <div style={{ ...styles.section, marginBottom: 0 }}>
+          <div data-sales-ranking-panel="true" style={{ ...styles.section, marginBottom: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               <div>
                 <h2 style={styles.sectionTitle}>{getRankingScopeLabel(rankingScope, beverageCategoryFilter)}销售排行</h2>
@@ -935,84 +1026,137 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
             )}
           </div>
 
+          </div>
+
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(320px, 0.7fr)', gap: '1rem', marginBottom: '1rem' }}>
-          <div style={styles.section}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem' }}>
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ margin: '0 0 0.6rem' }}>
+            <h2 style={{ ...styles.sectionTitle, fontSize: '1rem' }}>本期对比上期</h2>
+            <div style={{ ...styles.muted, marginTop: 4 }}>左侧看销售变化，右侧看开支变化，方便判断多卖了什么、钱花到哪里。</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1rem' }}>
+            <div style={styles.section}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                <div>
+                  <h2 style={styles.sectionTitle}>销售变化</h2>
+                  <div style={{ ...styles.muted, marginTop: 4 }}>按{movementMetricLabel}观察增长和下降</div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                  <button onClick={() => setMovementMetric('revenue')} style={styles.segmentButton(movementMetric === 'revenue')}>金额</button>
+                  <button onClick={() => setMovementMetric('quantity')} style={styles.segmentButton(movementMetric === 'quantity')}>销量</button>
+                </div>
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ fontWeight: 700, color: '#0f9488', marginBottom: '0.25rem' }}>增长最大</div>
+                {rankingMovement.increased.length === 0 ? (
+                  <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无增长项</div>
+                ) : rankingMovement.increased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'up'))}
+              </div>
               <div>
-                <h2 style={styles.sectionTitle}>本期对比上期</h2>
-                <div style={{ ...styles.muted, marginTop: 4 }}>按{movementMetricLabel}观察增长和下降</div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.35rem' }}>
-                <button onClick={() => setMovementMetric('revenue')} style={styles.segmentButton(movementMetric === 'revenue')}>金额</button>
-                <button onClick={() => setMovementMetric('quantity')} style={styles.segmentButton(movementMetric === 'quantity')}>销量</button>
+                <div style={{ fontWeight: 700, color: '#c2410c', marginBottom: '0.25rem' }}>下降最大</div>
+                {rankingMovement.decreased.length === 0 ? (
+                  <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无下降项</div>
+                ) : rankingMovement.decreased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'down'))}
               </div>
             </div>
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontWeight: 700, color: '#0f9488', marginBottom: '0.25rem' }}>增长最大</div>
-              {rankingMovement.increased.length === 0 ? (
-                <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无增长项</div>
-              ) : rankingMovement.increased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'up'))}
-            </div>
-            <div>
-              <div style={{ fontWeight: 700, color: '#c2410c', marginBottom: '0.25rem' }}>下降最大</div>
-              {rankingMovement.decreased.length === 0 ? (
-                <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无下降项</div>
-              ) : rankingMovement.decreased.slice(0, 5).map((item, index) => renderMovementRow(item, index, 'down'))}
+
+            <div style={styles.section}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <h2 style={styles.sectionTitle}>开支变化</h2>
+                <div style={{ ...styles.muted, marginTop: 4 }}>与上一个等长周期对比，开支增加优先提醒</div>
+              </div>
+              <div style={{ marginBottom: '0.9rem' }}>
+                <div style={{ fontWeight: 750, color: '#b45309', marginBottom: '0.25rem' }}>增加最大</div>
+                {expenseMovement.increased.length === 0 ? (
+                  <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无增加项</div>
+                ) : expenseMovement.increased.slice(0, 5).map((item, index) => renderExpenseMovementRow(item, index, 'up'))}
+              </div>
+              <div>
+                <div style={{ fontWeight: 750, color: '#0f9488', marginBottom: '0.25rem' }}>下降最大</div>
+                {expenseMovement.decreased.length === 0 ? (
+                  <div style={{ ...styles.muted, padding: '0.75rem 0' }}>暂无下降项</div>
+                ) : expenseMovement.decreased.slice(0, 5).map((item, index) => renderExpenseMovementRow(item, index, 'down'))}
+              </div>
             </div>
           </div>
         </div>
 
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>业务类型分析</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
-            {[
-              { label: '堂食', orders: stats.dineInOrders, revenue: stats.dineInRevenue, color: '#0f9488', bg: '#effcf9' },
-              { label: 'Barra', orders: stats.takeoutOrders, revenue: stats.takeoutRevenue, color: '#2aa7c8', bg: '#eff8ff' },
-              { label: 'Delivery', orders: stats.deliveryOrders, revenue: stats.deliveryRevenue, color: '#7c74d8', bg: '#f5f3ff' },
-            ].map(item => (
-              <div key={item.label} style={{ background: item.bg, borderRadius: '0.5rem', padding: '0.875rem', border: '1px solid rgba(197, 216, 221, 0.7)' }}>
-                <div style={{ ...styles.muted, fontWeight: 650 }}>{item.label}</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginTop: '0.5rem' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 720, color: item.color }}>{item.orders} 单</div>
-                  <div style={{ fontWeight: 700, color: '#263d50' }}>{money(item.revenue)}</div>
-                </div>
-                <div style={{ height: 6, background: 'rgba(210, 226, 231, 0.85)', borderRadius: 3, marginTop: '0.75rem', overflow: 'hidden' }}>
-                  <div style={{ width: `${stats.totalSales > 0 ? (item.revenue / stats.totalSales) * 100 : 0}%`, height: '100%', background: item.color }} />
-                </div>
+        <div data-manager-expense-analytics="true" data-expense-analysis="true" style={{ marginBottom: '1rem' }}>
+          <div style={{ margin: '0 0 0.6rem' }}>
+            <h2 style={{ ...styles.sectionTitle, fontSize: '1rem' }}>开支分析</h2>
+            <div style={{ ...styles.muted, marginTop: 4 }}>按开支类别、供应商和采购明细归类，判断成本结构。</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(280px, 0.8fr)', gap: '1rem' }}>
+          <div style={styles.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <div>
+                <h2 style={styles.sectionTitle}>开支排行与占比</h2>
+                <div style={{ ...styles.muted, marginTop: 4 }}>{expenseScopeLabel}按{expenseMetricLabel}排序，日常开支按父子类，采购付款按供应商汇总</div>
               </div>
-            ))}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {[
+                  ['all', '全部'],
+                  ['operating', '日常'],
+                  ['purchase', '采购'],
+                ].map(([key, label]) => (
+                  <button key={key} onClick={() => setExpenseRankingScope(key as ExpenseRankingScope)} style={styles.segmentButton(expenseRankingScope === key)}>{label}</button>
+                ))}
+                <button onClick={() => setExpenseRankingSortBy('amount')} style={styles.segmentButton(expenseRankingSortBy === 'amount')}>金额</button>
+                <button onClick={() => setExpenseRankingSortBy('count')} style={styles.segmentButton(expenseRankingSortBy === 'count')}>笔数</button>
+                <select value={expenseRankingTopN} onChange={event => setExpenseRankingTopN(Number(event.target.value))} style={styles.select}>
+                  <option value={10}>Top 10</option>
+                  <option value={20}>Top 20</option>
+                  <option value={50}>Top 50</option>
+                </select>
+              </div>
+            </div>
+            {expenseRankings.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '0.5rem' }}>暂无开支数据</div>
+            ) : (
+              <div>
+                {expenseRankings.map((item, index) => {
+                  const barWidth = maxExpenseAmount > 0 ? Math.max(4, (item.amount / maxExpenseAmount) * 100) : 0;
+                  const accent = item.type === 'purchase' ? '#b45309' : '#0f9488';
+                  return (
+                    <div key={item.key} style={{ display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr) auto', gap: '0.7rem', alignItems: 'center', padding: '0.68rem 0', borderBottom: `1px solid ${colors.border}` }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 14, background: index < 3 ? 'linear-gradient(135deg, #f59e0b, #0f9488)' : colors.surfaceMuted, color: index < 3 ? '#ffffff' : colors.textSecondary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 750, fontSize: '0.74rem' }}>{index + 1}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', minWidth: 0 }}>
+                          <span style={{ fontWeight: 750, color: colors.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
+                          <span style={{ flexShrink: 0, borderRadius: 999, background: item.type === 'purchase' ? '#fff7ed' : '#ecfdf5', color: accent, padding: '0.12rem 0.45rem', fontSize: '0.68rem', fontWeight: 750 }}>{item.typeLabel}</span>
+                        </div>
+                        <div style={{ ...styles.muted, marginTop: 2 }}>{item.fullCategory} · 均额 {money(item.averageAmount)}</div>
+                        <div style={{ height: 7, background: colors.surfaceMuted, borderRadius: 999, marginTop: 8, overflow: 'hidden' }}>
+                          <div style={{ width: `${barWidth}%`, height: '100%', background: `linear-gradient(90deg, ${accent}, #38bdf8)`, borderRadius: 999 }} />
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 780, color: colors.textPrimary }}>{money(item.amount)}</div>
+                        <div style={styles.muted}>{item.count} 笔 · {pct(item.amountShare)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>采购物品 Top 10</h2>
+            <div style={{ ...styles.muted, marginTop: 4 }}>按采购单明细汇总，辅助判断买了哪些物品</div>
+            <div style={{ marginTop: '0.75rem' }}>
+              {topPurchases.length === 0 ? <div style={styles.muted}>暂无采购</div> : topPurchases.map((item, index) => (
+                <div key={item.name} style={{ display: 'grid', gridTemplateColumns: '30px minmax(0, 1fr) auto', gap: '0.65rem', alignItems: 'center', padding: '0.58rem 0', borderBottom: `1px solid ${colors.border}` }}>
+                  <span style={{ fontWeight: 750, color: colors.textSecondary }}>{index + 1}</span>
+                  <span style={{ fontWeight: 680, color: colors.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}<span style={{ ...styles.muted, marginLeft: 6 }}>x {item.quantity}</span></span>
+                  <span style={{ fontWeight: 750, color: colors.textPrimary }}>{money(item.amount)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-
-        {(expenseByCategory.length > 0 || topPurchases.length > 0) && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={styles.section}>
-              <h2 style={styles.sectionTitle}>日常开支分类</h2>
-              <div style={{ marginTop: '0.75rem' }}>
-                {expenseByCategory.length === 0 ? <div style={styles.muted}>暂无开支</div> : expenseByCategory.map(item => (
-                  <div key={item.category} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                    <span style={{ fontWeight: 650, color: '#263d50' }}>{item.category}</span>
-                    <span style={{ color: '#c2410c', fontWeight: 700 }}>{money(item.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div style={styles.section}>
-              <h2 style={styles.sectionTitle}>采购物品 Top 10</h2>
-              <div style={{ marginTop: '0.75rem' }}>
-                {topPurchases.length === 0 ? <div style={styles.muted}>暂无采购</div> : topPurchases.map((item, index) => (
-                  <div key={item.name} style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.625rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                    <span style={{ fontWeight: 700, color: '#6b7f8f' }}>{index + 1}</span>
-                    <span style={{ fontWeight: 650, color: '#263d50' }}>{item.name}<span style={{ ...styles.muted, marginLeft: 6 }}>x {item.quantity}</span></span>
-                    <span style={{ fontWeight: 700, color: '#263d50' }}>{money(item.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
 
         {salesTrend.length > 0 && (
           <div style={styles.section}>
@@ -1048,7 +1192,12 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
+        <div data-customer-analysis="true" style={{ marginBottom: '1rem' }}>
+          <div style={{ margin: '0 0 0.6rem' }}>
+            <h2 style={{ ...styles.sectionTitle, fontSize: '1rem' }}>客户分析</h2>
+            <div style={{ ...styles.muted, marginTop: 4 }}>客户构成、营业高峰、品类偏好和 VIP 客户集中查看。</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>客户构成</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
@@ -1118,6 +1267,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               ))}
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

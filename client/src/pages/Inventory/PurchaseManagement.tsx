@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { smartAddDocument, smartIncrementField, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartIncrementField, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
 interface Supplier {
@@ -35,7 +35,6 @@ interface PurchaseOrder {
   receivedDate?: Date;
   notes?: string;
   invoiceNumber?: string; // 发票号
-  invoiceImage?: string; // 发票图片
   lastModified?: number;
 }
 
@@ -53,6 +52,25 @@ interface InventoryItem {
   location?: string;
   lastUpdated: Date;
 }
+
+const getPurchaseOrderTime = (value: any): number => {
+  const dateValue = value?.orderDate || value?.receivedDate || value?.createdAt || value?.lastModified || value;
+  if (!dateValue) return 0;
+  if (typeof dateValue?.toDate === 'function') return dateValue.toDate().getTime() || 0;
+  if (typeof dateValue?.seconds === 'number') return dateValue.seconds * 1000;
+  const time = dateValue instanceof Date ? dateValue.getTime() : new Date(dateValue).getTime();
+  return Number.isFinite(time) ? time : 0;
+};
+
+const getPurchaseOrderDateKey = (value: any): string => {
+  const time = getPurchaseOrderTime(value);
+  return time ? getLocalDateString(new Date(time)) : '';
+};
+
+const formatPurchaseDate = (value: any): string => {
+  const time = getPurchaseOrderTime(value);
+  return time ? new Date(time).toLocaleDateString('zh-CN') : '无日期';
+};
 
 interface PurchaseManagementProps {
   suppliers: Supplier[];
@@ -76,14 +94,15 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSubmittingPurchaseOrder, setIsSubmittingPurchaseOrder] = useState(false);
+  const isSubmittingPurchaseOrderRef = useRef(false);
   
   // 查询筛选状态
   const [searchFilters, setSearchFilters] = useState({
     orderNumber: '',
     supplierId: '',
-    startDate: '',
-    endDate: '',
+    startDate: getLocalDateString(),
+    endDate: getLocalDateString(),
     paymentType: 'all' as 'all' | 'cash' | 'credit',
     status: 'all' as 'all' | 'pending' | 'partial' | 'completed'
   });
@@ -100,8 +119,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       quantity: number;
       unitPrice: number;
       subtotal: number;
-    }>,
-    invoiceImage: null as string | null
+    }>
   });
   
   // 物品选择筛选状态（每行独立）
@@ -151,18 +169,6 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     return newOrder.items.reduce((sum, item) => sum + item.subtotal, 0);
   };
 
-  // 处理发票上传
-  const handleInvoiceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // 模拟上传，实际应该上传到服务器
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewOrder({ ...newOrder, invoiceImage: reader.result as string });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   // 提交采购单
   const submitPurchaseOrder = async () => {
@@ -186,6 +192,13 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     const supplier = suppliers.find(s => s.id === newOrder.supplierId);
     if (!supplier) return;
 
+    if (isSubmittingPurchaseOrderRef.current) {
+      return;
+    }
+    isSubmittingPurchaseOrderRef.current = true;
+    setIsSubmittingPurchaseOrder(true);
+
+    try {
     const totalAmount = calculateTotal();
     const now = Date.now();
 
@@ -221,28 +234,61 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     if (newOrder.paymentType === 'cash') {
       const expenseDate = getLocalDateString();
       purchaseExpense = {
-        id: `purchase_${Date.now()}`,
+        id: `purchase-expense-${order.id}`,
         date: expenseDate,
         categoryId: 'supplier_payment',
         categoryName: '\u4f9b\u5e94\u5546\u8d27\u6b3e',
         amount: totalAmount,
         description: `\u91c7\u8d2d\u73b0\u7ed3 - ${supplier.name} (${newOrder.orderNumber})`,
+        type: 'purchase',
         supplierId: newOrder.supplierId,
         supplierName: supplier.name,
+        purchaseOrderId: order.id,
+        orderId: order.id,
         relatedType: 'purchase',
         orderNumber: newOrder.orderNumber,
         createdAt: getLocalDateString(),
+        lastModified: now,
       };
     }
 
     try {
       await smartAddDocument('purchase_orders', order);
-      await Promise.all(newOrder.items.map(orderItem => smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', orderItem.quantity, {
+      await Promise.all(newOrder.items.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', orderItem.quantity, {
         lastModified: now,
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
+        syncOperationId: `purchase-stock-${order.id}-${orderItem.itemId}-${itemIndex}`
       })));
+      await Promise.all(newOrder.items.map(async (orderItem, itemIndex) => {
+        const inventoryItem = inventoryItems.find(item => item.id === orderItem.itemId);
+        const beforeStock = Number(inventoryItem?.currentStock) || 0;
+        const stockRecord = {
+          id: `stock-record-${order.id}-${orderItem.itemId}-${itemIndex}`,
+          itemId: orderItem.itemId,
+          itemName: orderItem.itemName || inventoryItem?.name || orderItem.itemId,
+          type: 'in',
+          quantity: orderItem.quantity,
+          signedQuantity: orderItem.quantity,
+          reason: 'purchase order',
+          source: 'purchase_order',
+          sourceId: order.id,
+          orderNumber: order.orderNumber,
+          supplierId: order.supplierId,
+          supplierName: order.supplierName,
+          locationType: 'warehouse',
+          beforeStock,
+          afterStock: beforeStock + orderItem.quantity,
+          unit: inventoryItem?.unit || '',
+          date: order.orderDate,
+          createdAt: order.receivedDate || order.orderDate,
+          createdAtMs: now,
+          lastModified: now,
+          operator: 'system'
+        };
+        await smartAddDocument('inventory_stock_records', stockRecord);
+      }));
       if (purchaseExpense) {
-        await smartAddDocument('expenses', purchaseExpense);
+        await smartSetDocument('expenses', purchaseExpense.id, purchaseExpense);
       }
       if (supplierCloudUpdate) {
         await smartUpdateDocument('suppliers', newOrder.supplierId, supplierCloudUpdate);
@@ -254,13 +300,17 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     }
 
     setPurchaseOrders(nextPurchaseOrders);
+    await dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false });
     setInventoryItems(items => items.map(item => {
       const inventoryUpdate = inventoryUpdates.find(update => update.orderItem.itemId === item.id);
       if (!inventoryUpdate) return item;
       return { ...item, currentStock: item.currentStock + inventoryUpdate.orderItem.quantity, lastModified: now, lastUpdated: new Date() };
     }));
     if (purchaseExpense) {
-      const nextExpenses = [...dataManager.getData('expenses'), purchaseExpense];
+      const nextExpenses = [
+        purchaseExpense,
+        ...dataManager.getData('expenses').filter(expense => expense.id !== purchaseExpense.id)
+      ];
       await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
     }
     if (supplierCloudUpdate) {
@@ -268,7 +318,6 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
         sup.id === newOrder.supplierId ? supplierCloudUpdate : sup
       ));
     }
-    alert(`采购单 ${newOrder.orderNumber} 创建成功！`);
     setShowNewOrderModal(false);
     setNewOrder({
       supplierId: '',
@@ -276,8 +325,12 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       paymentType: 'credit',
       notes: '',
       items: [],
-      invoiceImage: null
     });
+    alert(`采购单 ${newOrder.orderNumber} 创建成功！`);
+    } finally {
+      isSubmittingPurchaseOrderRef.current = false;
+      setIsSubmittingPurchaseOrder(false);
+    }
   };
 
   // 入库操作
@@ -337,7 +390,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
             <span class="info-label">供应商：</span>
             <span class="info-value">${order.supplierName}</span>
             <span class="info-label">采购日期：</span>
-            <span class="info-value">${new Date(order.orderDate).toLocaleDateString('zh-CN')}</span>
+            <span class="info-value">${formatPurchaseDate(order.orderDate)}</span>
           </div>
           <div class="info-row">
             <span class="info-label">支付方式：</span>
@@ -449,20 +502,20 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     
     // 日期范围筛选
     if (searchFilters.startDate) {
-      const orderDate = getLocalDateString(new Date(order.orderDate)); // 🔥 使用本地时间
+      const orderDate = getPurchaseOrderDateKey(order.orderDate);
       if (orderDate < searchFilters.startDate) {
         return false;
       }
     }
     if (searchFilters.endDate) {
-      const orderDate = getLocalDateString(new Date(order.orderDate)); // 🔥 使用本地时间
+      const orderDate = getPurchaseOrderDateKey(order.orderDate);
       if (orderDate > searchFilters.endDate) {
         return false;
       }
     }
     
     return true;
-  });
+  }).sort((a, b) => getPurchaseOrderTime(b) - getPurchaseOrderTime(a));
 
   return (
     <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -540,8 +593,8 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
             onClick={() => setSearchFilters({
               orderNumber: '',
               supplierId: '',
-              startDate: '',
-              endDate: '',
+              startDate: getLocalDateString(),
+              endDate: getLocalDateString(),
               paymentType: 'all',
               status: 'all'
             })}
@@ -579,7 +632,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                   <div>
                     <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{order.orderNumber}</div>
                     <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                      供应商：{order.supplierName} | {new Date(order.orderDate).toLocaleDateString('zh-CN')}
+                      供应商：{order.supplierName} | {formatPurchaseDate(order.orderDate)}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -714,7 +767,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
             <div style={{ backgroundColor: '#f9fafb', padding: '1rem', borderRadius: '0.375rem', marginBottom: '1rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.9rem' }}>
                 <div><span style={{ color: '#6b7280' }}>供应商：</span><strong>{selectedOrder.supplierName}</strong></div>
-                <div><span style={{ color: '#6b7280' }}>采购日期：</span>{new Date(selectedOrder.orderDate).toLocaleDateString('zh-CN')}</div>
+                <div><span style={{ color: '#6b7280' }}>采购日期：</span>{formatPurchaseDate(selectedOrder.orderDate)}</div>
                 <div><span style={{ color: '#6b7280' }}>支付方式：</span>{selectedOrder.paymentType === 'cash' ? '💵 现结' : '💳 欠款'}</div>
                 <div>
                   <span style={{ color: '#6b7280' }}>状态：</span>
@@ -729,7 +782,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                     {selectedOrder.status === 'completed' ? '✅ 已完成' : '⏸️ 待处理'}
                   </span>
                 </div>
-                {selectedOrder.receivedDate && <div><span style={{ color: '#6b7280' }}>入库日期：</span>{new Date(selectedOrder.receivedDate).toLocaleDateString('zh-CN')}</div>}
+                {selectedOrder.receivedDate && <div><span style={{ color: '#6b7280' }}>入库日期：</span>{formatPurchaseDate(selectedOrder.receivedDate)}</div>}
               </div>
               {selectedOrder.notes && (
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
@@ -1063,32 +1116,6 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                 </div>
               </div>
 
-              {/* 发票上传 */}
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.85rem' }}>
-                  📷 发票上传（防止作弊）
-                </label>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'start' }}>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleInvoiceUpload}
-                    style={{ flex: 1 }}
-                  />
-                  {newOrder.invoiceImage && (
-                    <img
-                      src={newOrder.invoiceImage}
-                      alt="发票"
-                      style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '0.25rem', border: '1px solid #e5e7eb' }}
-                    />
-                  )}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                  支持JPG、PNG格式，建议拍摄清晰完整的发票照片
-                </div>
-              </div>
-
               {/* 备注 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.85rem' }}>
@@ -1114,7 +1141,6 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                     paymentType: 'credit',
                     notes: '',
                     items: [],
-                    invoiceImage: null
                   });
                 }}
                 style={{
@@ -1131,17 +1157,18 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
               </button>
               <button
                 onClick={submitPurchaseOrder}
+                disabled={isSubmittingPurchaseOrder}
                 style={{
                   padding: '0.6rem 1.2rem',
-                  backgroundColor: '#10b981',
+                  backgroundColor: isSubmittingPurchaseOrder ? '#9ca3af' : '#10b981',
                   color: 'white',
                   border: 'none',
                   borderRadius: '0.375rem',
-                  cursor: 'pointer',
+                  cursor: isSubmittingPurchaseOrder ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
               >
-                ✅ 提交采购单
+                {isSubmittingPurchaseOrder ? '提交中...' : '✅ 提交采购单'}
               </button>
             </div>
           </div>

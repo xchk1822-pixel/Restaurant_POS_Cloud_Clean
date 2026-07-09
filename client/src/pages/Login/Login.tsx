@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { firebaseLogin, createFirebaseUser } from '../../services/FirebaseAuthService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import logo from '../../logo.svg';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -173,15 +174,19 @@ const Login: React.FC = () => {
             width: '3.4rem',
             height: '3.4rem',
             borderRadius: '1rem',
-            background: 'rgba(255,255,255,0.16)',
-            border: '1px solid rgba(255,255,255,0.25)',
+            background: 'rgba(255,255,255,0.92)',
+            border: '1px solid rgba(255,255,255,0.55)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontWeight: 800,
             marginBottom: '1.5rem',
+            boxShadow: '0 18px 42px rgba(15, 23, 42, 0.24)',
           }}>
-            POS
+            <img
+              src={logo}
+              alt="Restaurant POS Panda"
+              style={{ width: '84%', height: '84%', objectFit: 'contain', display: 'block' }}
+            />
           </div>
           <h1 style={{ margin: 0, fontSize: '2.4rem', lineHeight: 1.08, letterSpacing: 0 }}>
             Restaurant POS

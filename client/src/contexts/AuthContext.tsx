@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChange } from '../services/FirebaseAuthService';
+import { onAuthStateChange, getFirebaseUserProfile } from '../services/FirebaseAuthService';
 import { dataService } from '../services/DataService';
 
 export type UserRole = 'super_admin' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
@@ -9,9 +9,10 @@ export interface User {
   username: string;
   name: string;
   role: UserRole;
-  storeId?: string; // 超级管理员为空，其他有分店ID
+  storeId?: string;
   storeName?: string;
   avatar?: string;
+  status?: 'active' | 'inactive';
 }
 
 interface AuthContextType {
@@ -20,7 +21,7 @@ interface AuthContextType {
   logout: () => void;
   switchStore: (storeId: string, storeName: string) => void;
   isAuthenticated: boolean;
-  isLoading: boolean; // 🔥 添加加载状态
+  isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,40 +34,65 @@ export const useAuth = () => {
   return context;
 };
 
+const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+
+const syncUserDataInBackground = (userData: User) => {
+  const syncTask = userData.storeId
+    ? dataService.syncStoreData(userData.storeId)
+    : dataService.syncGlobalDataForAdmin();
+
+  syncTask.catch((error) => {
+    console.error('Background user data sync failed:', error);
+  });
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // 🔥 添加加载状态
+  const [isLoading, setIsLoading] = useState(true);
 
-  // 🔥 监听 Firebase Auth 状态变化
   useEffect(() => {
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
       if (firebaseUser) {
-        // 从 localStorage 恢复完整的用户信息（包含 role, storeId 等）
         try {
-          const savedUser = localStorage.getItem('current_user');
-          if (savedUser) {
-            const parsed = JSON.parse(savedUser);
-            setUser(parsed);
-            setIsLoading(false);
-            
-            // 云端同步放到后台执行，避免阻塞路由恢复导致页面一直停在 loading。
-            const syncTask = parsed.storeId
-              ? dataService.syncStoreData(parsed.storeId)
-              : dataService.syncGlobalDataForAdmin();
-            syncTask.catch((error) => {
-              console.error('❌ 后台同步用户数据失败:', error);
-            });
-          }
+          const verifiedUser = await getFirebaseUserProfile(firebaseUser);
+          setUser(verifiedUser);
+          localStorage.setItem('current_user', JSON.stringify(verifiedUser));
+          syncUserDataInBackground(verifiedUser);
         } catch (error) {
-          console.error('❌ 恢复用户信息失败:', error);
-          localStorage.removeItem('current_user');
+          console.error('Firebase user profile verification failed:', error);
+
+          if (isOffline()) {
+            const savedUser = localStorage.getItem('current_user');
+            if (savedUser) {
+              const parsed = JSON.parse(savedUser);
+              setUser(parsed);
+              syncUserDataInBackground(parsed);
+            } else {
+              setUser(null);
+            }
+          } else {
+            localStorage.removeItem('current_user');
+            setUser(null);
+          }
+        } finally {
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      if (isOffline()) {
+        const savedUser = localStorage.getItem('current_user');
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
+        } else {
+          setUser(null);
         }
       } else {
         setUser(null);
       }
       setIsLoading(false);
     });
-    
+
     return () => unsubscribe();
   }, []);
 
@@ -74,20 +100,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(userData);
     setIsLoading(false);
     localStorage.setItem('current_user', JSON.stringify(userData));
-    
+
     window.dispatchEvent(new Event('userLoggedIn'));
   };
 
   const logout = async () => {
     setUser(null);
     localStorage.removeItem('current_user');
-    
-    // 🔥 调用 Firebase Auth 登出
+
     try {
       const { firebaseLogout } = await import('../services/FirebaseAuthService');
       await firebaseLogout();
     } catch (error) {
-      console.error('❌ Firebase Auth 登出失败:', error);
+      console.error('Firebase Auth logout failed:', error);
     }
   };
 
@@ -100,13 +125,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      login, 
-      logout, 
+    <AuthContext.Provider value={{
+      user,
+      login,
+      logout,
       switchStore,
       isAuthenticated: !!user,
-      isLoading // 🔥 暴露加载状态
+      isLoading
     }}>
       {children}
     </AuthContext.Provider>

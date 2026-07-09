@@ -6,8 +6,28 @@ import { dataService } from '../../services/DataService';
 import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
-import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection } from '../../services/smartSyncService';
+import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import {
+  getOrderSignature,
+  getOrdersSignature,
+  getPosOrderCardColor,
+  getPosOrderStatusText,
+  hasNewerCloudOrders,
+  isDisplayablePosOrder,
+  isEditableActiveOrder,
+  mergeOrdersByVersion,
+  reconcileTableStatusFromOrders,
+} from '../../utils/posLifecycle';
+import {
+  buildKitchenTicketPayload,
+  buildLocalPrintPayload,
+  buildThermalReceiptHtml,
+  buildThermalReceiptText,
+  getCurrentStoreReceiptProfile,
+  openBrowserPrintWindow,
+  printViaLocalBridge,
+} from '../../utils/receiptPrinter';
 import tableFoodBackground from '../../assets/pos/table-food-background.jpg';
 import tableSingleModern from '../../assets/pos/table-single-modern.png';
 import tableHorizontalModern from '../../assets/pos/table-horizontal-modern.png';
@@ -38,7 +58,7 @@ interface Table {
     status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
     currentOrderId?: string;
   }>;
-  lastModified?: number; // 馃敟 鏈€鍚庝慨鏀规椂闂存埑锛堟绉掞級锛岀敤浜庡璁惧鍚屾鐗堟湰鎺у埗
+  lastModified?: number;
 }
 
 interface OrderItem {
@@ -84,7 +104,6 @@ interface SplitBill {
   paymentStatus: 'unpaid' | 'paid';
 }
 
-// 椤惧淇℃伅
 interface Customer {
   id: string;
   name: string;
@@ -92,7 +111,7 @@ interface Customer {
   points: number; // 绉垎
   totalSpent: number; // 鎬绘秷璐?
   visitCount: number; // 娑堣垂娆℃暟
-  createdAt: string;  // 馃攧 涓?DataManager 淇濇寔涓€鑷达紝浣跨敤 ISO 瀛楃涓?
+  createdAt: string;
   lastVisitAt?: string;
   notes?: string;
 }
@@ -111,23 +130,24 @@ interface PointsTransaction {
 
 interface Order {
   id: string;
-  orderNumber?: string; // 璁㈠崟鍙凤紙鏍煎紡锛歁MDD + 搴忓彿锛?
+  orderNumber?: string;
   tableId: string;
   tableNumber: string;
   orderType: 'dine_in' | 'takeout' | 'delivery';
-  deliveryType?: 'self' | 'outsourced'; // 娲鹃€佺被鍨嬶細鑷€?澶栨淳
+  deliveryType?: 'self' | 'outsourced';
   deliveryFee?: number; // 娲鹃€佽垂
   customerId?: string; // 鍏宠仈椤惧ID
-  customerName?: string; // 椤惧濮撳悕锛堝啑浣欏瓧娈碉紝鏂逛究鏄剧ず锛?
+  customerName?: string;
   items: OrderItem[];
+  cancelRecords?: CancelRecord[];
   status: 'draft' | 'confirmed' | 'preparing' | 'served' | 'completed' | 'cancelled';
 
-  // 鉁?鏃堕棿杩借釜瀛楁
-  createdAt: Date;           // 涓嬪崟鏃堕棿
-  preparingAt?: Date;        // 寮€濮嬪埗浣滄椂闂达紙纭涓嬪崟鏃惰褰曪級
-  servedAt?: Date;           // 浜や粯鏃堕棿锛堜笂鑿?鎵撳寘瀹屾垚锛?
-  completedAt?: Date;        // 瀹屾垚鏃堕棿锛堟敮浠樺畬鎴愶級
-  clearedAt?: Date;          // 娓呭彴鏃堕棿锛堝彲閫夛級
+  createdAt: Date;
+  updatedAt?: Date | string;
+  preparingAt?: Date;
+  servedAt?: Date;
+  completedAt?: Date;
+  clearedAt?: Date;
 
   totalAmount: number;
   paidAmount: number;
@@ -140,17 +160,22 @@ interface Order {
   cancelledAt?: Date;
   paymentMethod?: 'cash' | 'card' | 'mixed'; // 鏀粯鏂瑰紡
   cashAmount?: number; // 鐜伴噾鏀粯閲戦
-  cardAmount?: number; // 鍒峰崱鏀粯閲戦
+  cardAmount?: number;
   stockDeducted?: boolean;
   stockDeductedAt?: Date;
   stockDeductedItems?: Record<string, number>;
   stockDeductionOperationId?: string;
+  stockDeductionInProgress?: boolean;
+  stockDeductionClaimedAt?: number;
+  stockDeductionPending?: boolean;
+  stockDeductionFailedAt?: number;
+  stockDeductionError?: string;
   pointsProcessed?: boolean;
   pointsProcessedAt?: Date;
   pointsEarned?: number;
   pointsUsed?: number;
   pointsDiscount?: number;
-  lastModified?: number; // 馃敟 鏈€鍚庝慨鏀规椂闂存埑锛堟绉掞級锛岀敤浜庡璁惧鍚屾鐗堟湰鎺у埗
+  lastModified?: number;
 }
 
 interface HeldOrder {
@@ -160,64 +185,18 @@ interface HeldOrder {
   tableNumber: string;
   items: OrderItem[];
   orderType: 'dine_in' | 'takeout' | 'delivery';
-  deliveryType?: 'self' | 'outsourced'; // 娲鹃€佺被鍨嬶細鑷€?澶栨淳
+  deliveryType?: 'self' | 'outsourced';
   createdAt: Date;
   serviceFeeEnabled: boolean;
   taxEnabled: boolean;
   deliveryFee: number;
 }
 
-const normalizeDateForSignature = (value: any): number | string | null => {
-  if (!value) return null;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'object' && typeof value.seconds === 'number') {
-    return value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1000000);
-  }
-
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? String(value) : time;
+type PosToast = {
+  id: number;
+  message: string;
+  tone: 'success' | 'error' | 'warning';
 };
-
-const getOrdersSignature = (orders: Array<Partial<Order>> = []): string => {
-  return JSON.stringify(
-    [...orders]
-      .map(order => ({
-        id: order.id,
-        tableId: order.tableId,
-        tableNumber: order.tableNumber,
-        orderType: order.orderType,
-        status: order.status,
-        paymentStatus: order.paymentStatus,
-        totalAmount: order.totalAmount || 0,
-        paidAmount: order.paidAmount || 0,
-        settledAmount: order.settledAmount || 0,
-        lastModified: order.lastModified || null,
-        createdAt: normalizeDateForSignature(order.createdAt),
-        completedAt: normalizeDateForSignature(order.completedAt),
-        clearedAt: normalizeDateForSignature(order.clearedAt),
-        stockDeducted: !!order.stockDeducted,
-        stockDeductedAt: normalizeDateForSignature(order.stockDeductedAt),
-        stockDeductedItems: order.stockDeductedItems || {},
-        stockDeductionOperationId: order.stockDeductionOperationId || null,
-        pointsProcessed: !!order.pointsProcessed,
-        pointsProcessedAt: normalizeDateForSignature(order.pointsProcessedAt),
-        pointsEarned: order.pointsEarned || 0,
-        pointsUsed: order.pointsUsed || 0,
-        pointsDiscount: order.pointsDiscount || 0,
-        items: (order.items || []).map(item => ({
-          id: item.id,
-          menuItemId: item.menuItemId,
-          quantity: item.quantity,
-          subtotal: item.subtotal,
-          stockItemId: item.stockItemId,
-          ingredients: item.ingredients || []
-        }))
-      }))
-      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-  );
-};
-
-const getOrderSignature = (order: Partial<Order>): string => getOrdersSignature([order]);
 
 const stripUndefinedValues = (value: any): any => {
   if (Array.isArray(value)) {
@@ -237,20 +216,32 @@ const stripUndefinedValues = (value: any): any => {
   return value;
 };
 
-const serializeOrderForFirestore = (order: Order): any => {
+const serializeDateForFirestore = (value: any): any => {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    if (!Number.isFinite(time)) {
+      return undefined;
+    }
+    return value.toISOString();
+  }
+
+  return value;
+};
+
+const serializeOrderForFirestore = (order: Order): Record<string, any> => {
   const orderAny = order as any;
   return stripUndefinedValues({
     ...order,
-    createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
-    updatedAt: orderAny.updatedAt instanceof Date ? orderAny.updatedAt.toISOString() : orderAny.updatedAt,
-    preparingAt: order.preparingAt instanceof Date ? order.preparingAt.toISOString() : order.preparingAt,
-    servedAt: order.servedAt instanceof Date ? order.servedAt.toISOString() : order.servedAt,
-    completedAt: order.completedAt instanceof Date ? order.completedAt.toISOString() : order.completedAt,
-    cancelledAt: order.cancelledAt instanceof Date ? order.cancelledAt.toISOString() : order.cancelledAt,
-    clearedAt: order.clearedAt instanceof Date ? order.clearedAt.toISOString() : order.clearedAt,
-    lastPaidAt: order.lastPaidAt instanceof Date ? order.lastPaidAt.toISOString() : order.lastPaidAt,
-    stockDeductedAt: order.stockDeductedAt instanceof Date ? order.stockDeductedAt.toISOString() : order.stockDeductedAt,
-    pointsProcessedAt: order.pointsProcessedAt instanceof Date ? order.pointsProcessedAt.toISOString() : order.pointsProcessedAt,
+    createdAt: serializeDateForFirestore(order.createdAt),
+    updatedAt: serializeDateForFirestore(orderAny.updatedAt),
+    preparingAt: serializeDateForFirestore(order.preparingAt),
+    servedAt: serializeDateForFirestore(order.servedAt),
+    completedAt: serializeDateForFirestore(order.completedAt),
+    cancelledAt: serializeDateForFirestore(order.cancelledAt),
+    clearedAt: serializeDateForFirestore(order.clearedAt),
+    lastPaidAt: serializeDateForFirestore(order.lastPaidAt),
+    stockDeductedAt: serializeDateForFirestore(order.stockDeductedAt),
+    pointsProcessedAt: serializeDateForFirestore(order.pointsProcessedAt),
     lastModified: order.lastModified || Date.now(),
   });
 };
@@ -263,6 +254,19 @@ const getScopedStorageKey = (key: string): string => {
   } catch {
     return key;
   }
+};
+
+const getCurrentUserRecord = (): any => {
+  try {
+    const currentUser = localStorage.getItem('current_user');
+    return currentUser ? JSON.parse(currentUser) : null;
+  } catch {
+    return null;
+  }
+};
+
+const getCurrentStoreIdForPrint = (): string => {
+  return getCurrentUserRecord()?.storeId || dataService.getCurrentStoreId() || '';
 };
 
 const loadPendingOrderSyncIds = (): Set<string> => {
@@ -278,7 +282,7 @@ const savePendingOrderSyncIds = (ids: Set<string>) => {
   try {
     localStorage.setItem(getScopedStorageKey('pos_pending_order_sync'), JSON.stringify(Array.from(ids)));
   } catch (error) {
-    console.error('淇濆瓨寰呭悓姝ヨ鍗曢槦鍒楀け璐?', error);
+    console.error('POS operation failed:', error);
   }
 };
 
@@ -312,6 +316,8 @@ const getTablesSignature = (tables: Array<Partial<Table>> = []): string => {
       .sort((a, b) => String(a.id).localeCompare(String(b.id)))
   );
 };
+
+const getTableSignature = (table: Partial<Table>): string => getTablesSignature([table]);
 
 const getTableVersion = (table: Partial<Table>): number => {
   const version = Number(table.lastModified || 0);
@@ -369,7 +375,8 @@ const normalizeTables = (
       status: table.status || 'available',
       capacity: table.capacity || 4,
       number: String(table.number || '').trim() || String(table.id),
-      lastModified: getTableVersion(table) || Date.now()
+      currentOrderId: table.currentOrderId || '',
+      lastModified: getTableVersion(table)
     };
 
     const key = getTableDedupeKey(normalizedTable);
@@ -394,6 +401,34 @@ const normalizeTables = (
   };
 };
 
+const mergeTablesByVersion = (
+  localTables: Table[],
+  incomingTables: Table[],
+  preferredTableIds: Set<string> = new Set(),
+  dirtyTableIds: Set<string> = new Set()
+): Table[] => {
+  const merged = new Map<string, Table>();
+
+  localTables.forEach(localTable => {
+    if (localTable?.id) merged.set(localTable.id, localTable);
+  });
+
+  incomingTables.forEach(incomingTable => {
+    if (!incomingTable?.id) return;
+    const localTable = merged.get(incomingTable.id);
+    if (!localTable) {
+      merged.set(incomingTable.id, incomingTable);
+      return;
+    }
+    if (dirtyTableIds.has(localTable.id) && getTableVersion(localTable) > getTableVersion(incomingTable)) {
+      return;
+    }
+    merged.set(incomingTable.id, incomingTable);
+  });
+
+  return normalizeTables(Array.from(merged.values()), preferredTableIds).tables;
+};
+
 const getMergedTableBounds = (tables: Array<Pick<Table, 'x' | 'y' | 'width' | 'height'>>) => {
   const minX = Math.min(...tables.map(table => table.x));
   const minY = Math.min(...tables.map(table => table.y));
@@ -406,55 +441,6 @@ const getMergedTableBounds = (tables: Array<Pick<Table, 'x' | 'y' | 'width' | 'h
   return { x: minX, y: minY, width, height, orientation };
 };
 
-const getOrderVersion = (order: Partial<Order>): number => {
-  const version = Number(order.lastModified || 0);
-  return Number.isFinite(version) ? version : 0;
-};
-
-const getPaymentRank = (paymentStatus?: string): number => {
-  switch (paymentStatus) {
-    case 'paid': return 3;
-    case 'partial': return 2;
-    case 'refunded': return 1;
-    case 'unpaid':
-    default: return 0;
-  }
-};
-
-const getOrderStatusRank = (status?: string): number => {
-  switch (status) {
-    case 'cancelled':
-    case 'completed': return 5;
-    case 'paid': return 4;
-    case 'served': return 3;
-    case 'preparing': return 2;
-    case 'confirmed': return 1;
-    case 'draft':
-    default: return 0;
-  }
-};
-
-const isTerminalOrderStatus = (status?: string): boolean => {
-  return status === 'completed' || status === 'cancelled';
-};
-
-const isCloudTerminalAdvance = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {
-  return isTerminalOrderStatus(incomingOrder.status) && !isTerminalOrderStatus(localOrder.status);
-};
-
-const isOrderStateRegression = (localOrder: Partial<Order>, incomingOrder: Partial<Order>): boolean => {
-  if (localOrder.stockDeducted && !incomingOrder.stockDeducted) return true;
-  if (localOrder.clearedAt && !incomingOrder.clearedAt) return true;
-
-  const localStatusRank = getOrderStatusRank(localOrder.status);
-  const incomingStatusRank = getOrderStatusRank(incomingOrder.status);
-  if (localStatusRank > incomingStatusRank && ['completed', 'cancelled'].includes(String(localOrder.status))) {
-    return true;
-  }
-
-  return getPaymentRank(localOrder.paymentStatus) > getPaymentRank(incomingOrder.paymentStatus);
-};
-
 const toDisplayDate = (value: any): Date | null => {
   const timestamp = toTimestampMillis(value);
   return timestamp ? new Date(timestamp) : null;
@@ -464,6 +450,25 @@ const formatOrderTime = (value: any): string => {
   return formatNicaraguaTime(value);
 };
 
+const getOrderListTimeValue = (order: Partial<Order>): any => {
+  if (order.status === 'cancelled') {
+    return order.cancelledAt || order.createdAt || order.preparingAt || order.updatedAt;
+  }
+
+  return order.createdAt || order.preparingAt || order.completedAt || order.updatedAt || order.lastModified;
+};
+
+const isOrderFromDatePrefix = (order: Partial<Order>, datePrefix: string): boolean => {
+  const orderNumber = String(order.orderNumber || '').trim();
+  if (orderNumber.startsWith(datePrefix)) return true;
+
+  const orderDate = toDisplayDate(getOrderListTimeValue(order));
+  if (!orderDate) return false;
+
+  const date = getLocalDateString(orderDate);
+  return `${date.slice(5, 7)}${date.slice(8, 10)}` === datePrefix;
+};
+
 const isPaidAwaitingClear = (order: Partial<Order>): boolean => {
   return order.paymentStatus === 'paid' &&
     order.status !== 'completed' &&
@@ -471,46 +476,9 @@ const isPaidAwaitingClear = (order: Partial<Order>): boolean => {
     !order.clearedAt;
 };
 
-const isUnpaidActiveOrder = (order: Partial<Order>): boolean => {
-  return isEditableActiveOrder(order) &&
-    order.paymentStatus !== 'paid';
-};
-
-const isEditableActiveOrder = (order?: Partial<Order> | null): boolean => {
-  return !!order &&
-    order.status !== 'completed' &&
-    order.status !== 'cancelled' &&
-    order.status !== 'draft';
-};
-
-const hasNewerCloudOrders = (cloudOrders: Order[], localOrders: Order[]): boolean => {
-  const localById = new Map(localOrders.map(order => [order.id, order]));
-
-  return cloudOrders.some(cloudOrder => {
-    const localOrder = localById.get(cloudOrder.id);
-    if (!localOrder) return true;
-    if (isCloudTerminalAdvance(localOrder, cloudOrder)) return true;
-    if (isOrderStateRegression(localOrder, cloudOrder)) return false;
-    return getOrderVersion(cloudOrder) > getOrderVersion(localOrder);
-  });
-};
-
-const mergeOrdersByVersion = (localOrders: Order[], incomingOrders: Order[]): Order[] => {
-  const merged = new Map<string, Order>();
-
-  localOrders.forEach(order => {
-    if (order.id) merged.set(order.id, order);
-  });
-
-  incomingOrders.forEach(incomingOrder => {
-    if (!incomingOrder.id) return;
-    const localOrder = merged.get(incomingOrder.id);
-    if (!localOrder || isCloudTerminalAdvance(localOrder, incomingOrder) || (!isOrderStateRegression(localOrder, incomingOrder) && getOrderVersion(incomingOrder) >= getOrderVersion(localOrder))) {
-      merged.set(incomingOrder.id, incomingOrder);
-    }
-  });
-
-  return Array.from(merged.values());
+const getPosOrderSummaryAmount = (order: Partial<Order>): number => {
+  if (order.status === 'cancelled') return 0;
+  return Number(order.totalAmount || 0);
 };
 
 const tableCanvasFoodPattern = [
@@ -557,6 +525,8 @@ const POS: React.FC = () => {
   const orderPublisherReadyRef = useRef(false);
   const localTablesSignatureRef = useRef('');
   const publishedTablesSignatureRef = useRef('');
+  const publishedTableSignaturesRef = useRef<Map<string, string>>(new Map());
+  const dirtyTableIdsRef = useRef<Set<string>>(new Set());
   const tablePublisherReadyRef = useRef(false);
   const tableCloudHydratedRef = useRef(false);
   const tableUserEditPendingRef = useRef(false);
@@ -571,23 +541,19 @@ const POS: React.FC = () => {
     savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
 
     try {
-      await smartUpdateDocument('pos_orders', order.id, serializeOrderForFirestore(order));
+      const publishResult = await smartUpdateDocument('pos_orders', order.id, serializeOrderForFirestore(order));
+      if (publishResult?.pending || publishResult?.success === false) {
+        return publishResult;
+      }
       publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
       pendingOrderSyncIdsRef.current.delete(order.id);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      return publishResult;
     } catch (error) {
       pendingOrderSyncIdsRef.current.add(order.id);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
       throw error;
     }
-  };
-
-  const queueOrderPublish = (order: Order) => {
-    pendingOrderSyncIdsRef.current.add(order.id);
-    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-    publishOrderImmediately(order).catch(error => {
-      console.error('queued POS order sync failed:', order.id, error);
-    });
   };
 
   // 绂佹椤甸潰鏁翠綋婊氬姩
@@ -618,16 +584,13 @@ const POS: React.FC = () => {
         if (stored) {
           const parsed = JSON.parse(stored);
 
-          // 鉁?濡傛灉鏁版嵁涓嶅湪鏍囧噯 key 涓紝鑷姩杩佺Щ
           if (storeKey && k !== storeKey) {
             localStorage.setItem(storeKey, stored);
-            console.log(`鉁?宸茶嚜鍔ㄤ粠 ${k} 杩佺Щ鍒?${storeKey}`);
           }
 
           if (Array.isArray(parsed)) {
             return parsed.map(item => ({
               ...item,
-              // 鉁?鍙湁褰撳瓧娈靛瓨鍦ㄦ椂鎵嶈浆鎹紝涓嶈璁剧疆榛樿鍊?
               createdAt: item.createdAt ? new Date(item.createdAt) : undefined,
               confirmedAt: item.confirmedAt ? new Date(item.confirmedAt) : undefined,
               completedAt: item.completedAt ? new Date(item.completedAt) : undefined,
@@ -636,7 +599,6 @@ const POS: React.FC = () => {
               preparingAt: item.preparingAt ? new Date(item.preparingAt) : undefined,
               servedAt: item.servedAt ? new Date(item.servedAt) : undefined,
               lastPaidAt: item.lastPaidAt ? new Date(item.lastPaidAt) : undefined,
-              // 馃敟 濡傛灉娌℃湁 lastModified锛屾牴鎹?createdAt 鐢熸垚
               lastModified: item.lastModified || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
             })) as unknown as T;
           }
@@ -644,7 +606,7 @@ const POS: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error('鍔犺浇鏁版嵁澶辫触:', error);
+      console.error('POS operation failed:', error);
     }
     return defaultValue;
   };
@@ -658,11 +620,14 @@ const POS: React.FC = () => {
 
       // 保存本地分店缓存，云端同步由订单增量同步逻辑处理。
     } catch (error) {
-      console.error('淇濆瓨鏁版嵁澶辫触:', error);
+      console.error('POS operation failed:', error);
     }
   };
 
-  // 鐢熸垚鍞竴璁㈠崟ID锛堥伩鍏嶉噸澶嶏級
+  const filterCachedOrdersForStartup = (cachedOrders: Order[]): Order[] => {
+    return cachedOrders;
+  };
+
   const generateOrderId = () => {
     return `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   };
@@ -674,17 +639,17 @@ const POS: React.FC = () => {
   const [serviceFeeEnabled, setServiceFeeEnabled] = useState(false);
   const [taxEnabled, setTaxEnabled] = useState(false);
   const [deliveryFee, setDeliveryFee] = useState(0);
-  const [deliveryType, setDeliveryType] = useState<'self' | 'outsourced'>('self'); // 娲鹃€佺被鍨嬶細鑷€?澶栨淳
+  const [deliveryType, setDeliveryType] = useState<'self' | 'outsourced'>('self');
 
   // 鎶樻墸鍔熻兘
   const [discountEnabled, setDiscountEnabled] = useState(false);
-  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage'); // percentage: 鐧惧垎姣? fixed: 鍥哄畾閲戦
-  const [discountValue, setDiscountValue] = useState<number>(0); // 鎶樻墸鍊硷紙鐧惧垎姣旀垨閲戦锛?
-  const [discountReason, setDiscountReason] = useState(''); // 鎶樻墸鍘熷洜
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue, setDiscountValue] = useState<number>(0); // Discount value: percentage or fixed amount.
+  const [discountReason, setDiscountReason] = useState(''); // Discount reason.
 
   // 绉垎鍏戞崲
   const [pointsRedemptionEnabled, setPointsRedemptionEnabled] = useState(false);
-  const [pointsToUse, setPointsToUse] = useState<number>(0); // 浣跨敤鐨勭Н鍒?
+  const [pointsToUse, setPointsToUse] = useState<number>(0);
   // 浣跨敤鍏ㄥ眬绉垎鍏戞崲鐜?
   const pointsExchangeRate = getPointsExchangeRate();
   const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'delivery'>('dine_in');
@@ -697,12 +662,47 @@ const POS: React.FC = () => {
   const [cardNIO, setCardNIO] = useState('');
   const [cardUSD, setCardUSD] = useState('');
 
-  // 馃毇 闃叉閲嶅鏀粯
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const paymentProcessingRef = useRef(false);
   const [clearingOrderId, setClearingOrderId] = useState<string | null>(null);
   const [completingOrderIds, setCompletingOrderIds] = useState<Set<string>>(() => new Set());
+  const [finalizingOrderIds, setFinalizingOrderIds] = useState<Set<string>>(() => new Set());
+  const [posToast, setPosToast] = useState<PosToast | null>(null);
 
-  // 鉁?璁板綍宸叉墸鍑忓簱瀛樼殑璁㈠崟ID锛堥槻姝㈤噸澶嶆墸鍑忥級
+  const markOrderFinalizing = (orderId: string) => {
+    setFinalizingOrderIds(prev => {
+      const next = new Set(prev);
+      next.add(orderId);
+      return next;
+    });
+  };
+
+  const clearOrderFinalizing = (orderId: string) => {
+    setFinalizingOrderIds(prev => {
+      const next = new Set(prev);
+      next.delete(orderId);
+      return next;
+    });
+  };
+
+  const showPosToast = (message: string, tone: PosToast['tone'] = 'success') => {
+    const id = Date.now();
+    setPosToast({ id, message, tone });
+    window.setTimeout(() => {
+      setPosToast(current => current?.id === id ? null : current);
+    }, tone === 'error' ? 5200 : 3200);
+  };
+
+  const getCompletionErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || '');
+    const insufficientStockPrefix = 'insufficient-stock:';
+    if (message.includes(insufficientStockPrefix)) {
+      const itemName = message.split(insufficientStockPrefix)[1]?.split('\n')[0]?.trim() || 'producto';
+      return `Inventario insuficiente: ${itemName}. Ajuste inventario y vuelva a intentar.`;
+    }
+    return 'No se pudo sincronizar. Revise la red e intente de nuevo.';
+  };
+
   const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem(getScopedStorageKey('pos_deducted_orders'));
@@ -710,7 +710,7 @@ const POS: React.FC = () => {
         return new Set(JSON.parse(saved));
       }
     } catch (error) {
-      console.error('鍔犺浇宸叉墸搴撳瓨璁㈠崟澶辫触:', error);
+      console.error('POS operation failed:', error);
     }
     return new Set();
   });
@@ -742,52 +742,43 @@ const POS: React.FC = () => {
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    // 鉁?灏濊瘯澶氫釜鍙兘鐨?key锛岀‘淇濇暟鎹笉涓㈠け
     const saved = loadFromStorage<Order[]>('pos_orders', [], [
       'pos_orders',
       'restaurant_pos_orders',
       'orders'
     ]);
-    console.log('初始化加载订单:', saved.length);
 
     const seenIds = new Set();
-    const fixedOrders = saved.filter(order => {
-      // 绉婚櫎閲嶅ID
+    const fixedOrders = filterCachedOrdersForStartup(saved);
+    const normalizedOrders = fixedOrders.filter(order => {
+      // Remove duplicate ids loaded from older local cache.
       if (seenIds.has(order.id)) {
-        console.warn(`馃棏锔?鍔犺浇鏃剁Щ闄ら噸澶嶈鍗? ${order.id}`);
         return false;
       }
       seenIds.add(order.id);
 
       // 保留所有订单，避免桌台布局变动导致当前订单列表消失。
 
-      // 淇 createdAt 涓?null 鐨勯棶棰?
       if (!order.createdAt) {
         (order as any).createdAt = order.preparingAt || getLocalDateTimeString();
-        console.log(`馃敡 淇璁㈠崟 ${order.id} 鐨?createdAt`);
       }
 
-      // 淇缂哄け鐨勬椂闂村瓧娈?
       if (order.status === 'served' && !order.servedAt) {
         (order as any).servedAt = order.createdAt || getLocalDateTimeString();
-        console.log(`馃敡 淇璁㈠崟 ${order.id} 鐨?servedAt`);
       }
 
       if (order.status === 'completed' && !order.completedAt) {
         (order as any).completedAt = order.servedAt || order.createdAt || getLocalDateTimeString();
-        console.log(`馃敡 淇璁㈠崟 ${order.id} 鐨?completedAt`);
       }
 
       if (order.status === 'completed' && !order.servedAt) {
         (order as any).servedAt = order.createdAt || getLocalDateTimeString();
-        console.log('fixed completed order servedAt:', order.id);
       }
 
       return true;
     });
 
-    console.log('loaded orders:', fixedOrders.length);
-    return fixedOrders;
+    return normalizedOrders;
   });
 
   useEffect(() => {
@@ -807,19 +798,19 @@ const POS: React.FC = () => {
 
 
 
-  // 馃攧 椤惧绠＄悊 - 浣跨敤 DataManager 瀹炵幇鏁版嵁浜掗€?
-  const markTableUserEdit = () => {
+  const markTableUserEdit = (tableId?: string) => {
     tableUserEditPendingRef.current = true;
+    if (tableId) {
+      dirtyTableIdsRef.current.add(tableId);
+    }
   };
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     return dataManager.getData('customers');
   });
 
-  // 馃攧 瀹炴椂鐩戝惉瀹㈡埛鏁版嵁鍙樺寲
   useEffect(() => {
     const unsubscribe = dataManager.subscribe('customers', (newCustomers) => {
-      console.log('POS customers updated:', newCustomers.length);
       setCustomers(newCustomers);
     });
     return () => unsubscribe();
@@ -841,6 +832,37 @@ const POS: React.FC = () => {
   const managerAuthorizationPasswords = ['admin123', '123456'];
   const [cancelRecords, setCancelRecords] = useState<CancelRecord[]>([]);
 
+  const getCurrentOrderCancelRecords = (orderId?: string, extraRecords: CancelRecord[] = []): CancelRecord[] => {
+    const targetOrderId = orderId || selectedOrderId || 'draft-order';
+    const shouldAttachDraftRecords = !selectedOrderId;
+
+    return [...cancelRecords, ...extraRecords].filter(record =>
+      record.orderType === 'item' &&
+      (
+        record.orderId === targetOrderId ||
+        (shouldAttachDraftRecords && record.orderId === 'draft-order')
+      )
+    );
+  };
+
+  const mergeOrderCancelRecords = (order: Order, orderId?: string, extraRecords: CancelRecord[] = []): Order => {
+    const currentRecords = getCurrentOrderCancelRecords(orderId || order.id, extraRecords);
+    if (currentRecords.length === 0) return order;
+
+    const existingRecords = Array.isArray(order.cancelRecords) ? order.cancelRecords : [];
+    const existingIds = new Set(existingRecords.map(record => record.id));
+    const recordsToAppend = currentRecords
+      .filter(record => !existingIds.has(record.id))
+      .map(record => record.orderId === 'draft-order' ? { ...record, orderId: order.id } : record);
+
+    if (recordsToAppend.length === 0) return order;
+
+    return {
+      ...order,
+      cancelRecords: [...existingRecords, ...recordsToAppend]
+    };
+  };
+
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => {
     return loadFromStorage<HeldOrder[]>('pos_held_orders', [], [
       'pos_held_orders',
@@ -852,13 +874,11 @@ const POS: React.FC = () => {
   const [showTableActionModal, setShowTableActionModal] = useState(false);
   const [tableActionData, setTableActionData] = useState<{ tableId: string; tableNumber: string; orderId: string } | null>(null);
 
-  // 馃敟 缁勪欢鍔犺浇鏃讹紝浠?Firestore 鍚屾 POS 鏁版嵁
   useEffect(() => {
     const syncPOSData = async () => {
-      console.log('start syncing POS data');
 
       try {
-        // 鍚屾妗屽彴鐘舵€?
+        // Load cached table layout before the cloud snapshot arrives.
         const tablesData = dataService.getData('pos_tables');
 
         if (tablesData.length > 0) {
@@ -870,30 +890,34 @@ const POS: React.FC = () => {
             });
           });
           setTables(normalized.tables);
-          console.log('synced tables', normalized.tables.length, 'removed duplicates', normalized.duplicates.length);
         }
 
         const ordersData = dataService.getData('pos_orders');
         if (ordersData.length > 0) {
-          setOrders(prevOrders => mergeOrdersByVersion(prevOrders, ordersData as Order[]));
-          console.log('synced POS orders', ordersData.length);
+          const today = getLocalDateString();
+          const todayOrderPrefix = `${today.slice(5, 7)}${today.slice(8, 10)}`;
+          const cachedOrdersForMerge = (ordersData as Order[]).filter(order => {
+            if (pendingOrderSyncIdsRef.current.has(order.id)) return true;
+            return !isOrderFromDatePrefix(order, todayOrderPrefix);
+          });
+          if (cachedOrdersForMerge.length > 0) {
+            setOrders(prevOrders => mergeOrdersByVersion(prevOrders, cachedOrdersForMerge, pendingOrderSyncIdsRef.current));
+          }
         }
 
         // 鍚屾鎸傚崟
         const heldOrdersData = dataService.getData('pos_held_orders');
         if (heldOrdersData.length > 0) {
           setHeldOrders(heldOrdersData);
-          console.log('synced held orders', heldOrdersData.length);
         }
 
         // 鍚屾鍙栨秷璁板綍
         const cancelRecordsData = dataService.getData('pos_cancel_records');
         if (cancelRecordsData.length > 0) {
           setCancelRecords(cancelRecordsData);
-          console.log('synced cancel records', cancelRecordsData.length);
         }
       } catch (error) {
-        console.error('鉂?鍚屾 POS 鏁版嵁澶辫触:', error);
+        console.error('POS operation failed:', error);
       }
     };
 
@@ -922,76 +946,60 @@ const POS: React.FC = () => {
       normalized.duplicates.forEach(table => {
         deletedTableIdsRef.current.add(table.id);
         smartDeleteDocument('pos_tables', table.id).catch(error => {
-          console.error('鍒犻櫎閲嶅妗屽彴澶辫触:', table.id, error);
+          console.error('POS operation failed:', table.id, error);
         });
       });
 
-      const cloudTablesSignature = getTablesSignature(normalized.tables);
-      saveToStorage('pos_tables', normalized.tables);
       tableCloudHydratedRef.current = true;
-      if (cloudTablesSignature === localTablesSignatureRef.current) {
-        return;
-      }
+      setTables(prevTables => {
+        const mergedTables = mergeTablesByVersion(
+          prevTables,
+          normalized.tables,
+          activeOrderTableIdsRef.current,
+          dirtyTableIdsRef.current
+        );
+        const mergedTablesSignature = getTablesSignature(mergedTables);
+        saveToStorage('pos_tables', mergedTables);
 
-      console.log('received POS table update:', normalized.tables.length, 'duplicates:', normalized.duplicates.length);
-      localTablesSignatureRef.current = cloudTablesSignature;
-      publishedTablesSignatureRef.current = cloudTablesSignature;
-      setTables(normalized.tables);
+        if (mergedTablesSignature === localTablesSignatureRef.current) {
+          return prevTables;
+        }
+
+        localTablesSignatureRef.current = mergedTablesSignature;
+        publishedTablesSignatureRef.current = mergedTablesSignature;
+        publishedTableSignaturesRef.current = new Map(
+          mergedTables.map(table => [table.id, getTableSignature(table)])
+        );
+        return mergedTables;
+      });
     });
 
     return () => unsubscribe();
   }, []);
 
 
-  // 馃敟 鑷姩鏇存柊妗屽彴鐘舵€侊紙鏍规嵁璁㈠崟鐘舵€侊級
-  // 根据订单状态自动更新桌台状态。
   useEffect(() => {
-    setTables(prevTables => {
-      let hasChanges = false;
-      const nextTables = prevTables.map(table => {
-      const paidOrder = orders.find(o =>
-        o.tableId === table.id &&
-        o.paymentStatus === 'paid' && o.status !== 'completed' && o.status !== 'cancelled' &&
-        !o.clearedAt  // 娌℃湁娓呭彴鏍囪
-      );
-
-      // 鏌ユ壘璇ユ鍙版槸鍚︽湁鏈敮浠樼殑璁㈠崟锛坉raft/confirmed/preparing/served锛?
-      const unpaidOrder = orders.find(o =>
-        o.tableId === table.id &&
-        isUnpaidActiveOrder(o)
-      );
-
-      let newStatus: 'available' | 'occupied' | 'reserved' | 'needs_cleaning' = table.status;
-
-      if (paidOrder) {
-        // 鉁?鏈夊凡鏀粯浣嗘湭娓呭彴鐨勮鍗曪紝妗屽彴搴旇鏄?needs_cleaning锛堢孩鑹诧紝鏄剧ず鎵妸锛?
-        newStatus = 'needs_cleaning';
-      } else if (unpaidOrder) {
-        // 鉁?鏈夋湭鏀粯璁㈠崟锛屾鍙板簲璇ユ槸 occupied锛堟鑹诧紝姝ｅ湪鐢ㄩ锛?
-        newStatus = 'occupied';
-      } else {
-        // 娌℃湁浠讳綍璁㈠崟鎴栧凡娓呭彴锛屾鍙板簲璇ユ槸 available锛堢豢鑹诧級
-        if (table.status === 'occupied' || table.status === 'needs_cleaning') {
-          newStatus = 'available';
-        }
-      }
-
-      const nextCurrentOrderId = newStatus === 'available' ? undefined : table.currentOrderId;
-
-      if (newStatus !== table.status || nextCurrentOrderId !== table.currentOrderId) {
+    const now = Date.now();
+    let hasChanges = false;
+    const changedTableIds = new Set<string>();
+    const reconciledTables = tables.map(table => {
+      const nextTable = reconcileTableStatusFromOrders(table, orders, now);
+      if (nextTable !== table) {
         hasChanges = true;
-        return {
-          ...table,
-          status: newStatus,
-          currentOrderId: newStatus === 'available' ? undefined : table.currentOrderId,
-          lastModified: Date.now() // 娣诲姞鏃堕棿鎴?
-        };
+        changedTableIds.add(table.id);
       }
-      return table;
-      });
-      return hasChanges ? nextTables : prevTables;
+      return nextTable;
     });
-  }, [orders]);
+
+    if (!hasChanges) {
+      return;
+    }
+
+    if (tableCloudHydratedRef.current) {
+      changedTableIds.forEach(tableId => markTableUserEdit(tableId));
+    }
+    setTables(reconciledTables);
+  }, [orders, tables]);
 
   useEffect(() => {
     saveToStorage('pos_cancel_records', cancelRecords);
@@ -1007,7 +1015,7 @@ const POS: React.FC = () => {
       normalized.duplicates.forEach(table => {
         deletedTableIdsRef.current.add(table.id);
         smartDeleteDocument('pos_tables', table.id).catch(error => {
-          console.error('鍒犻櫎閲嶅妗屽彴澶辫触:', table.id, error);
+          console.error('POS operation failed:', table.id, error);
         });
       });
       setTables(normalized.tables);
@@ -1018,9 +1026,17 @@ const POS: React.FC = () => {
     const tablesSignature = getTablesSignature(tables);
     localTablesSignatureRef.current = tablesSignature;
 
+    if (!tableCloudHydratedRef.current) {
+      tablePublisherReadyRef.current = false;
+      return;
+    }
+
     if (!tablePublisherReadyRef.current) {
       tablePublisherReadyRef.current = true;
       publishedTablesSignatureRef.current = tablesSignature;
+      publishedTableSignaturesRef.current = new Map(
+        tables.map(table => [table.id, getTableSignature(table)])
+      );
       return;
     }
 
@@ -1033,11 +1049,22 @@ const POS: React.FC = () => {
       return;
     }
 
+    const dirtyTableIds = dirtyTableIdsRef.current;
+    const previousTableSignatures = publishedTableSignaturesRef.current;
+    const tablesToPublish = tables.filter(table => {
+      if (dirtyTableIds.size > 0) {
+        return dirtyTableIds.has(table.id);
+      }
+      return previousTableSignatures.get(table.id) !== getTableSignature(table);
+    });
+
     publishedTablesSignatureRef.current = tablesSignature;
     tableUserEditPendingRef.current = false;
-    tables.forEach(table => {
+    dirtyTableIdsRef.current = new Set();
+    tablesToPublish.forEach(table => {
+      previousTableSignatures.set(table.id, getTableSignature(table));
       smartUpdateDocument('pos_tables', table.id, table).catch(error => {
-        console.error('鍚屾妗屽彴鍒?Firestore 澶辫触:', table.id, error);
+        console.error('POS operation failed:', table.id, error);
       });
     });
   }, [tables]);
@@ -1055,10 +1082,13 @@ const POS: React.FC = () => {
         return true;
       });
 
-      saveToStorage('pos_orders', uniqueOrders);
       const uniqueOrdersSignature = getOrdersSignature(uniqueOrders);
+      if (uniqueOrdersSignature === localOrdersSignatureRef.current) {
+        return;
+      }
+
+      saveToStorage('pos_orders', uniqueOrders);
       localOrdersSignatureRef.current = uniqueOrdersSignature;
-      console.log('POS orders saved locally:', uniqueOrders.length);
 
       setAppOrders(prevOrders => {
         if (getOrdersSignature(prevOrders as Order[]) === uniqueOrdersSignature) {
@@ -1087,30 +1117,33 @@ const POS: React.FC = () => {
       });
 
       const ordersToPublish = uniqueOrders.filter(order => {
-        const orderSignature = getOrderSignature(order);
-        return pendingIds.has(order.id) || publishedSignatures.get(order.id) !== orderSignature;
+        return pendingIds.has(order.id);
       });
 
       if (ordersToPublish.length > 0) {
-        console.log('POS incremental order sync:', ordersToPublish.length, '/', uniqueOrders.length);
       }
 
-      ordersToPublish.forEach(order => {
+      ordersToPublish.forEach(async order => {
         const orderSignature = getOrderSignature(order);
         const orderData = serializeOrderForFirestore(order);
 
-        smartUpdateDocument('pos_orders', order.id, orderData)
-          .then(() => {
-            publishedSignatures.set(order.id, orderSignature);
-            if (pendingIds.delete(order.id)) {
-              savePendingOrderSyncIds(pendingIds);
-            }
-          })
-          .catch(error => {
+        try {
+          const publishResult = await smartUpdateDocument('pos_orders', order.id, orderData);
+          if (publishResult?.pending || publishResult?.success === false) {
             pendingIds.add(order.id);
             savePendingOrderSyncIds(pendingIds);
-            console.error('鍚屾 POS 璁㈠崟鍒?Firestore 澶辫触:', order.id, error);
-          });
+            return;
+          }
+
+          publishedSignatures.set(order.id, orderSignature);
+          if (pendingIds.delete(order.id)) {
+            savePendingOrderSyncIds(pendingIds);
+          }
+        } catch (error) {
+          pendingIds.add(order.id);
+          savePendingOrderSyncIds(pendingIds);
+          console.error('POS operation failed:', order.id, error);
+        }
       });
 
       if (false && uniqueOrdersSignature !== publishedOrdersSignatureRef.current) {
@@ -1129,42 +1162,78 @@ const POS: React.FC = () => {
             lastModified: order.lastModified || Date.now(),
           };
           smartUpdateDocument('pos_orders', order.id, orderData).catch(error => {
-            console.error('鍚屾 POS 璁㈠崟鍒?Firestore 澶辫触:', order.id, error);
+            console.error('POS operation failed:', order.id, error);
           });
         });
       }
 
       dataManager.saveData('orders', uniqueOrders, { syncFirestore: false });
     } catch (error) {
-      console.error('淇濆瓨璁㈠崟澶辫触:', error);
+      console.error('POS operation failed:', error);
     }
   }, [orders, setAppOrders]);
 
-  React.useEffect(() => {
-    if (!appOrders || appOrders.length === 0) return;
-    const incomingOrders = appOrders as Order[];
+  const applyIncomingCloudOrders = React.useCallback((incomingOrders: Order[]) => {
+    const today = getLocalDateString();
+    const todayOrderPrefix = `${today.slice(5, 7)}${today.slice(8, 10)}`;
+
+    if (!incomingOrders || incomingOrders.length === 0) {
+      console.warn('POS received empty current-day order snapshot; preserving local orders.');
+      return;
+    }
+    const incomingById = new Map(incomingOrders.map(order => [order.id, order]));
     setOrders(prevOrders => {
-      if (!hasNewerCloudOrders(incomingOrders, prevOrders)) {
+      const cloudReconciledOrders = prevOrders.filter(order => {
+        if (pendingOrderSyncIdsRef.current.has(order.id)) return true;
+        if (!isOrderFromDatePrefix(order, todayOrderPrefix)) return true;
+        return incomingById.has(order.id);
+      });
+      const removedByCloudSnapshot = cloudReconciledOrders.length !== prevOrders.length;
+
+      if (!removedByCloudSnapshot && !hasNewerCloudOrders(incomingOrders, prevOrders, pendingOrderSyncIdsRef.current)) {
         return prevOrders;
       }
 
-      const mergedOrders = mergeOrdersByVersion(prevOrders, incomingOrders);
+      const mergedOrders = mergeOrdersByVersion(cloudReconciledOrders, incomingOrders, pendingOrderSyncIdsRef.current);
       const mergedOrdersSignature = getOrdersSignature(mergedOrders);
       if (mergedOrdersSignature === localOrdersSignatureRef.current) return prevOrders;
       if (mergedOrdersSignature === getOrdersSignature(prevOrders)) return prevOrders;
 
-      console.log('POS received global order update:', appOrders.length);
       localOrdersSignatureRef.current = mergedOrdersSignature;
       publishedOrdersSignatureRef.current = mergedOrdersSignature;
       mergedOrders.forEach(order => {
-        publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
-        pendingOrderSyncIdsRef.current.delete(order.id);
+        const incomingOrder = incomingById.get(order.id);
+        const mergedOrderSignature = getOrderSignature(order);
+        const cloudMatchesMergedOrder = Boolean(
+          incomingOrder &&
+          getOrderSignature(incomingOrder) === mergedOrderSignature
+        );
+
+        if (cloudMatchesMergedOrder || !pendingOrderSyncIdsRef.current.has(order.id)) {
+          publishedOrderSignaturesRef.current.set(order.id, mergedOrderSignature);
+        }
+
+        if (cloudMatchesMergedOrder) {
+          pendingOrderSyncIdsRef.current.delete(order.id);
+        }
       });
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
       return mergedOrders;
     });
-    // 鍙湪鍏ㄥ眬璁㈠崟娴佸彉鍖栨椂鎺ユ敹锛岄伩鍏嶆湰鏈哄垰淇敼璁㈠崟鏃惰鏃х殑鍏ㄥ眬鐘舵€佽鐩栥€?    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appOrders]);
+  }, []);
+
+  React.useEffect(() => {
+    const today = getLocalDateString();
+    const todayOrderPrefixForSubscription = `${today.slice(5, 7)}${today.slice(8, 10)}`;
+    return smartSubscribeToPosOrdersByDatePrefix(todayOrderPrefixForSubscription, data => {
+      applyIncomingCloudOrders(data as Order[]);
+    });
+  }, [applyIncomingCloudOrders]);
+
+  React.useEffect(() => {
+    if (!appOrders || appOrders.length === 0) return;
+    applyIncomingCloudOrders(appOrders as Order[]);
+  }, [appOrders, applyIncomingCloudOrders]);
 
   useEffect(() => {
     if (orders.length > 0) return;
@@ -1173,9 +1242,9 @@ const POS: React.FC = () => {
     const timer = window.setInterval(() => {
       attempts += 1;
       const storedOrders = loadFromStorage<Order[]>('pos_orders', []);
-      if (storedOrders.length > 0) {
-        console.log('POS loaded orders from cache:', storedOrders.length);
-        setOrders(prevOrders => prevOrders.length > 0 ? prevOrders : storedOrders);
+      const filteredStoredOrders = filterCachedOrdersForStartup(storedOrders);
+      if (filteredStoredOrders.length > 0) {
+        setOrders(prevOrders => prevOrders.length > 0 ? prevOrders : filteredStoredOrders);
         window.clearInterval(timer);
       } else if (attempts >= 10) {
         window.clearInterval(timer);
@@ -1190,17 +1259,13 @@ const POS: React.FC = () => {
     const table = tables.find(t => t.id === tableId);
     if (!table) return;
 
-    console.log('馃攳 鐐瑰嚮妗屽彴:', { tableId, tableNumber: table.number, status: table.status });
 
-    // 鉁?濡傛灉妗屽彴鏄?needs_cleaning 鐘舵€侊紙绾㈣壊/宸叉敮浠樹絾鏈竻鍙帮級锛屽脊鍑哄姞鑿?娓呭彴閫夋嫨
     if (table.status === 'needs_cleaning') {
-      // 馃敟 鍚屾椂鍖归厤姝ｅ父 tableId 鍜?split-merged 寮€澶寸殑 tableId
       const paidOrder = orders.find(o => {
         const matchesTableId = o.tableId === tableId ||
                               (o.tableId && o.tableId.startsWith('split-merged') && tableId && tableId.startsWith('split-merged'));
         return matchesTableId && isPaidAwaitingClear(o);
       });
-      console.log('paid order awaiting clear:', paidOrder ? { id: paidOrder.id, clearedAt: paidOrder.clearedAt, tableId: paidOrder.tableId } : 'not found');
 
       if (paidOrder) {
         setTableActionData({
@@ -1209,11 +1274,9 @@ const POS: React.FC = () => {
           orderId: paidOrder.id
         });
         setShowTableActionModal(true);
-        console.log('鉁?鏄剧ず鍔犺彍/娓呭彴寮圭獥');
         return;
       } else {
         console.error('table is needs_cleaning but matching order was not found');
-        console.log('馃搵 璇ユ鍙扮殑璁㈠崟:', orders.filter(o => o.tableId === tableId || (o.tableId && o.tableId.startsWith('split-merged') && tableId && tableId.startsWith('split-merged'))).map(o => ({ id: o.id, status: o.status, clearedAt: o.clearedAt, tableId: o.tableId })));
       }
     }
 
@@ -1221,27 +1284,16 @@ const POS: React.FC = () => {
       o.tableId === tableId &&
       o.status !== 'completed' &&
       o.status !== 'cancelled' &&
-      o.status !== 'draft'  // 鈫?鎺掗櫎鑽夌璁㈠崟
+      o.status !== 'draft'
     );
 
-    console.log('馃攳 鏌ユ壘妗屽彴璁㈠崟:', {
-      tableId,
-      tableNumber: table.number,
-      existingOrder: existingOrder ? {
-        id: existingOrder.id,
-        status: existingOrder.status,
-        paymentStatus: existingOrder.paymentStatus
-      } : null
-    });
 
-    // 妫€鏌ユ槸鍚︽湁宸插畬鎴愪絾鏈竻鍙扮殑璁㈠崟锛堢敤浜庡姞鑿?娓呭彴閫夋嫨锛?
     const paidButNotClearedOrder = orders.find(o =>
       o.tableId === tableId &&
       isPaidAwaitingClear(o) &&
-      !o.clearedAt  // 娌℃湁娓呭彴鏍囪
+      !o.clearedAt
     );
 
-    // 濡傛灉鏈夊凡鏀粯浣嗘湭娓呭彴鐨勮鍗曪紝寮瑰嚭鍔犺彍/娓呭彴閫夋嫨
     if (paidButNotClearedOrder) {
       setTableActionData({
         tableId: tableId,
@@ -1267,14 +1319,12 @@ const POS: React.FC = () => {
     if (existingOrder) {
       setCurrentItems(existingOrder.items.map(item => ({...item})));
       setSelectedOrderId(existingOrder.id);
-      // 濡傛灉璁㈠崟宸叉湁椤惧锛岃嚜鍔ㄩ€夋嫨
       if (existingOrder.customerId) {
         const customer = customers.find(c => c.id === existingOrder.customerId);
         if (customer) {
           setSelectedCustomer(customer);
         }
       }
-      // 宸叉湁璁㈠崟锛岀洿鎺ヨ烦杞?
       setServiceFeeEnabled(false);
       setTaxEnabled(false);
       setDeliveryFee(0);
@@ -1284,10 +1334,7 @@ const POS: React.FC = () => {
       setCardUSD('');
       setViewMode('order');
     } else {
-      // 鏂拌鍗曪紝鍏堝脊鍑洪【瀹㈤€夋嫨妗?
 
-      // 鈿狅笍 涓嶅啀鑷姩鍒涘缓鑽夌璁㈠崟锛岀瓑鐢ㄦ埛鍙戦€佸帹鎴挎垨鏀粯鏃跺啀鍒涘缓
-      // 杩欐牱鍙互閬垮厤浜х敓澶氫綑鐨勮崏绋胯鍗?
 
       setCurrentItems([]);
       setSelectedOrderId(null);
@@ -1298,7 +1345,6 @@ const POS: React.FC = () => {
       setCashUSD('');
       setCardNIO('');
       setCardUSD('');
-      console.log('selected customer, switching to order view');
       setShowCustomerModal(true);
     }
   };
@@ -1307,7 +1353,6 @@ const POS: React.FC = () => {
   const handleSelectCustomer = (customer: Customer) => {
     setSelectedCustomer(customer);
     setShowCustomerModal(false);
-    // 閫夋嫨椤惧鍚庯紝璺宠浆鍒扮偣椁愮晫闈?
     setViewMode('order');
   };
 
@@ -1327,7 +1372,6 @@ const POS: React.FC = () => {
       createdAt: getLocalDateTimeString(),
     };
 
-    // 馃攧 浣跨敤 DataManager 娣诲姞瀹㈡埛锛岃嚜鍔ㄥ悓姝ュ埌鎵€鏈夋ā鍧?
     const nextCustomers = [...customers, newCustomer];
     setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: true });
@@ -1339,14 +1383,13 @@ const POS: React.FC = () => {
     setShowNewCustomerForm(false);
     setShowCustomerModal(false);
       alert('Cliente ' + newCustomer.name + ' creado');
-    // 鍒涘缓椤惧鍚庯紝璺宠浆鍒扮偣椁愮晫闈?
+    // After creating the customer, continue to the order screen.
     setViewMode('order');
   };
 
   const handleSkipCustomer = () => {
     setSelectedCustomer(null);
     setShowCustomerModal(false);
-    // 璺宠繃椤惧閫夋嫨锛岀洿鎺ヨ烦杞埌鐐归鐣岄潰
     setViewMode('order');
   };
 
@@ -1475,7 +1518,6 @@ const POS: React.FC = () => {
 
     setCurrentItems(newCurrentItems);
 
-    // 鉁?鍚屾鏇存柊璁㈠崟锛堝鏋滄湁娲诲姩璁㈠崟锛?
     if (selectedOrderId) {
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? { ...o, items: newCurrentItems } : o
@@ -1497,7 +1539,6 @@ const POS: React.FC = () => {
     const newCurrentItems = currentItems.filter(i => i.id !== itemId);
     setCurrentItems(newCurrentItems);
 
-    // 鉁?鍚屾鏇存柊璁㈠崟锛堝鏋滄湁娲诲姩璁㈠崟锛?
     if (selectedOrderId) {
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? { ...o, items: newCurrentItems } : o
@@ -1511,12 +1552,11 @@ const POS: React.FC = () => {
         ? { ...i, quantity, subtotal: quantity * i.price }
         : i
     );
-    const nextTotalAmount = newCurrentItems.reduce((sum, item) => sum + item.subtotal, 0);
 
     setCurrentItems(newCurrentItems);
 
-    // 鉁?鍚屾鏇存柊璁㈠崟锛堝鏋滄湁娲诲姩璁㈠崟锛?
     if (selectedOrderId) {
+      const nextTotalAmount = newCurrentItems.reduce((sum, item) => sum + item.subtotal, 0);
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? {
           ...o,
@@ -1533,31 +1573,29 @@ const POS: React.FC = () => {
     }
   };
 
-  const handleHoldOrder = () => {
+  const handleHoldOrder = async () => {
     if (currentItems.length === 0) {
       alert('No hay productos para retener');
       return;
     }
 
     if (!selectedTableId) {
-      alert('璇峰厛閫夋嫨妗屽彴');
+      alert('Seleccione una mesa primero');
       return;
     }
 
     const table = tables.find(t => t.id === selectedTableId);
     if (!table) return;
 
-    // 濡傛灉娌℃湁璁㈠崟ID锛屽厛鍒涘缓璁㈠崟
     let orderId = selectedOrderId;
     if (!orderId) {
       const newOrder: Order = {
         id: generateOrderId(),
-        orderNumber: generateOrderNumber(),
+        orderNumber: await generateOrderNumber(),
         tableId: selectedTableId!,
         tableNumber: table.number,
         orderType: orderType,
         deliveryType: orderType === 'delivery' ? deliveryType : undefined,
-        deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
         customerId: selectedCustomer?.id,
         customerName: selectedCustomer?.name,
         items: currentItems,
@@ -1582,11 +1620,11 @@ const POS: React.FC = () => {
       tableNumber: table.number,
       items: [...currentItems],
       orderType: orderType,
-      deliveryType: orderType === 'delivery' ? deliveryType : undefined, // 淇濆瓨娲鹃€佺被鍨?
+      deliveryType: orderType === 'delivery' ? deliveryType : undefined,
       createdAt: new Date(),
       serviceFeeEnabled,
       taxEnabled,
-      deliveryFee
+      deliveryFee,
     };
 
     setHeldOrders([...heldOrders, heldOrder]);
@@ -1605,7 +1643,7 @@ const POS: React.FC = () => {
     setCardUSD('');
     setViewMode('overview');
 
-    alert(`鉁?宸叉寕鍗曪紒\n\n妗屽彿锛?{table.number}\n鍟嗗搧鏁帮細${currentItems.length} 涓猏n\n馃挕 鎻愮ず锛氬湪姒傝鐣岄潰鐐瑰嚮"鎸傚崟"鎸夐挳鍙互鎭㈠璁㈠崟`);
+    alert(`Pedido retenido\n\nMesa: ${table.number}\nProductos: ${currentItems.length}\n\nPuede recuperar el pedido desde la lista de pedidos retenidos.`);
   };
 
   const handleRetrieveOrder = (heldOrder: HeldOrder) => {
@@ -1635,7 +1673,6 @@ const POS: React.FC = () => {
     alert(`✅ Pedido recuperado\n\nMesa: ${heldOrder.tableNumber}\nProductos: ${heldOrder.items.length}`);
   };
 
-  // 鉁?鍒涘缓澶栨淳璁㈠崟鐨勫紑鏀褰?
   const createDeliveryExpense = async (order: Order, deliveryFeeAmount: number) => {
     try {
       const today = getLocalDateTimeString().split(' ')[0];
@@ -1643,9 +1680,9 @@ const POS: React.FC = () => {
       const expense = {
         id: `delivery_expense_${Date.now()}`,
         date: today,
-        categoryId: 'delivery_fee', // 娲鹃€佽垂绫诲埆
-        categoryName: '娲鹃€佽垂鏀嚭',
-        description: `澶栨淳璁㈠崟 ${order.orderNumber || order.id} - 娲鹃€佽垂`,
+        categoryId: 'delivery_fee',
+        categoryName: '外卖配送费支出',
+        description: `外卖订单 ${order.orderNumber || order.id} - 配送费`,
         amount: deliveryFeeAmount,
         orderId: order.id,
         orderNumber: order.orderNumber,
@@ -1653,32 +1690,27 @@ const POS: React.FC = () => {
         createdAt: getLocalDateTimeString(),
       };
 
-      // 浣跨敤 dataManager 淇濆瓨寮€鏀褰?
       const nextExpenses = [...dataManager.getData('expenses'), expense];
       await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false, notify: true });
       await smartSetDocument('expenses', expense.id, expense);
 
-      console.log('鉁?宸插垱寤哄娲捐鍗曞紑鏀褰?', expense);
-      console.log('馃挵 娲鹃€佽垂閲戦:', deliveryFeeAmount, 'C$');
     } catch (error) {
-      console.error('鉂?鍒涘缓寮€鏀褰曞け璐?', error);
+      console.error('create delivery expense failed:', error);
     }
   };
 
   const handleTableAction = async (action: 'clear' | 'add') => {
-    console.log('馃敟 handleTableAction 琚皟鐢?', { action, tableActionData });
 
     if (!tableActionData) {
-      console.error('鉂?tableActionData 涓虹┖');
+      console.error('POS table action data is missing');
       return;
     }
 
     if (action === 'clear') {
-      console.log('鉁?鎵ц娓呭彴鎿嶄綔');
 
       const orderToClear = orders.find(o => o.id === tableActionData.orderId);
       if (!orderToClear) {
-        console.error('鉂?鎵句笉鍒拌鍗?', tableActionData.orderId);
+        console.error('clear order target not found:', tableActionData.orderId);
         return;
       }
 
@@ -1687,28 +1719,27 @@ const POS: React.FC = () => {
       }
 
       setClearingOrderId(orderToClear.id);
+      markOrderFinalizing(orderToClear.id);
       try {
         await waitForNextPaint();
         await completeOrderWithStockDeduction(orderToClear, { releaseTable: true });
       } catch (error) {
         console.error('complete order sync failed:', orderToClear.id, error);
-      alert('No se pudo sincronizar. Revise la red e intente de nuevo.');
+        showPosToast(getCompletionErrorMessage(error), 'error');
         return;
       } finally {
         setClearingOrderId(null);
+        clearOrderFinalizing(orderToClear.id);
       }
 
       if (tableActionData.tableId) {
-        alert('\u684c\u53f0\u5df2\u6e05\u7406\uff0c\u53ef\u4ee5\u63a5\u5f85\u65b0\u987e\u5ba2');
+        showPosToast('Mesa liberada. Lista para nuevo cliente.', 'success');
       } else {
-        alert('\u8ba2\u5355\u5df2\u5b8c\u6210');
+        showPosToast('Pedido completado. Inventario descontado.', 'success');
       }
     } else {
-      console.log('鉁?鎵ц鍔犺彍鎿嶄綔');
-      // 鍔犺彍锛氬姞杞藉凡瀹屾垚鐨勮鍗曪紝鍏佽缁х画娣诲姞鑿滃搧
       const existingOrder = orders.find(o => o.id === tableActionData.orderId);
       if (existingOrder) {
-        console.log('馃搵 鍔犺浇璁㈠崟杩涜鍔犺彍:', existingOrder.id);
 
         setSelectedTableId(tableActionData.tableId);
         setCurrentItems(existingOrder.items.map(item => ({...item})));
@@ -1723,13 +1754,11 @@ const POS: React.FC = () => {
         setCardUSD('');
 
         setViewMode('order');
-        console.log('add dishes to paid order');
       } else {
-        console.error('鉂?鎵句笉鍒拌鍗?', tableActionData.orderId);
+        console.error('table action order target not found:', tableActionData.orderId);
       }
     }
 
-    console.log('馃敀 鍏抽棴寮圭獥');
     setShowTableActionModal(false);
     setTableActionData(null);
   };
@@ -1749,12 +1778,99 @@ const POS: React.FC = () => {
     : 0;
 
   const finalTotal = subtotal + (serviceFeeEnabled ? serviceFee : 0) + (taxEnabled ? tax : 0) + deliveryFee - discountAmount - pointsRedemptionAmount;
+  const calculateTotalForItems = (items: OrderItem[]): number => {
+    const nextSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    return nextSubtotal +
+      (serviceFeeEnabled ? nextSubtotal * 0.1 : 0) +
+      (taxEnabled ? nextSubtotal * 0.15 : 0) +
+      deliveryFee -
+      discountAmount -
+      pointsRedemptionAmount;
+  };
 
   const existingOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
   const settledAmount = existingOrder?.settledAmount || 0;
   const remainingAmount = Math.max(0, finalTotal - settledAmount);
   const getSentQuantity = (item: Partial<OrderItem>) => Number(item.sentQuantity) || 0;
   const hasUnsentItems = currentItems.some(item => item.quantity > getSentQuantity(item));
+  const persistItemCancellationForExistingOrder = (nextItems: OrderItem[], cancelRecord: CancelRecord) => {
+    if (!selectedOrderId) return;
+
+    const order = orders.find(o => o.id === selectedOrderId);
+    if (!order) return;
+
+    const nextTotalAmount = calculateTotalForItems(nextItems);
+    const nextSettledAmount = Number(order.settledAmount || order.paidAmount || 0);
+    const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
+      nextSettledAmount >= nextTotalAmount - 0.001
+        ? 'paid'
+        : nextSettledAmount > 0
+          ? 'partial'
+          : 'unpaid';
+
+    const updatedOrder = mergeOrderCancelRecords({
+      ...order,
+      items: nextItems,
+      totalAmount: nextTotalAmount,
+      paymentStatus: nextPaymentStatus,
+      updatedAt: new Date(),
+      lastModified: Date.now()
+    }, selectedOrderId, [cancelRecord]);
+
+    setOrders(prevOrders => prevOrders.map(o =>
+      o.id === selectedOrderId ? updatedOrder : o
+    ));
+    pendingOrderSyncIdsRef.current.add(selectedOrderId);
+    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+    publishOrderImmediately(updatedOrder).catch(error => {
+      console.error('cancel item immediate publish failed:', selectedOrderId, error);
+    });
+  };
+
+  const resetOrderEntryState = () => {
+    setViewMode('overview');
+    setCurrentItems([]);
+    setSelectedOrderId(null);
+    setSelectedTableId(null);
+    setSelectedCustomer(null);
+    setServiceFeeEnabled(false);
+    setTaxEnabled(false);
+    setDeliveryFee(0);
+    setOrderType('dine_in');
+    setCashNIO('');
+    setCashUSD('');
+    setCardNIO('');
+    setCardUSD('');
+  };
+
+  const discardUnconfirmedOrderItems = () => {
+    if (!selectedOrderId || !hasUnsentItems) return;
+
+    const confirmedItems = currentItems
+      .map(item => {
+        const sentQuantity = getSentQuantity(item);
+        if (sentQuantity <= 0) return null;
+        return {
+          ...item,
+          quantity: sentQuantity,
+          subtotal: sentQuantity * item.price,
+          sentToKitchen: true,
+          sentQuantity
+        };
+      })
+      .filter((item): item is OrderItem => item !== null);
+
+    setOrders(prevOrders => prevOrders.map(order =>
+      order.id === selectedOrderId
+        ? { ...order, items: confirmedItems, lastModified: Date.now() }
+        : order
+    ));
+  };
+
+  const returnToOverviewFromOrder = () => {
+    discardUnconfirmedOrderItems();
+    resetOrderEntryState();
+  };
 
   const handleSendToKitchen = async () => {
     if (currentItems.length === 0) {
@@ -1780,6 +1896,10 @@ const POS: React.FC = () => {
     };
     const dishesToSend = unsentItems.filter(item => !isDirectStockItem(item));
     const beveragesToLock = unsentItems.filter(isDirectStockItem);
+    let kitchenPrintOrderNumber = selectedEditableOrder?.orderNumber || selectedEditableOrder?.id || '';
+    let kitchenPrintTableNumber = activeOrderType === 'dine_in'
+      ? (selectedEditableOrder?.tableNumber || tables.find(t => t.id === selectedTableId)?.number || '')
+      : '';
 
     if (unsentItems.length === 0) {
       alert('\u6ca1\u6709\u9700\u8981\u53d1\u9001\u7684\u65b0\u589e\u5546\u54c1');
@@ -1814,12 +1934,11 @@ const POS: React.FC = () => {
       const now = new Date();
       const newOrder: Order = {
         id: generateOrderId(),
-        orderNumber: generateOrderNumber(),
+        orderNumber: await generateOrderNumber(),
         tableId: orderType === 'dine_in' ? selectedTableId! : '',
         tableNumber: orderType === 'dine_in' ? (tables.find(t => t.id === selectedTableId)?.number || '') : '',
         orderType,
         deliveryType: orderType === 'delivery' ? deliveryType : undefined,
-        deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
         customerId: selectedCustomer?.id,
         customerName: selectedCustomer?.name,
         items: updatedItems,
@@ -1835,24 +1954,31 @@ const POS: React.FC = () => {
         lastModified: Date.now()
       };
 
+      const newOrderWithCancelRecords = mergeOrderCancelRecords(newOrder);
+      kitchenPrintOrderNumber = newOrderWithCancelRecords.orderNumber || newOrderWithCancelRecords.id;
+      kitchenPrintTableNumber = newOrderWithCancelRecords.tableNumber || kitchenPrintTableNumber;
+
       setOrders(prevOrders => {
-        if (prevOrders.some(order => order.id === newOrder.id)) {
+        if (prevOrders.some(order => order.id === newOrderWithCancelRecords.id)) {
           return prevOrders;
         }
-        return [...prevOrders, newOrder];
+        return [...prevOrders, newOrderWithCancelRecords];
       });
-      pendingOrderSyncIdsRef.current.add(newOrder.id);
+      pendingOrderSyncIdsRef.current.add(newOrderWithCancelRecords.id);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-      setSelectedOrderId(newOrder.id);
-      console.log('created POS order:', newOrder.id);
+      publishOrderImmediately(newOrderWithCancelRecords).catch(error => {
+        console.error('confirm order immediate publish failed:', newOrderWithCancelRecords.id, error);
+      });
+      setSelectedOrderId(newOrderWithCancelRecords.id);
 
       setTables(prevTables => prevTables.map(t =>
         orderType === 'dine_in' && t.id === selectedTableId
-          ? { ...t, status: 'occupied' as const, currentOrderId: newOrder.id, lastModified: Date.now() }
+          ? { ...t, status: 'occupied' as const, currentOrderId: newOrderWithCancelRecords.id, lastModified: Date.now() }
           : t
       ));
     } else {
       const editableOrderId = selectedEditableOrder.id;
+      let updatedOrderForPublish: Order | null = null;
       setOrders(prevOrders => prevOrders.map(o =>
         o.id === editableOrderId ? (() => {
           const nextSettledAmount = Number(o.settledAmount || o.paidAmount || 0);
@@ -1863,7 +1989,7 @@ const POS: React.FC = () => {
                 ? 'partial'
                 : 'unpaid';
 
-          return {
+          updatedOrderForPublish = {
             ...o,
             items: updatedItems,
             totalAmount: finalTotal,
@@ -1873,10 +1999,17 @@ const POS: React.FC = () => {
             updatedAt: new Date(),
             lastModified: Date.now()
           };
+          updatedOrderForPublish = mergeOrderCancelRecords(updatedOrderForPublish, editableOrderId);
+          return updatedOrderForPublish;
         })() : o
       ));
       pendingOrderSyncIdsRef.current.add(editableOrderId);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      if (updatedOrderForPublish) {
+        publishOrderImmediately(updatedOrderForPublish).catch(error => {
+          console.error('confirm updated order immediate publish failed:', editableOrderId, error);
+        });
+      }
     }
 
     const dishMessage = dishesToSend.map(item => {
@@ -1900,6 +2033,22 @@ const POS: React.FC = () => {
       alertMessage += `\u2705 \u5df2\u786e\u8ba4 ${beveragesToLock.length} \u4e2a\u9152\u6c34/\u996e\u6599\n\n${beverageMessage}`;
     }
 
+    if (dishesToSend.length > 0) {
+      const kitchenPayload = buildKitchenTicketPayload({
+        storeId: getCurrentStoreIdForPrint(),
+        orderNumber: kitchenPrintOrderNumber,
+        orderTypeText: posOrderTypeLabels[activeOrderType],
+        tableNumber: kitchenPrintTableNumber,
+        createdAt: new Date(),
+        items: dishesToSend.map(item => ({
+          name: item.name,
+          quantity: item.quantity - getSentQuantity(item),
+          notes: (item as any).notes,
+        })),
+      });
+      printViaLocalBridge(kitchenPayload, { timeoutMs: 900 }).then(() => undefined);
+    }
+
     alert(alertMessage);
   };
 
@@ -1916,7 +2065,6 @@ const POS: React.FC = () => {
 
   const deductStockForOrder = async (order: Order): Promise<Order> => {
     if (order.stockDeducted) {
-      console.log('订单库存已经扣减过，跳过重复扣减:', order.id);
       return {
         ...order,
         lastModified: Date.now()
@@ -1924,7 +2072,7 @@ const POS: React.FC = () => {
     }
 
     if (!order.items || order.items.length === 0) {
-      console.warn('鈿狅笍 璁㈠崟娌℃湁鍟嗗搧锛岃烦杩囧簱瀛樻墸鍑?', order.id);
+      console.warn('POS warning:', order.id);
       return order;
     }
 
@@ -1946,14 +2094,56 @@ const POS: React.FC = () => {
       .filter((item): item is OrderItem => Boolean(item));
 
     if (itemsToDeduct.length === 0) {
-      console.log('鉁?璁㈠崟搴撳瓨宸叉墸鍑忚繃锛岃烦杩?', order.id);
       return order;
     }
 
-    console.log('鉁?寮€濮嬫墸鍑忓簱瀛?', order.id, itemsToDeduct.map(item => `${item.name} x${item.quantity}`).join(', '));
-    await deductStock(itemsToDeduct);
+    const operationId = order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id);
+    const claimResult: any = await smartClaimOrderStockDeduction('pos_orders', order.id, {
+      stockDeductionOperationId: operationId,
+      lastModified: Date.now()
+    });
 
-    const operationId = order.stockDeductionOperationId || `stock-${order.id}-${Date.now()}`;
+    if (claimResult?.alreadyDeducted) {
+      return {
+        ...order,
+        ...(claimResult.data || {}),
+        stockDeducted: true,
+        stockDeductionInProgress: false,
+        lastModified: Date.now()
+      };
+    }
+
+    if (!claimResult?.success) {
+      if (claimResult?.inProgress) {
+        throw new Error('该订单正在另一台设备扣减库存，请刷新后再试');
+      }
+      throw new Error('无法获取订单库存扣减锁，请检查网络后重试');
+    }
+
+    try {
+      await deductStock(itemsToDeduct, {
+        operationId,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        orderType: order.orderType,
+        completedAt: new Date()
+      });
+    } catch (error) {
+      await smartUpdateDocument('pos_orders', order.id, {
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        paidAmount: order.paidAmount,
+        settledAmount: order.settledAmount,
+        completedAt: order.completedAt,
+        clearedAt: order.clearedAt,
+        stockDeductionInProgress: false,
+        stockDeductionFailedAt: Date.now(),
+        stockDeductionOperationId: operationId,
+        lastModified: Date.now()
+      });
+      throw error;
+    }
+
     const nextDeductedItems = { ...deductedItems };
     order.items.forEach(item => {
       nextDeductedItems[getStockDeductionKey(item)] = item.quantity;
@@ -1970,24 +2160,12 @@ const POS: React.FC = () => {
       stockDeductedAt: new Date(),
       stockDeductedItems: nextDeductedItems,
       stockDeductionOperationId: operationId,
+      stockDeductionInProgress: false,
       lastModified: Date.now()
     };
   };
 
-  const completeOrderWithStockDeduction = async (order: Order, options: { releaseTable?: boolean } = {}) => {
-    const now = new Date();
-    const completedOrder = await deductStockForOrder({
-      ...order,
-      status: 'completed' as const,
-      completedAt: order.completedAt || now,
-      clearedAt: order.clearedAt || now,
-      lastModified: Date.now()
-    });
-
-    setOrders(prevOrders => prevOrders.map(o =>
-      o.id === order.id ? completedOrder : o
-    ));
-
+  const syncPointsForCompletedOrder = (completedOrder: Order) => {
     processCustomerPointsForCompletedOrder(completedOrder)
       .then(pointsProcessedOrder => {
         if (!pointsProcessedOrder.pointsProcessed) return;
@@ -2011,25 +2189,96 @@ const POS: React.FC = () => {
         });
       })
       .catch(error => {
-        pointsProcessingOrderIdsRef.current.delete(order.id);
-        console.error('process customer points failed:', order.id, error);
+        pointsProcessingOrderIdsRef.current.delete(completedOrder.id);
+        console.error('process customer points failed:', completedOrder.id, error);
       });
+  };
+
+  const startCompletionBackgroundSync = (order: Order, completedOrder: Order) => {
+    publishOrderImmediately(completedOrder)
+      .then(result => {
+        const completionSyncPending = result?.pending || result?.success === false;
+        if (!completionSyncPending) {
+          syncPointsForCompletedOrder(completedOrder);
+        }
+
+        if (order.stockDeducted || !order.items || order.items.length === 0) {
+          return;
+        }
+
+        return deductStockForOrder(completedOrder)
+          .then(stockDeductedOrder => {
+            const stockSyncedOrder: Order = {
+              ...completedOrder,
+              ...stockDeductedOrder,
+              status: 'completed',
+              completedAt: completedOrder.completedAt,
+              clearedAt: completedOrder.clearedAt,
+              stockDeductionPending: false,
+              lastModified: Date.now()
+            };
+
+            setOrders(prevOrders => prevOrders.map(o =>
+              o.id === order.id ? stockSyncedOrder : o
+            ));
+            publishOrderImmediately(stockSyncedOrder).catch(error => {
+              console.error('sync stock-deducted completed order failed:', order.id, error);
+            });
+          })
+          .catch(error => {
+            const message = error instanceof Error ? error.message : String(error || 'unknown');
+            console.error('background stock deduction failed:', order.id, error);
+            const failedOrder: Order = {
+              ...completedOrder,
+              stockDeductionPending: true,
+              stockDeductionInProgress: false,
+              stockDeductionFailedAt: Date.now(),
+              stockDeductionError: message,
+              lastModified: Date.now()
+            };
+            setOrders(prevOrders => prevOrders.map(o =>
+              o.id === order.id ? failedOrder : o
+            ));
+            publishOrderImmediately(failedOrder).catch(syncError => {
+              console.error('sync stock-deduction failure marker failed:', order.id, syncError);
+            });
+          });
+      })
+      .catch(error => {
+        console.error('complete order publish queued locally:', completedOrder.id, error);
+      });
+  };
+
+  const completeOrderWithStockDeduction = async (order: Order, options: { releaseTable?: boolean } = {}) => {
+    const now = new Date();
+    const completedOrder: Order = {
+      ...order,
+      status: 'completed' as const,
+      completedAt: order.completedAt || now,
+      clearedAt: order.clearedAt || now,
+      stockDeductionPending: !order.stockDeducted,
+      lastModified: Date.now()
+    };
+
+    setOrders(prevOrders => prevOrders.map(o =>
+      o.id === order.id ? completedOrder : o
+    ));
 
     if (options.releaseTable && order.tableId) {
+      markTableUserEdit(order.tableId);
       setTables(prevTables => prevTables.map(t =>
         t.id === order.tableId
-          ? { ...t, status: 'available' as const, currentOrderId: undefined, lastModified: Date.now() }
+          ? { ...t, status: 'available' as const, currentOrderId: '', lastModified: Date.now() }
           : t
       ));
     }
 
-    queueOrderPublish(completedOrder);
-
+    startCompletionBackgroundSync(order, completedOrder);
     return completedOrder;
   };
 
   const handleCompletePayment = async () => {
-    if (isProcessingPayment) {
+    if (paymentProcessingRef.current || isProcessingPayment) {
       console.warn('payment is already processing');
       return;
     }
@@ -2049,6 +2298,7 @@ const POS: React.FC = () => {
       return;
     }
 
+    paymentProcessingRef.current = true;
     setIsProcessingPayment(true);
 
     try {
@@ -2079,7 +2329,7 @@ const POS: React.FC = () => {
 
         const nextCashAmount = (existingOrder.cashAmount || 0) + settledCashAmount;
         const nextCardAmount = (existingOrder.cardAmount || 0) + settledCardAmount;
-        const updatedOrder: Order = {
+        let updatedOrder: Order = {
           ...existingOrder,
           items: currentItems,
           totalAmount: finalTotal,
@@ -2096,12 +2346,16 @@ const POS: React.FC = () => {
           cardAmount: nextCardAmount,
           lastModified: Date.now()
         };
+        updatedOrder = mergeOrderCancelRecords(updatedOrder, selectedOrderId);
 
         paidOrderForSideEffects = updatedOrder;
         setOrders(prevOrders => prevOrders.map(o =>
           o.id === selectedOrderId ? paidOrderForSideEffects! : o
         ));
         pendingOrderSyncIdsRef.current.add(selectedOrderId);
+        publishOrderImmediately(updatedOrder).catch(error => {
+          console.error('payment order immediate publish failed:', updatedOrder.id, error);
+        });
       } else {
         const existingActiveOrder = selectedTableId ? orders.find(o =>
           o.tableId === selectedTableId &&
@@ -2116,12 +2370,11 @@ const POS: React.FC = () => {
 
         const newOrder: Order = {
           id: generateOrderId(),
-          orderNumber: generateOrderNumber(),
+          orderNumber: await generateOrderNumber(),
           tableId: selectedTableId || '',
           tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
           orderType,
           deliveryType: orderType === 'delivery' ? deliveryType : undefined,
-          deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
           customerId: selectedCustomer?.id,
           customerName: selectedCustomer?.name,
           items: currentItems,
@@ -2143,16 +2396,21 @@ const POS: React.FC = () => {
         };
 
         paidOrderForSideEffects = newOrder;
+        paidOrderForSideEffects = mergeOrderCancelRecords(paidOrderForSideEffects);
         finalOrderId = paidOrderForSideEffects.id;
         setOrders(prevOrders => [...prevOrders, paidOrderForSideEffects!]);
         pendingOrderSyncIdsRef.current.add(paidOrderForSideEffects.id);
+        publishOrderImmediately(paidOrderForSideEffects).catch(error => {
+          console.error('payment new order immediate publish failed:', paidOrderForSideEffects!.id, error);
+        });
       }
 
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
 
       if (isFullyPaid && paidOrderForSideEffects?.orderType === 'dine_in' && paidOrderForSideEffects.tableId) {
+        markTableUserEdit(paidOrderForSideEffects.tableId);
         setTables(prevTables => prevTables.map(t =>
-          t.id === paidOrderForSideEffects!.tableId ? { ...t, status: 'needs_cleaning' as const } : t
+          t.id === paidOrderForSideEffects!.tableId ? { ...t, status: 'needs_cleaning' as const, lastModified: Date.now() } : t
         ));
       }
 
@@ -2193,12 +2451,12 @@ const POS: React.FC = () => {
       setPointsToUse(0);
 
       if (finalOrderId) {
-        console.log('payment completed:', finalOrderId);
       }
     } catch (error) {
       console.error('payment failed:', error);
       alert('\u652f\u4ed8\u5904\u7406\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u63a7\u5236\u53f0\u9519\u8bef\u540e\u91cd\u8bd5');
     } finally {
+      paymentProcessingRef.current = false;
       setIsProcessingPayment(false);
     }
   };
@@ -2226,20 +2484,22 @@ const POS: React.FC = () => {
             itemName: item.name,
             quantity: 1,
             reason: cancelReason,
-            cancelledBy: '搴楅暱',
+            cancelledBy: '店长',
             cancelledAt: new Date(),
             orderId: selectedOrderId || 'draft-order',
             tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
             orderType: 'item'
           };
 
-          setCancelRecords([...cancelRecords, cancelRecord]);
+          setCancelRecords(prevRecords => [...prevRecords, cancelRecord]);
 
-          setCurrentItems(currentItems.map(i =>
+          const nextCurrentItems = currentItems.map(i =>
             i.id === itemToDelete
               ? { ...i, quantity: newQuantity, subtotal: newQuantity * i.price }
               : i
-          ));
+          );
+          setCurrentItems(nextCurrentItems);
+          persistItemCancellationForExistingOrder(nextCurrentItems, cancelRecord);
 
         alert(`✅ Se redujo 1 ${item.name}`);
         } else if (cancelAction === 'add') {
@@ -2251,20 +2511,21 @@ const POS: React.FC = () => {
             itemName: item.name,
             quantity: 1,
             reason: cancelReason,
-            cancelledBy: '搴楅暱',
+            cancelledBy: '店长',
             cancelledAt: new Date(),
             orderId: selectedOrderId || 'draft-order',
             tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
             orderType: 'item'
           };
 
-          setCancelRecords([...cancelRecords, addRecord]);
+          void addRecord;
 
-          setCurrentItems(currentItems.map(i =>
+          const nextCurrentItems = currentItems.map(i =>
             i.id === itemToDelete
               ? { ...i, quantity: newQuantity, subtotal: newQuantity * i.price }
               : i
-          ));
+          );
+          setCurrentItems(nextCurrentItems);
 
       alert(`✅ Se agregó 1 ${item.name}. Avise a cocina.`);
         } else {
@@ -2274,15 +2535,17 @@ const POS: React.FC = () => {
             itemName: item.name,
             quantity: item.quantity,
             reason: cancelReason,
-            cancelledBy: '搴楅暱',
+            cancelledBy: '店长',
             cancelledAt: new Date(),
             orderId: selectedOrderId || 'draft-order',
             tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
             orderType: 'item'
           };
 
-          setCancelRecords([...cancelRecords, cancelRecord]);
-          setCurrentItems(currentItems.filter(i => i.id !== itemToDelete));
+          setCancelRecords(prevRecords => [...prevRecords, cancelRecord]);
+          const nextCurrentItems = currentItems.filter(i => i.id !== itemToDelete);
+          setCurrentItems(nextCurrentItems);
+          persistItemCancellationForExistingOrder(nextCurrentItems, cancelRecord);
 
       alert('✅ Producto cancelado. Avise a cocina.');
         }
@@ -2334,7 +2597,7 @@ const POS: React.FC = () => {
             itemName: item.name,
             quantity: item.quantity,
             reason: cancelReason,
-            cancelledBy: '搴楅暱',
+            cancelledBy: '店长',
             cancelledAt: new Date(),
             orderId: order.id,
             tableNumber: order.tableNumber,
@@ -2346,9 +2609,10 @@ const POS: React.FC = () => {
       }
 
       if (tableIdToRelease) {
+        markTableUserEdit(tableIdToRelease);
         setTables(prevTables => prevTables.map(t =>
           t.id === tableIdToRelease
-            ? { ...t, status: 'available' as const, currentOrderId: undefined, lastModified: Date.now() }
+            ? { ...t, status: 'available' as const, currentOrderId: '', lastModified: Date.now() }
             : t
         ));
       }
@@ -2365,7 +2629,7 @@ const POS: React.FC = () => {
     }
   };
 
-  const handleSplitBillConfirm = (splitBills: SplitBill[]) => {
+  const handleSplitBillConfirm = async (splitBills: SplitBill[]) => {
     const totalAmount = splitBills.reduce((sum, bill) => sum + bill.subtotal, 0);
     const paidAmount = splitBills.reduce((sum, bill) => sum + bill.paidAmount, 0);
 
@@ -2391,7 +2655,7 @@ const POS: React.FC = () => {
     } else {
       const newOrder: Order = {
         id: generateOrderId(),
-        orderNumber: generateOrderNumber(),
+        orderNumber: await generateOrderNumber(),
         tableId: selectedTableId!,
         tableNumber: tables.find(t => t.id === selectedTableId)?.number || '',
         orderType: orderType,
@@ -2422,160 +2686,139 @@ const POS: React.FC = () => {
   };
   
   // 打印小票功能
-  const handlePrintReceipt = () => {
+  const handlePrintReceipt = async () => {
     const tableNumber = selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : '';
     const orderTypeText = posOrderTypeLabels[orderType];
+    const currentOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
+    const currentUser = getCurrentUserRecord();
     const receiptSubtotal = currentItems.reduce((sum, item) => sum + item.subtotal, 0);
     const receiptTax = taxEnabled ? tax : 0;
     const receiptServiceFee = serviceFeeEnabled ? serviceFee : 0;
-    
-    let printContent = `
-      <div style="font-family: monospace; padding: 20px; max-width: 300px; margin: 0 auto;">
-        <h2 style="text-align: center; margin-bottom: 10px;">🍜 Restaurante Chino</h2>
-        <div style="border-top: 2px dashed #000; border-bottom: 2px dashed #000; padding: 10px 0; margin: 10px 0;">
-          <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-            <span>Tipo:</span>
-            <span>${orderTypeText}</span>
-          </div>
-          ${tableNumber ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Mesa:</span><span>${tableNumber}</span></div>` : ''}
-          <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-            <span>Hora:</span>
-            <span>${new Date().toLocaleString('es-NI')}</span>
-          </div>
-          ${selectedOrderId ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Pedido:</span><span>${selectedOrderId.slice(-6)}</span></div>` : ''}
-        </div>
-        
-        <div style="margin: 15px 0;">
-          <div style="display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px;">
-            <span style="flex: 2;">Producto</span>
-            <span style="flex: 1; text-align: center;">Cant.</span>
-            <span style="flex: 1; text-align: right;">Importe</span>
-          </div>
-          ${currentItems.map(item => `
-            <div style="display: flex; justify-content: space-between; margin: 8px 0;">
-              <span style="flex: 2;">${item.name}</span>
-              <span style="flex: 1; text-align: center;">x${item.quantity}</span>
-              <span style="flex: 1; text-align: right;">C$${item.subtotal.toFixed(2)}</span>
-            </div>
-          `).join('')}
-        </div>
-        
-        <div style="border-top: 2px dashed #000; padding-top: 10px; margin-top: 10px;">
-          <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-            <span>Subtotal:</span>
-            <span>C$${receiptSubtotal.toFixed(2)}</span>
-          </div>
-          ${taxEnabled ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>IVA (15%)</span><span>C$${receiptTax.toFixed(2)}</span></div>` : ''}
-          ${serviceFeeEnabled ? `<div style="display: flex; justify-content: space-between; margin: 5px 0;"><span>Servicio (10%)</span><span>C$${receiptServiceFee.toFixed(2)}</span></div>` : ''}
-          <div style="display: flex; justify-content: space-between; font-size: 1.2em; font-weight: bold; border-top: 1px solid #000; padding-top: 6px; margin-top: 6px;">
-            <span>Total:</span>
-            <span>C$${finalTotal.toFixed(2)}</span>
-          </div>
-        </div>
-        
-        ${(() => {
-          const currentOrder = orders.find(o => o.id === selectedOrderId);
-          if (currentOrder?.splitBills && currentOrder.splitBills.length > 0) {
-            return `<div style="margin-top: 15px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;">
-              <div style="font-weight: bold; margin-bottom: 5px;">🔀 Dividido en ${currentOrder.splitBills.length}</div>
-              ${currentOrder.splitBills.map(bill => `<div style="margin: 5px 0;">${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? '✅ Pagado' : '⏳ Pendiente'})</div>`).join('')}
-            </div>`;
-          }
-          return '';
-        })()}
-        
-        <div style="text-align: center; margin-top: 20px; font-size: 0.9em; color: #666;">
-          <p>¡Gracias por su compra!</p>
-          <p>Le esperamos pronto</p>
-        </div>
-      </div>
-    `;
-    
-    const printWindow = window.open('', '_blank', 'width=400,height=600');
-    if (printWindow) {
-      printWindow.document.write(`<!DOCTYPE html><html><head><title>Recibo</title><style>
-        body { margin: 0; padding: 0; background: #f3f4f6; }
-        .receipt-toolbar { position: sticky; top: 0; display: flex; gap: 8px; padding: 10px; background: #111827; z-index: 10; }
-        .receipt-toolbar button { flex: 1; border: 0; border-radius: 4px; padding: 10px; color: white; font-weight: 700; cursor: pointer; }
-        .print-btn { background: #2563eb; }
-        .back-btn { background: #6b7280; }
-        .receipt-cut-feed { height: 80px; }
-        @media print {
-          body { margin: 0; padding: 0; background: white; }
-          .no-print { display: none !important; }
-          .receipt-cut-feed { height: 100px; }
-        }
-      </style></head><body>
-        <div class="receipt-toolbar no-print">
-          <button class="print-btn" onclick="window.print()">Imprimir y cortar</button>
-          <button class="back-btn" onclick="window.close()">Volver al POS</button>
-        </div>
-        ${printContent}
-        <div class="receipt-cut-feed"></div>
-        <script>window.onload = function() { setTimeout(function(){ window.print(); }, 300); }</script>
-      </body></html>`);
-      printWindow.document.close();
+
+    const cashPaid = (cashNIO ? parseFloat(cashNIO) : 0) + (cashUSD ? parseFloat(cashUSD) * exchangeRate : 0);
+    const cardPaid = (cardNIO ? parseFloat(cardNIO) : 0) + (cardUSD ? parseFloat(cardUSD) * exchangeRate : 0);
+    const paymentLines = [
+      cashPaid > 0 ? `Efectivo C$${cashPaid.toFixed(2)}` : '',
+      cardPaid > 0 ? `Tarjeta C$${cardPaid.toFixed(2)}` : '',
+      !cashPaid && !cardPaid && currentOrder?.cashAmount ? `Efectivo C$${Number(currentOrder.cashAmount).toFixed(2)}` : '',
+      !cashPaid && !cardPaid && currentOrder?.cardAmount ? `Tarjeta C$${Number(currentOrder.cardAmount).toFixed(2)}` : '',
+    ].filter(Boolean);
+    const totalDiscount = discountAmount + pointsRedemptionAmount;
+    const orderNumber = currentOrder?.orderNumber || selectedOrderId || '';
+
+    const storeProfile = getCurrentStoreReceiptProfile();
+    const receiptItems = currentItems.map(item => ({
+      name: item.name,
+      quantity: item.quantity,
+      price: item.price,
+      subtotal: item.subtotal,
+      notes: (item as any).notes,
+    }));
+    const receiptTotals = {
+      consumo: receiptSubtotal,
+      discount: totalDiscount,
+      subtotal: Math.max(receiptSubtotal - totalDiscount + deliveryFee, 0),
+      tax: receiptTax,
+      serviceFee: receiptServiceFee,
+      total: finalTotal,
+    };
+    const receiptCreatedAt = currentOrder?.createdAt ? new Date(currentOrder.createdAt) : new Date();
+    const receiptCustomerName = selectedCustomer?.name || currentOrder?.customerName || 'Clientes Varios';
+    const receiptCustomerPhone = selectedCustomer?.phone || '';
+    const receiptCustomerAddress = (selectedCustomer as any)?.address || '';
+    const receiptCashierName = currentUser?.name || currentUser?.username || '';
+
+    const receiptHtml = buildThermalReceiptHtml({
+      storeProfile,
+      orderNumber,
+      orderTypeText,
+      tableNumber,
+      customerName: receiptCustomerName,
+      customerPhone: receiptCustomerPhone,
+      customerAddress: receiptCustomerAddress,
+      createdAt: receiptCreatedAt,
+      items: receiptItems,
+      totals: receiptTotals,
+      paymentLines,
+      cashierName: receiptCashierName,
+      widthMm: 80,
+    });
+    const receiptText = buildThermalReceiptText({
+      storeProfile,
+      orderNumber,
+      orderTypeText,
+      tableNumber,
+      customerName: receiptCustomerName,
+      customerPhone: receiptCustomerPhone,
+      customerAddress: receiptCustomerAddress,
+      createdAt: receiptCreatedAt,
+      items: receiptItems,
+      totals: receiptTotals,
+      paymentLines,
+      cashierName: receiptCashierName,
+      widthMm: 80,
+    });
+
+    const bridgeResult = await printViaLocalBridge(buildLocalPrintPayload({
+      role: 'cashier',
+      storeId: getCurrentStoreIdForPrint(),
+      orderNumber,
+      html: receiptHtml,
+      text: receiptText,
+      widthMm: 80,
+    }), { timeoutMs: 900 });
+
+    if (!bridgeResult.success) {
+      openBrowserPrintWindow(receiptHtml);
     }
   };
 
-  // 鐢熸垚璁㈠崟鍙凤紙鏍煎紡锛歁MDD + 3浣嶅簭鍙凤級
-  const generateOrderNumber = () => {
-    const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const dateStr = `${month}${day}`;
-
-    // 缁熻浠婂ぉ宸插垱寤虹殑璁㈠崟鏁伴噺
-    const maxSeq = orders.reduce((max, order) => {
-      const orderNumber = String(order.orderNumber || '');
-      if (!orderNumber.startsWith(dateStr)) return max;
-
-      const seq = Number(orderNumber.slice(dateStr.length));
-      return Number.isFinite(seq) ? Math.max(max, seq) : max;
-    }, 0);
-
-    const seq = String(maxSeq + 1).padStart(3, '0');
-    return `${dateStr}${seq}`;
+      // Order number format: MMDD + three-digit sequence.
+  const generateOrderNumber = async () => {
+    return smartGenerateDailyOrderNumber(new Date());
   };
 
-  // 鈿狅笍 閲嶈鍘熷垯锛氳鍗曠粷瀵逛笉鑳藉垹闄わ紝鍙兘鏇存柊鐘舵€?
   // - draft: 鑽夌璁㈠崟
   // - confirmed: 宸茬‘璁?
-  // - preparing: 鍒朵綔涓?
-  // - served: 宸蹭笂鑿?
-  // - completed: 宸插畬鎴愶紙淇濈暀锛?
-  // - cancelled: 宸插彇娑堬紙淇濈暀锛?
-  // - partial: 閮ㄥ垎鏀粯锛堜繚鐣欙級
-  // 鎵€鏈夊巻鍙茶鍗曢兘蹇呴』姘镐箙淇濆瓨锛岀敤浜庢姤琛ㄥ拰瀹¤
+  // - partial: partially paid, keep it active.
 
-  // 鈿狅笍 宸茬Щ闄わ細妗屽彴娲诲姩璁㈠崟妫€鏌ワ紙閬垮厤姝诲惊鐜級
 
-  // 杩囨护璁㈠崟锛氭敹閾剁晫闈㈠彧鏄剧ず褰撳ぉ鐨勮鍗曪紙鍘嗗彶璁㈠崟鍦ㄥ簵闀跨鐞嗘煡鐪嬶級
   const today = getLocalDateString();
+  const todayOrderPrefix = `${today.slice(5, 7)}${today.slice(8, 10)}`;
+  const isTodayPosOrder = (order: Partial<Order>): boolean => {
+    const orderNumber = String(order.orderNumber || '').trim();
+    if (/^\d{7}$/.test(orderNumber)) {
+      return orderNumber.startsWith(todayOrderPrefix);
+    }
+    if (orderNumber.startsWith('ORD-')) {
+      return false;
+    }
+
+    const orderDate = toDisplayDate(getOrderListTimeValue(order));
+    return Boolean(orderDate && getLocalDateString(orderDate) === today);
+  };
 
   const allOrders = (orderTypeFilter === 'all'
     ? orders
     : orders.filter(o => o.orderType === orderTypeFilter)
   ).filter(o => {
-    // 鎺掗櫎鑽夌鐘舵€佺殑璁㈠崟
+    // Exclude draft orders from active historical order checks.
     if (o.status === 'draft') return false;
+    if (!isDisplayablePosOrder(o)) return false;
 
-    const orderDate = toDisplayDate(o.createdAt || o.preparingAt || o.completedAt || o.lastModified);
-    if (!orderDate) return false;
-
-    return getLocalDateString(orderDate) === today;
+    return isTodayPosOrder(o);
   });
 
   const filteredOrders = [...allOrders].sort((a, b) => {
-    const dateA = toDisplayDate(a.createdAt || a.preparingAt || a.completedAt || a.lastModified)?.getTime() || 0;
-    const dateB = toDisplayDate(b.createdAt || b.preparingAt || b.completedAt || b.lastModified)?.getTime() || 0;
+    const dateA = toDisplayDate(getOrderListTimeValue(a))?.getTime() || 0;
+    const dateB = toDisplayDate(getOrderListTimeValue(b))?.getTime() || 0;
     return dateB - dateA;
   });
 
   const handleAddTable = () => {
     if (newTableName.trim()) {
-      markTableUserEdit();
       if (editingTable) {
+        markTableUserEdit(editingTable.id);
         setTables(prevTables => normalizeTables(
           prevTables.map(t => (
             t.id === editingTable.id
@@ -2601,6 +2844,7 @@ const POS: React.FC = () => {
         capacity: 4,
         lastModified: Date.now()
       };
+      markTableUserEdit(newTable.id);
       setTables(prevTables => normalizeTables([...prevTables, newTable], activeOrderTableIdsRef.current).tables);
       setNewTableName('');
       setEditingTable(null);
@@ -2610,7 +2854,7 @@ const POS: React.FC = () => {
 
   const handleDeleteTable = async (tableId: string) => {
     if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u4e2a\u684c\u5b50\u5417?')) {
-      markTableUserEdit();
+      markTableUserEdit(tableId);
       deletedTableIdsRef.current.add(tableId);
       setSelectedTables(prev => prev.filter(id => id !== tableId));
       if (selectedTableId === tableId) {
@@ -2620,22 +2864,19 @@ const POS: React.FC = () => {
 
       try {
         await smartDeleteDocument('pos_tables', tableId);
-        console.log('鉁?妗屽彴宸蹭粠浜戠鍒犻櫎:', tableId);
       } catch (error) {
-        console.error('鉂?鍒犻櫎妗屽彴澶辫触:', error);
+        console.error('POS operation failed:', error);
         alert('\u5220\u9664\u4e91\u7aef\u684c\u53f0\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
       }
     }
   };
 
   const handleOrderClick = (order: any) => {
-    // 鉁?濡傛灉璁㈠崟宸叉竻鍙帮紝杩涘叆鍙璇︽儏妯″紡锛堝彲浠ユ墦鍗板皬绁級
     if (order.status === 'cancelled' || (order.status === 'completed' && order.clearedAt)) {
       const table = tables.find(t => t.number === order.tableNumber);
       setSelectedTableId(table ? table.id : null);
       setSelectedOrderId(order.id);
 
-      // 鍔犺浇璁㈠崟鍟嗗搧鍒?currentItems锛堝彧璇伙級
       const formattedItems: OrderItem[] = (order.items || []).map((item: any, index: number) => ({
         id: item.id || `item-${index}`,
         menuItemId: item.menuItemId || '',
@@ -2651,7 +2892,6 @@ const POS: React.FC = () => {
       }));
       setCurrentItems(formattedItems);
 
-      // 鉁?鎭㈠璁㈠崟鐨勫鎴蜂俊鎭?
       if (order.customerId) {
         const customer = customers.find(c => c.id === order.customerId);
         if (customer) {
@@ -2661,22 +2901,23 @@ const POS: React.FC = () => {
         setSelectedCustomer(null);
       }
 
-      // 鉁?鎭㈠璁㈠崟绫诲瀷鍜屾淳閫佺被鍨?
       setOrderType(order.orderType || 'dine_in');
       if (order.orderType === 'delivery') {
         setDeliveryType(order.deliveryType || 'self');
         setDeliveryFee(order.deliveryFee || 0);
+      } else {
+        setDeliveryFee(0);
       }
+      setServiceFeeEnabled(false);
+      setTaxEnabled(false);
 
-      // 璁剧疆涓鸿鍗曟ā寮忥紙浣嗕細妫€娴嬩负鍙锛?
       setViewMode('order');
       return;
     }
 
-    // 鉁?鎵€鏈夌被鍨嬬殑璁㈠崟锛堝爞椋?鎵撳寘/澶栧崠锛夐兘寮瑰嚭鍔犺彍/瀹屾垚閫夋嫨妗?
     if (order.status === 'completed' && !order.clearedAt) {
       setTableActionData({
-        tableId: order.tableId,  // 澶栧崠/鎵撳寘鍙兘涓?null
+        tableId: order.tableId,
         tableNumber: order.tableNumber,
         orderId: order.id
       });
@@ -2716,14 +2957,12 @@ const POS: React.FC = () => {
   };
 
   const handleTableDragStart = (e: React.DragEvent, tableId: string) => {
-    console.log('馃柋锔?寮€濮嬫嫋鎷芥鍙?', tableId, 'isEditMode:', isEditMode);
     if (!isEditMode) return;
     setDraggedTable(tableId);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', tableId);
   };
 
-  // 榧犳爣鎷栨嫿瀹炵幇
   const handleTableMouseDown = (e: React.MouseEvent, tableId: string) => {
     if (!isEditMode) return;
 
@@ -2733,7 +2972,6 @@ const POS: React.FC = () => {
     setIsDragging(true);
     setDraggedTable(tableId);
 
-    // 璁＄畻榧犳爣鐩稿浜庢鍙板乏涓婅鐨勫亸绉?
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setDragOffset({
       x: e.clientX - rect.left,
@@ -2782,7 +3020,7 @@ const POS: React.FC = () => {
 
   const handleMouseUp = () => {
     if (isDragging && draggedTable) {
-      markTableUserEdit();
+      markTableUserEdit(draggedTable);
       const finalPosition = pendingDragPositionRef.current;
       if (finalPosition) {
         setTables(prevTables => prevTables.map(t => (
@@ -2792,7 +3030,6 @@ const POS: React.FC = () => {
         )));
       }
       pendingDragPositionRef.current = null;
-      console.log('鉁?妗屽彴绉诲姩瀹屾垚:', draggedTable);
     }
     setIsDragging(false);
     setDraggedTable(null);
@@ -2817,7 +3054,6 @@ const POS: React.FC = () => {
     const firstTable = tables.find(t => t.id === selectedTables[0]);
     if (!firstTable) return;
 
-    markTableUserEdit();
     const mergedFromTables = selectedTables
       .map(id => tables.find(t => t.id === id))
       .filter((t): t is Table => Boolean(t))
@@ -2851,11 +3087,12 @@ const POS: React.FC = () => {
       lastModified: Date.now(),
       capacity: mergedFromTables.reduce((sum, t) => sum + (t.capacity || 0), 0)
     };
+    markTableUserEdit(mergedTable.id);
 
     selectedTables.forEach(id => {
       deletedTableIdsRef.current.add(id);
       smartDeleteDocument('pos_tables', id).catch(error => {
-        console.error('鍒犻櫎鍚堝苟鍓嶆鍙板け璐?', id, error);
+        console.error('delete merged source table failed:', id, error);
       });
     });
     const newTables = tables.filter(t => !selectedTables.includes(t.id));
@@ -2871,7 +3108,6 @@ const POS: React.FC = () => {
       return;
     }
 
-    markTableUserEdit();
     const numbers = table.number.split('+');
     const now = Date.now();
     const restoredTables = table.mergedFromTables
@@ -2901,47 +3137,27 @@ const POS: React.FC = () => {
       lastModified: now
     }));
 
-    deletedTableIdsRef.current.add(tableId);
     restoredTables.forEach(restoredTable => {
       deletedTableIdsRef.current.delete(restoredTable.id);
+      smartSetDocument('pos_tables', restoredTable.id, restoredTable).catch(error => {
+        console.error('restore split table failed:', restoredTable.id, error);
+      });
     });
+    deletedTableIdsRef.current.add(tableId);
     smartDeleteDocument('pos_tables', tableId).catch(error => {
-      console.error('鍒犻櫎鎷嗗垎鍓嶆鍙板け璐?', tableId, error);
+      console.error('delete split source table failed:', tableId, error);
     });
     setTables(normalizeTables([...tables.filter(t => t.id !== tableId), ...restoredTables], activeOrderTableIdsRef.current).tables);
   };
 
   const getStatusColor = (status: string, paymentStatus?: string, clearedAt?: Date) => {
-    if (paymentStatus === 'paid' && status !== 'completed' && status !== 'cancelled' && !clearedAt) {
-      return '#fed7aa';
-    }
-
-    switch (status) {
-      case 'draft': return '#f3f4f6'; // 娴呯伆鑹?- 鑽夌
-      case 'confirmed': return '#fecaca';
-      case 'preparing': return '#fecaca';
-      case 'served': return '#fecaca';
-      case 'completed': return '#ffffff'; // 鐧借壊 - 宸插畬鎴愶紙鑷劧鑹诧級
-      case 'cancelled': return '#fee2e2'; // 娴呯孩鑹?- 宸插彇娑?
-      default: return '#f3f4f6';
-    }
+    return getPosOrderCardColor(status, paymentStatus, clearedAt);
   };
 
   const getStatusText = (status: string, paymentStatus?: string, clearedAt?: Date) => {
-    if (paymentStatus === 'paid' && status !== 'completed' && status !== 'cancelled' && !clearedAt) {
-      return 'Pagado';
-    }
-
-    switch (status) {
-      case 'draft': return 'Borrador';
-      case 'confirmed': return 'Confirmado';
-      case 'preparing': return 'En cocina';
-      case 'served': return paymentStatus === 'paid' ? 'Pagado' : 'Servido';
-      case 'completed': return 'Completado';
-      case 'cancelled': return 'Cancelado';
-      default: return status;
-    }
+    return getPosOrderStatusText(status, paymentStatus, clearedAt);
   };
+
 
   const getTableSprite = (table: Table) => {
     if (table.shape === 'rectangle' || table.number.includes('+')) {
@@ -2962,14 +3178,6 @@ const POS: React.FC = () => {
       return `saturate(1.55) hue-rotate(238deg) brightness(0.98) ${baseShadow}`;
     }
 
-    if (selectedTableId === table.id) {
-      return `saturate(1.35) hue-rotate(205deg) brightness(1.02) ${baseShadow}`;
-    }
-
-    if (table.status === 'available') {
-      return baseShadow;
-    }
-
     switch (table.status) {
       case 'occupied':
         return `sepia(0.42) saturate(2.65) hue-rotate(318deg) brightness(0.94) ${baseShadow}`;
@@ -2977,10 +3185,40 @@ const POS: React.FC = () => {
         return `sepia(0.34) saturate(2.25) hue-rotate(342deg) brightness(1.06) ${baseShadow}`;
       case 'reserved':
         return `sepia(0.38) saturate(1.95) hue-rotate(356deg) brightness(1.04) ${baseShadow}`;
-      default:
-        return baseShadow;
     }
+
+    if (selectedTableId === table.id) {
+      return `saturate(1.35) hue-rotate(205deg) brightness(1.02) ${baseShadow}`;
+    }
+
+    return baseShadow;
   };
+
+  const renderPosToast = () => (
+    <>
+      {posToast && (
+        <div style={{
+          position: 'fixed',
+          top: '76px',
+          right: '20px',
+          zIndex: 10000,
+          maxWidth: '360px',
+          padding: '0.85rem 1rem',
+          borderRadius: '0.75rem',
+          color: posToast.tone === 'error' ? '#991b1b' : '#065f46',
+          backgroundColor: posToast.tone === 'error' ? '#fee2e2' : '#dcfce7',
+          border: posToast.tone === 'error' ? '1px solid #fecaca' : '1px solid #86efac',
+          boxShadow: '0 14px 30px rgba(15, 23, 42, 0.18)',
+          fontWeight: 800,
+          fontSize: '0.9rem',
+          lineHeight: 1.35,
+          pointerEvents: 'none'
+        }}>
+          {posToast.message}
+        </div>
+      )}
+    </>
+  );
 
 
   // Cancel Modal Component
@@ -3125,7 +3363,6 @@ const POS: React.FC = () => {
 
   // Table Action Modal Component
   const TableActionModal = () => {
-    // 鏌ユ壘璁㈠崟锛屽垽鏂槸鍫傞杩樻槸鎵撳寘/澶栧崠
     const order = orders.find(o => o.id === tableActionData?.orderId);
     const isDineIn = order?.orderType === 'dine_in';
 
@@ -3203,6 +3440,7 @@ const POS: React.FC = () => {
   if (viewMode === 'split-bill') {
     return (
       <>
+        {renderPosToast()}
         <div style={{ height: 'calc(100vh - 8rem)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
             <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#1f2937' }}>
@@ -3243,22 +3481,20 @@ const POS: React.FC = () => {
 
   // Order View
   if (viewMode === 'order') {
-    // 鉁?妫€娴嬫槸鍚︿负宸叉竻鍙拌鍗曪紙鍙妯″紡锛?
     const currentOrder = orders.find(o => o.id === selectedOrderId);
-    // 鉁?鍔犺彍妯″紡锛氬嵆浣胯鍗曟槸completed锛屽彧瑕佹病鏈塩learedAt锛屽氨涓嶈繘鍏ュ彧璇绘ā寮?
     const isReadOnly = currentOrder?.status === 'cancelled' || (currentOrder?.status === 'completed' && !!currentOrder?.clearedAt);
 
     return (
       <>
+        {renderPosToast()}
         <div style={{
-          height: 'calc(100vh - 64px)',  // 鍑忓幓椤堕儴瀵艰埅鏍忛珮搴?
+          height: 'calc(100vh - 64px)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
           background: colors.page,
           fontFamily: font.family,
         }}>
-          {/* 涓诲唴瀹瑰尯 */}
           <div style={{ flex: 1, display: 'flex', gap: '0.75rem', padding: '0.75rem', overflow: 'hidden', boxSizing: 'border-box' }}>
             {/* Left: Menu Selection - 鍙妯″紡闅愯棌 */}
             {!isReadOnly && (
@@ -3283,7 +3519,6 @@ const POS: React.FC = () => {
             }}>
               {currentItems.length > 0 ? (
                 <div style={{ ...posPanelStyle, flex: 1, backgroundColor: '#fffdf2', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                  {/* 鍙粴鍔ㄧ殑鍐呭鍖?- 闄愬埗鏈€澶ч珮搴?*/}
                   <div style={{ flex: '1 1 auto', overflowY: 'auto', padding: '0.75rem', maxHeight: 'calc(100vh - 200px)' }}>
                     {/* Receipt Header */}
                 <div style={{ textAlign: 'center', borderBottom: '2px dashed #d1d5db', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
@@ -3292,7 +3527,6 @@ const POS: React.FC = () => {
                   </h3>
 
                   <div style={{ fontSize: '0.8rem', color: '#4b5563', lineHeight: '1.6' }}>
-                    {/* 鉁?浣跨敤璁㈠崟鐨勫疄闄呮暟鎹紝鑰屼笉鏄綋鍓嶇姸鎬?*/}
                     {(() => {
                       const currentOrder = orders.find(o => o.id === selectedOrderId);
                       const displayOrderType = currentOrder?.orderType || orderType;
@@ -3307,7 +3541,6 @@ const POS: React.FC = () => {
                             </span>
                           </div>
 
-                          {/* 鉁?鏄剧ず璁㈠崟鍙?*/}
                           {displayOrderNumber && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                               <span>Pedido:</span>
@@ -3315,7 +3548,6 @@ const POS: React.FC = () => {
                             </div>
                           )}
 
-                          {/* 鉁?鏄剧ず妗屽彿锛堝鏋滄湁锛?*/}
                           {selectedTableId && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                               <span>Mesa:</span>
@@ -3323,7 +3555,6 @@ const POS: React.FC = () => {
                             </div>
                           )}
 
-                          {/* 鉁?鏄剧ず瀹㈡埛淇℃伅 */}
                           {selectedCustomer && (
                             <>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
@@ -3522,7 +3753,6 @@ const POS: React.FC = () => {
                 </div>
                   </div>
 
-                  {/* 鍥哄畾搴曢儴鎸夐挳鍖?- 鍦ㄦ粴鍔ㄥ鍣ㄥ */}
                   <div style={{ display: 'flex', gap: '0.5rem', padding: '0.75rem', borderTop: '2px solid #d1d5db', backgroundColor: '#fffbe6', flexShrink: 0 }}>
                   <button
                     onClick={handlePrintReceipt}
@@ -3543,17 +3773,7 @@ const POS: React.FC = () => {
 
                   {isReadOnly && (
                     <button
-                      onClick={() => {
-                        setViewMode('overview');
-                        setCurrentItems([]);
-                        setSelectedOrderId(null);
-                        setSelectedTableId(null);
-                        setSelectedCustomer(null);
-                        setServiceFeeEnabled(false);
-                        setTaxEnabled(false);
-                        setDeliveryFee(0);
-                        setOrderType('dine_in');
-                      }}
+                      onClick={returnToOverviewFromOrder}
                       style={{
                         flex: 1,
                         padding: '0.6rem',
@@ -3570,7 +3790,6 @@ const POS: React.FC = () => {
                     </button>
                   )}
 
-                  {/* 鉁?鍙妯″紡闅愯棌鎵€鏈夋搷浣滄寜閽?*/}
                   {!isReadOnly && (
                     <>
                       <button
@@ -3666,10 +3885,28 @@ const POS: React.FC = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexDirection: 'column',
+                gap: '0.75rem',
                 fontSize: '0.875rem',
                 color: '#9ca3af'
               }}>
-                Sin pedido
+                <div style={{ fontWeight: 700, color: '#6b7280' }}>Sin pedido</div>
+                <button
+                  onClick={returnToOverviewFromOrder}
+                  style={{
+                    padding: '0.55rem 1.1rem',
+                    borderRadius: '0.55rem',
+                    border: '1px solid #f59e0b',
+                    backgroundColor: '#f59e0b',
+                    color: '#ffffff',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    boxShadow: '0 8px 18px rgba(245, 158, 11, 0.22)'
+                  }}
+                >
+                  ← Volver
+                </button>
+                {/* empty-order-state-end */}
               </div>
             )}
           </div>
@@ -3738,7 +3975,7 @@ const POS: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* 娲鹃€佽垂杈撳叆妗?*/}
+                    {/* Delivery fee input */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>💰 Costo de envío:</label>
                       <input
@@ -3769,7 +4006,6 @@ const POS: React.FC = () => {
                       checked={discountEnabled}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          // 鉁?鍚敤鎶樻墸鏃堕渶瑕佸簵闀挎巿鏉?
                           const password = prompt('🔑 Ingrese clave de gerente/jefe para aplicar descuento:');
                           if (password && managerAuthorizationPasswords.includes(password.trim())) {
                             setDiscountEnabled(true);
@@ -3777,7 +4013,6 @@ const POS: React.FC = () => {
                             alert('❌ Clave incorrecta. Requiere autorización.');
                           }
                         } else {
-                          // 绂佺敤鎶樻墸涓嶉渶瑕佹巿鏉?
                           setDiscountEnabled(false);
                         }
                       }}
@@ -3967,18 +4202,7 @@ const POS: React.FC = () => {
 
                   <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
                     <button
-                      onClick={() => {
-                        setViewMode('overview');
-                        setCurrentItems([]);
-                        setServiceFeeEnabled(false);
-                        setTaxEnabled(false);
-                        setDeliveryFee(0);
-                        setOrderType('dine_in');
-                        setCashNIO('');
-                        setCashUSD('');
-                        setCardNIO('');
-                        setCardUSD('');
-                      }}
+                      onClick={returnToOverviewFromOrder}
                       style={{
                         flex: 1,
                         padding: '0.75rem',
@@ -3996,20 +4220,20 @@ const POS: React.FC = () => {
 
                     <button
                       onClick={handleCompletePayment}
-                      disabled={paidAmount < remainingAmount || currentItems.length === 0}
+                      disabled={isProcessingPayment || paidAmount < remainingAmount || currentItems.length === 0}
                       style={{
                         flex: 2,
                         padding: '0.75rem',
-                        backgroundColor: paidAmount >= remainingAmount && currentItems.length > 0 ? '#10b981' : '#d1d5db',
+                        backgroundColor: !isProcessingPayment && paidAmount >= remainingAmount && currentItems.length > 0 ? '#10b981' : '#d1d5db',
                         color: 'white',
                         border: 'none',
                         borderRadius: '0.25rem',
                         fontWeight: '600',
-                        cursor: paidAmount >= remainingAmount && currentItems.length > 0 ? 'pointer' : 'not-allowed',
+                        cursor: !isProcessingPayment && paidAmount >= remainingAmount && currentItems.length > 0 ? 'pointer' : 'not-allowed',
                         fontSize: '0.95rem'
                       }}
                     >
-                      ✓ Completar pago
+                      {isProcessingPayment ? 'Procesando...' : '✓ Completar pago'}
                     </button>
                   </div>
 
@@ -4050,6 +4274,7 @@ const POS: React.FC = () => {
   // Overview View
   return (
     <>
+      {renderPosToast()}
       <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem', overflow: 'hidden', backgroundColor: '#eef2f7' }}>
         <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 430px', gap: '1rem', overflow: 'hidden' }}>
           {/* Left: Table Layout */}
@@ -4558,7 +4783,7 @@ const POS: React.FC = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
                   <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total:</span>
                   <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#2563eb' }}>
-                    C${filteredOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0).toFixed(2)}
+                    C${filteredOrders.reduce((sum, o) => sum + getPosOrderSummaryAmount(o), 0).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -4578,9 +4803,8 @@ const POS: React.FC = () => {
                   setCardNIO('');
                   setCardUSD('');
 
-                  // 鎵撳寘鍜屽鍗栦篃闇€瑕侀€夋嫨椤惧
+                  // Takeout and delivery orders also need customer selection.
                   if (newOrderType !== 'dine_in') {
-                    console.log('takeout/delivery order, opening customer selector');
                     setShowCustomerModal(true);
                   } else {
                     setViewMode('order');
@@ -4628,7 +4852,6 @@ const POS: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                       <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         #{order.orderNumber || 'N/A'}
-                        {/* 鉁?鏀粯鐘舵€佹爣璇?*/}
                         {pendingOrderSyncIdsRef.current.has(order.id) && (
                           <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>Sincronizando</span>
                         )}
@@ -4652,16 +4875,28 @@ const POS: React.FC = () => {
                     </div>
                     <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.25rem' }}>
                       {order.orderType === 'dine_in' ? (
-                        // 鍫傞锛氭樉绀烘鍙?
+                        // Dine-in: show the table number.
                         <>Mesa {order.tableNumber}</>
                       ) : order.orderType === 'takeout' ? (
-                        // 鎵撳寘锛氬彧鏄剧ず鎵撳寘
+                        // Takeout shows only takeout status.
                         <>{formatPosOrderType('takeout')}</>
                       ) : (
-                        // 澶栧崠锛氬彧鏄剧ず澶栧崠
                         <>{formatPosOrderType('delivery')}</>
                       )}
                     </div>
+                    {finalizingOrderIds.has(order.id) && order.status !== 'completed' && (
+                      <div style={{
+                        padding: '0.45rem 0.6rem',
+                        backgroundColor: '#eff6ff',
+                        color: '#1d4ed8',
+                        borderRadius: '0.55rem',
+                        marginBottom: '0.45rem',
+                        fontSize: '0.78rem',
+                        fontWeight: 700
+                      }}>
+                        Completando...
+                      </div>
+                    )}
                     {order.customerName && (
                       <div style={{ fontSize: '0.8rem', color: '#3b82f6', marginBottom: '0.25rem', fontWeight: '600' }}>
                         👤 {order.customerName}
@@ -4686,47 +4921,49 @@ const POS: React.FC = () => {
                               next.add(order.id);
                               return next;
                             });
+                            markOrderFinalizing(order.id);
                             try {
                               await waitForNextPaint();
                               await completeOrderWithStockDeduction(order);
-                              alert('✅ Pedido completado. Inventario descontado.');
+                              showPosToast('Pedido completado. Inventario descontado.', 'success');
                             } catch (error) {
                               console.error('complete order sync failed:', order.id, error);
-                              alert('No se pudo sincronizar. Revise la red e intente de nuevo.');
+                              showPosToast(getCompletionErrorMessage(error), 'error');
                             } finally {
                               setCompletingOrderIds(prev => {
                                 const next = new Set(prev);
                                 next.delete(order.id);
                                 return next;
                               });
+                              clearOrderFinalizing(order.id);
                             }
                           }
                         }}
-                        disabled={completingOrderIds.has(order.id)}
+                        disabled={completingOrderIds.has(order.id) || finalizingOrderIds.has(order.id)}
                         style={{
                           width: '100%',
                           padding: '0.68rem 0.75rem',
                           margin: '0.5rem 0 0.7rem 0',
-                          backgroundColor: completingOrderIds.has(order.id)
+                          backgroundColor: completingOrderIds.has(order.id) || finalizingOrderIds.has(order.id)
                             ? '#9ca3af'
                             : order.paymentStatus === 'paid' || order.status === 'served' ? '#16a34a' : '#f59e0b',
                           color: 'white',
                           border: 'none',
                           borderRadius: '0.6rem',
-                          cursor: completingOrderIds.has(order.id) ? 'not-allowed' : 'pointer',
+                          cursor: completingOrderIds.has(order.id) || finalizingOrderIds.has(order.id) ? 'not-allowed' : 'pointer',
                           fontSize: '0.9rem',
                           fontWeight: '700',
-                          boxShadow: completingOrderIds.has(order.id) ? 'none' : '0 8px 18px rgba(22, 163, 74, 0.22)'
+                          boxShadow: completingOrderIds.has(order.id) || finalizingOrderIds.has(order.id) ? 'none' : '0 8px 18px rgba(22, 163, 74, 0.22)'
                         }}
                       >
-                        {completingOrderIds.has(order.id) ? 'Procesando...' :
+                        {finalizingOrderIds.has(order.id) ? 'Completando...' :
+                          completingOrderIds.has(order.id) ? 'Procesando...' :
                           order.paymentStatus === 'paid' || order.status === 'served'
                           ? (order.orderType === 'takeout' ? '✅ Retirado en barra' : '✅ Delivery completado')
                           : '💳 Pagar antes de completar'}
                       </button>
                     )}
 
-                    {/* 鉁?瀹屾暣鏃堕棿鏄剧ず锛氫笅鍗曘€佷氦浠樸€佸畬鎴?*/}
                     <div style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -4736,7 +4973,6 @@ const POS: React.FC = () => {
                       marginBottom: '0.5rem',
                       fontSize: '0.85rem'
                     }}>
-                      {/* 涓嬪崟鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
                         <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Pedido</span>
                         <span style={{
@@ -4745,11 +4981,10 @@ const POS: React.FC = () => {
                           fontSize: '0.9rem',
                           color: '#d97706'
                         }}>
-                          {formatOrderTime(order.createdAt || order.preparingAt || order.completedAt || order.lastModified)}
+                          {formatOrderTime(order.createdAt || order.preparingAt || order.updatedAt || order.lastModified)}
                         </span>
                       </div>
 
-                      {/* 浜や粯鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
                         <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Entrega</span>
                         <span style={{
@@ -4762,21 +4997,40 @@ const POS: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* 瀹屾垚鏃堕棿 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Final</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                          {order.status === 'cancelled' ? 'Cancelado' : 'Final'}
+                        </span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
                           fontSize: '0.9rem',
-                          color: order.completedAt ? '#2563eb' : '#d1d5db'
+                          color: order.status === 'cancelled' && order.cancelledAt ? '#dc2626' : order.completedAt ? '#2563eb' : '#d1d5db'
                         }}>
-                          {formatOrderTime(order.completedAt)}
+                          {formatOrderTime(order.status === 'cancelled' ? order.cancelledAt : order.completedAt)}
                         </span>
                       </div>
                     </div>
 
-                    {order.paymentStatus === 'partial' && order.paidAmount > 0 && (
+                    {order.status === 'cancelled' && (Number(order.paidAmount || 0) > 0 || Number(order.totalAmount || 0) > 0) && (
+                      <div style={{
+                        padding: '0.4rem 0.6rem',
+                        backgroundColor: '#fee2e2',
+                        borderRadius: '0.25rem',
+                        marginBottom: '0.5rem',
+                        fontSize: '0.8rem',
+                        color: '#991b1b'
+                      }}>
+                        Cancelado: cobrado C${Number(order.paidAmount || 0).toFixed(2)}
+                        {Number(order.totalAmount || 0) > Number(order.paidAmount || 0) && (
+                          <span style={{ fontWeight: '600', marginLeft: '0.5rem' }}>
+                            {' '}/ anulado C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {order.status !== 'cancelled' && order.paymentStatus === 'partial' && order.paidAmount > 0 && (
                       <div style={{
                         padding: '0.4rem 0.6rem',
                         backgroundColor: '#fef3c7',
@@ -4883,7 +5137,6 @@ const POS: React.FC = () => {
       </div>
       {showCancelModal && renderCancelModal()}
 
-      {/* 椤惧閫夋嫨妯℃€佹 - 鏀惧湪鏈€澶栧眰锛屾墍鏈夎鍥鹃兘鍙互璁块棶 */}
       {showCustomerModal && (
         <div style={{
           position: 'fixed',
@@ -5079,4 +5332,3 @@ const POS: React.FC = () => {
 };
 
 export default POS;
-

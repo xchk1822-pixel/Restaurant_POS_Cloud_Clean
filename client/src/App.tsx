@@ -9,14 +9,14 @@ import Inventory from './pages/Inventory/Inventory';
 import MenuManagement from './pages/Inventory/MenuManagement';
 import FridgeStocktake from './pages/Inventory/FridgeStocktake';
 import WarehouseStocktake from './pages/Inventory/WarehouseStocktake';
-import SupplierManagement from './pages/Inventory/SupplierManagement';
+import SupplierWorkbench from './pages/Suppliers/SupplierWorkbench';
 import Employees from './pages/Employees/Employees';
 import ManagerOverview from './pages/Manager/ManagerOverview';
 import ShiftHandoverPage from './pages/Manager/ShiftHandoverPage';
 import ExpenseRecordsPage from './pages/Manager/ExpenseRecordsPage';
 import OrderHistoryPage from './pages/Manager/OrderHistoryPage';
 import FinancialReportsPage from './pages/Manager/FinancialReportsPage';
-import ManagerCustomers from './pages/Manager/ManagerCustomers';
+import CustomersModule from './pages/Customers/CustomersModule';
 import Stores from './pages/Manager/Stores';
 import ExchangeRateSettings from './pages/Manager/ExchangeRateSettings';
 import PermissionsModule from './pages/Settings/PermissionsModule';
@@ -57,12 +57,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; permissionId?: strin
   if (!isAuthenticated) {
     // ✅ 保存当前URL，登录后返回
     const currentPath = window.location.pathname + window.location.search;
-    console.warn('⚠️ 未认证，跳转到登录页面，之后将返回:', currentPath);
     return <Navigate to={`/login?redirect=${encodeURIComponent(currentPath)}`} replace />;
   }
 
   if (user && !canAccessPermission(user.role, permissionId)) {
-    console.warn('⚠️ 权限不足，拒绝访问:', permissionId, 'role:', user.role);
     return <Navigate to={getDefaultPathForRole(user.role)} replace />;
   }
 
@@ -85,7 +83,7 @@ function App() {
             <Route path="/inventory/menu" element={<ProtectedRoute permissionId="inventory:menu"><MenuManagement /></ProtectedRoute>} />
             <Route path="/inventory/fridge" element={<ProtectedRoute permissionId="inventory:fridge"><FridgeStocktake /></ProtectedRoute>} />
             <Route path="/inventory/warehouse" element={<ProtectedRoute permissionId="inventory:warehouse"><WarehouseStocktake /></ProtectedRoute>} />
-            <Route path="/inventory/suppliers" element={<ProtectedRoute permissionId="inventory:suppliers"><SupplierManagement /></ProtectedRoute>} />
+            <Route path="/suppliers" element={<ProtectedRoute permissionId="suppliers:manage"><SupplierWorkbench /></ProtectedRoute>} />
             <Route path="/employees" element={<ProtectedRoute permissionId="employees:profile"><Employees /></ProtectedRoute>} />
             <Route path="/employees/attendance" element={<ProtectedRoute permissionId="employees:attendance"><Employees /></ProtectedRoute>} />
             <Route path="/employees/loans" element={<ProtectedRoute permissionId="employees:loans"><Employees /></ProtectedRoute>} />
@@ -95,7 +93,10 @@ function App() {
             <Route path="/manager/shift-handover" element={<ProtectedRoute permissionId="manager:handover"><ShiftHandoverPage /></ProtectedRoute>} />
             <Route path="/manager/order-history" element={<ProtectedRoute permissionId="manager:orders"><OrderHistoryPage /></ProtectedRoute>} />
             <Route path="/manager/financial-reports" element={<ProtectedRoute permissionId="manager:reports"><FinancialReportsPage /></ProtectedRoute>} />
-            <Route path="/manager/customers" element={<ProtectedRoute permissionId="manager:customers"><ManagerCustomers /></ProtectedRoute>} />
+            <Route path="/manager/orders" element={<Navigate to="/manager/order-history" replace />} />
+            <Route path="/manager/reports" element={<Navigate to="/manager/financial-reports" replace />} />
+            <Route path="/manager/overview" element={<Navigate to="/manager" replace />} />
+            <Route path="/customers" element={<ProtectedRoute permissionId="customers:manage"><CustomersModule /></ProtectedRoute>} />
             {/* 系统设置 */}
             <Route path="/settings/stores" element={<ProtectedRoute permissionId="settings:stores"><Stores /></ProtectedRoute>} />
             <Route path="/settings/exchange-rate" element={<ProtectedRoute permissionId="settings:exchange"><ExchangeRateSettings /></ProtectedRoute>} />

@@ -1,5 +1,8 @@
 import {
   dedupeOwnerRecordsById,
+  dedupeOwnerRecordsByStoreAndId,
+  buildOwnerExpenseEvidenceRows,
+  summarizeOwnerOrderTypes,
   sumOwnerExpenseByKind,
   sumOwnerSupplierDebt,
 } from './ownerDashboardData';
@@ -48,5 +51,78 @@ describe('owner dashboard data helpers', () => {
     ];
 
     expect(sumOwnerSupplierDebt(purchases)).toBe(220);
+  });
+
+  test('deduplicates owner records by store and id without merging different stores', () => {
+    const records = [
+      { id: 'order-1', storeId: 'store-a', totalAmount: 100, lastModified: 1 },
+      { id: 'order-1', storeId: 'store-a', totalAmount: 120, lastModified: 2 },
+      { id: 'order-1', storeId: 'store-b', totalAmount: 300, lastModified: 1 },
+    ];
+
+    expect(dedupeOwnerRecordsByStoreAndId(records)).toEqual([
+      { id: 'order-1', storeId: 'store-a', totalAmount: 120, lastModified: 2 },
+      { id: 'order-1', storeId: 'store-b', totalAmount: 300, lastModified: 1 },
+    ]);
+  });
+
+  test('builds owner expense evidence rows from receipts and purchase invoices', () => {
+    const rows = buildOwnerExpenseEvidenceRows(
+      [
+        {
+          id: 'expense-1',
+          storeId: 'store-a',
+          storeName: 'Bluefields',
+          date: '2026-06-21',
+          description: 'Taxi',
+          amount: 80,
+          receipt: 'data:image/png;base64,receipt',
+        },
+      ],
+      [
+        {
+          id: 'purchase-1',
+          storeId: 'store-a',
+          storeName: 'Bluefields',
+          orderNumber: 'INV-1',
+          supplierName: 'Bebidas',
+          totalAmount: 500,
+          invoiceImage: 'data:image/png;base64,invoice',
+        },
+      ]
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: 'expense:expense-1',
+        kind: 'operating',
+        storeName: 'Bluefields',
+        title: 'Taxi',
+        image: 'data:image/png;base64,receipt',
+      }),
+      expect.objectContaining({
+        id: 'purchase:purchase-1',
+        kind: 'purchase',
+        storeName: 'Bluefields',
+        title: 'Bebidas - INV-1',
+        image: 'data:image/png;base64,invoice',
+      }),
+    ]);
+  });
+
+  test('summarizes owner orders by Mesa Barra and Delivery', () => {
+    const summary = summarizeOwnerOrderTypes([
+      { id: 'mesa-1', orderType: 'dine_in', totalAmount: 100, paymentStatus: 'paid' },
+      { id: 'mesa-2', totalAmount: 200, status: 'completed' },
+      { id: 'barra-1', orderType: 'takeout', totalAmount: 50, paymentStatus: 'paid' },
+      { id: 'delivery-1', orderType: 'delivery', totalAmount: 70, paymentStatus: 'paid' },
+      { id: 'empty', orderType: 'delivery', totalAmount: 0, paymentStatus: 'paid' },
+    ]);
+
+    expect(summary).toEqual({
+      mesa: 2,
+      barra: 1,
+      delivery: 1,
+    });
   });
 });

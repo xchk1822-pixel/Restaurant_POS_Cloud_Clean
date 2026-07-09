@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canAccessPermission } from '../../utils/permissions';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import logo from '../../logo.svg';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -43,7 +44,6 @@ const menuItems: NavItem[] = [
       { path: '/inventory/menu', icon: 'MN', label: '菜品管理' },
       { path: '/inventory/warehouse', icon: 'WH', label: '仓库盘点' },
       { path: '/inventory/fridge', icon: 'FR', label: '冰箱盘点' },
-      { path: '/inventory/suppliers', icon: 'SP', label: '供应商管理' },
     ],
   },
   {
@@ -53,7 +53,7 @@ const menuItems: NavItem[] = [
     roles: ['store_manager'],
     children: [
       { path: '/employees', icon: 'EP', label: '员工档案' },
-      { path: '/employees/attendance', icon: 'AT', label: '考勤管理' },
+      { path: '/employees/attendance', icon: 'AT', label: 'Asistencia' },
       { path: '/employees/loans', icon: 'LN', label: '借款管理' },
       { path: '/employees/salary', icon: 'PY', label: '工资结算' },
     ],
@@ -69,9 +69,10 @@ const menuItems: NavItem[] = [
       { path: '/manager/order-history', icon: 'OH', label: '历史订单' },
       { path: '/manager/financial-reports', icon: 'FR', label: '财务报表' },
       { path: '/manager', icon: 'DA', label: '数据概览' },
-      { path: '/manager/customers', icon: 'CU', label: '客户管理' },
     ],
   },
+  { path: '/suppliers', icon: 'SP', label: '供应商管理', roles: ['store_manager'] },
+  { path: '/customers', icon: 'CU', label: '客户管理', roles: ['store_manager'] },
   {
     path: '/settings',
     icon: 'SE',
@@ -111,12 +112,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           ? 'employees:profile'
           : item.path === '/manager'
             ? 'manager:overview'
-            : item.path.replace('/', '').replace('/', ':');
+            : item.path === '/suppliers'
+              ? 'suppliers:manage'
+              : item.path === '/customers'
+                ? 'customers:manage'
+                : item.path.replace('/', '').replace('/', ':');
     return canAccessPermission(user.role, permissionId);
   }) : [];
 
   const shouldHideSidebar = location.pathname === '/pos' || location.pathname === '/kitchen' || location.pathname === '/waiter';
   const shouldUseFullscreenMenu = shouldHideSidebar || isNarrowViewport;
+  const shouldAllowPageScroll = location.pathname === '/dashboard';
 
   const renderIcon = (icon: string, active = false) => (
     <span style={{
@@ -139,8 +145,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   );
 
   const navigateAndClose = (path: string) => {
-    navigate(path);
     setShowFullscreenMenu(false);
+    if (path === location.pathname) {
+      return;
+    }
+    if (shouldUseFullscreenMenu) {
+      window.location.assign(path);
+      return;
+    }
+    navigate(path);
   };
 
   return (
@@ -160,7 +173,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             position: 'fixed',
             top: '1rem',
             left: '1rem',
-            zIndex: 1000,
+            zIndex: 1000002,
             width: '3.1rem',
             height: '3.1rem',
             borderRadius: radii.lg,
@@ -186,7 +199,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             position: 'fixed',
             inset: 0,
             backgroundColor: 'rgba(15, 23, 42, 0.48)',
-            zIndex: 999,
+            zIndex: 1000001,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -326,16 +339,19 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 width: '2.55rem',
                 height: '2.55rem',
                 borderRadius: radii.lg,
-                background: `linear-gradient(135deg, ${colors.teal}, ${colors.blue})`,
-                color: colors.surface,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontWeight: 800,
-                fontSize: '0.8rem',
                 flexShrink: 0,
+                boxShadow: shadows.soft,
               }}>
-                POS
+                <img
+                  src={logo}
+                  alt="Restaurant POS Panda"
+                  style={{ width: '82%', height: '82%', objectFit: 'contain', display: 'block' }}
+                />
               </div>
               <div style={{ minWidth: 0 }}>
                 <h1 style={{ fontSize: '1.08rem', fontWeight: 800, color: colors.textPrimary, margin: 0, letterSpacing: 0 }}>
@@ -378,7 +394,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
         {!shouldUseFullscreenMenu && (
           <aside style={{
             width: sidebarCollapsed ? '4.6rem' : '17rem',
@@ -462,10 +478,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
         <main style={{
           flex: 1,
+          minHeight: 0,
           padding: shouldUseFullscreenMenu ? '0' : '1.2rem',
           maxWidth: shouldUseFullscreenMenu ? '100%' : undefined,
           width: shouldUseFullscreenMenu ? '100%' : undefined,
-          overflow: 'hidden',
+          overflowX: 'hidden',
+          overflowY: shouldAllowPageScroll ? 'auto' : 'hidden',
+          WebkitOverflowScrolling: shouldAllowPageScroll ? 'touch' : undefined,
           display: 'flex',
           flexDirection: 'column',
           background: shouldUseFullscreenMenu ? colors.surface : colors.page,

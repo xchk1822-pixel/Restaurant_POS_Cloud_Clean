@@ -1,0 +1,15 @@
+{
+  "name": "restaurant-local-print-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Windows print bridge for Restaurant POS thermal and kitchen printers.",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

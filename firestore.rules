@@ -1,185 +1,226 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // 🔥 辅助函数：检查用户是否已认证
     function isAuthenticated() {
       return request.auth != null;
     }
-    
-    // 🔥 辅助函数：获取用户的 storeId
-    function getUserStoreId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.storeId;
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
-    
-    // 🔥 辅助函数：检查用户是否有分店访问权限
-    function hasStoreAccess(storeId) {
-      return getUserStoreId() == storeId || 
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+
+    function getUserStoreId() {
+      return getUserDoc().data.storeId;
+    }
+
+    function getUserRole() {
+      return getUserDoc().data.role;
+    }
+
+    function getUserStatus() {
+      return getUserDoc().data.status;
+    }
+
+    function isActiveUser() {
+      return isAuthenticated() && getUserStatus() != 'inactive';
     }
 
     function isSuperAdmin() {
-      return isAuthenticated() &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+      return isActiveUser() && getUserRole() == 'super_admin';
     }
-    
-    // ==================== 全局集合（所有认证用户可访问）====================
-    
-    // 用户集合
+
+    function hasStoreAccess(storeId) {
+      return isActiveUser() && (getUserStoreId() == storeId || isSuperAdmin());
+    }
+
+    function hasStoreRole(storeId, roles) {
+      return hasStoreAccess(storeId) && (isSuperAdmin() || getUserRole() in roles);
+    }
+
+    function canManageStore(storeId) {
+      return hasStoreRole(storeId, ['store_manager']);
+    }
+
+    function canOperatePos(storeId) {
+      return hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter', 'chef']);
+    }
+
+    function canManageInventory(storeId) {
+      return hasStoreRole(storeId, ['store_manager', 'cashier']);
+    }
+
+    function canManageCustomers(storeId) {
+      return hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter']);
+    }
+
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperAdmin());
       allow create, update, delete: if isSuperAdmin();
     }
-    
-    // 分店集合
+
     match /stores/{storeId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+      allow read: if isSuperAdmin() || (isActiveUser() && getUserStoreId() == storeId);
+      allow write: if isSuperAdmin();
     }
-    
-    // 系统角色集合
+
     match /system_roles/{roleId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+      allow read: if isActiveUser();
+      allow write: if isSuperAdmin();
     }
-    
-    // ==================== 分店专属集合 ====================
-    
-    // 员工管理
+
     match /stores/{storeId}/employees/{employeeId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
 
-    // 员工删除登记
     match /stores/{storeId}/employee_deletions/{deletionId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 考勤记录
+
     match /stores/{storeId}/attendance_records/{recordId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 薪资记录
+
     match /stores/{storeId}/salary_records/{recordId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 借款记录
+
     match /stores/{storeId}/loan_records/{recordId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 现金流记录
+
     match /stores/{storeId}/cash_flow_records/{recordId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
     }
-    
-    // 库存物品
+
     match /stores/{storeId}/inventory_items/{itemId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
     }
-    
-    // 🔥 库存分类（分店专属）
+
     match /stores/{storeId}/inventory_categories/{categoryId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 菜单项
+
     match /stores/{storeId}/menu_items/{menuId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // POS订单
+
     match /stores/{storeId}/pos_orders/{orderId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canOperatePos(storeId);
     }
-    
-    // POS桌台
+
+    match /stores/{storeId}/order_counters/{counterId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canOperatePos(storeId);
+    }
+
     match /stores/{storeId}/pos_tables/{tableId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter']);
     }
-    
-    // POS挂单
+
     match /stores/{storeId}/pos_held_orders/{heldOrderId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
     }
-    
-    // 费用记录
+
     match /stores/{storeId}/expenses/{expenseId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 采购订单
+
+    match /stores/{storeId}/expense_records/{expenseId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
+    }
+
     match /stores/{storeId}/purchase_orders/{orderId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 供应商
+
     match /stores/{storeId}/suppliers/{supplierId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 🔥 供应商还款记录
+
     match /stores/{storeId}/supplier_payments/{paymentId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 交接班记录
+
     match /stores/{storeId}/handovers/{handoverId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 冰箱
+
     match /stores/{storeId}/fridges/{fridgeId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
     }
-    
-    // 冰箱库存
+
     match /stores/{storeId}/fridge_inventory/{inventoryId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
     }
 
-    // 仓库盘点历史
+    match /stores/{storeId}/stock_transfer_records/{recordId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
+    }
+
+    match /stores/{storeId}/inventory_stock_records/{recordId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
+    }
+
     match /stores/{storeId}/warehouse_stocktake_history/{historyId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
     }
 
-    // 冰箱盘点历史
     match /stores/{storeId}/fridge_stocktake_history/{historyId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
-    }
-    
-    // 客户
-    match /stores/{storeId}/customers/{customerId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageInventory(storeId);
     }
 
-    // 客户删除登记
+    match /stores/{storeId}/customers/{customerId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageCustomers(storeId);
+    }
+
     match /stores/{storeId}/customer_deletions/{deletionId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageCustomers(storeId);
     }
-    
-    // 🔥 费用分类
+
     match /stores/{storeId}/expense_categories/{categoryId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 🔥 积分交易记录
+
     match /stores/{storeId}/points_transactions/{transactionId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageCustomers(storeId);
     }
-    
-    // 🔥 汇率设置
+
     match /stores/{storeId}/exchange_rate/{rateId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId);
     }
-    
-    // 🔥 POS取消记录
+
     match /stores/{storeId}/pos_cancel_records/{recordId} {
-      allow read, write: if isAuthenticated() && hasStoreAccess(storeId);
+      allow read: if hasStoreAccess(storeId);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
     }
   }
 }

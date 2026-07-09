@@ -1,4 +1,6 @@
 import {
+  buildExpenseRankingComparison,
+  buildExpenseRankings,
   buildMonthlySalesCalendar,
   buildPeriodComparison,
   buildRankingComparison,
@@ -18,6 +20,89 @@ const paidOrder = (overrides: any) => ({
 });
 
 describe('dashboardAnalytics', () => {
+  test('builds expense rankings by supplier payments and parent-child operating categories', () => {
+    const expenses = [
+      { id: 'e1', date: '2026-06-10', amount: 120, categoryId: 'electric' },
+      { id: 'e2', date: '2026-06-11', amount: 80, categoryId: 'cleaning' },
+      { id: 'p1', date: '2026-06-12', amount: 300, relatedType: 'purchase', supplierName: 'A供应商饮料', orderNumber: 'P-1' },
+    ];
+    const categories = [
+      { id: 'parent-utilities', name: '房租水电', level: 'parent' },
+      { id: 'electric', name: '电费', level: 'child', parentId: 'parent-utilities' },
+      { id: 'parent-ops', name: '运营杂费', level: 'parent' },
+      { id: 'cleaning', name: '清洁用品', level: 'child', parentId: 'parent-ops' },
+    ];
+
+    const rankings = buildExpenseRankings(expenses, categories, [], {
+      scope: 'all',
+      sortBy: 'amount',
+      topN: 10,
+    });
+
+    expect(rankings[0]).toMatchObject({
+      label: 'A供应商饮料',
+      parentCategory: '采购付款',
+      fullCategory: 'A供应商饮料',
+      type: 'purchase',
+      count: 1,
+      amount: 300,
+      amountShare: 60,
+    });
+    expect(rankings).toContainEqual(expect.objectContaining({
+      label: '电费',
+      parentCategory: '房租水电',
+      fullCategory: '房租水电 / 电费',
+      type: 'operating',
+      amount: 120,
+      amountShare: 24,
+    }));
+    expect(rankings).toContainEqual(expect.objectContaining({
+      label: '清洁用品',
+      parentCategory: '运营杂费',
+      fullCategory: '运营杂费 / 清洁用品',
+      amount: 80,
+      amountShare: 16,
+    }));
+  });
+
+  test('compares expense rankings with previous period movement', () => {
+    const categories = [
+      { id: 'parent-utilities', name: '房租水电', level: 'parent' },
+      { id: 'electric', name: '电费', level: 'child', parentId: 'parent-utilities' },
+      { id: 'parent-ops', name: '运营杂费', level: 'parent' },
+      { id: 'cleaning', name: '清洁用品', level: 'child', parentId: 'parent-ops' },
+    ];
+    const currentExpenses = [
+      { id: 'p-current', date: '2026-06-12', amount: 300, relatedType: 'purchase', supplierName: 'A供应商饮料' },
+      { id: 'e-current', date: '2026-06-13', amount: 120, categoryId: 'electric' },
+    ];
+    const previousExpenses = [
+      { id: 'p-previous', date: '2026-06-01', amount: 100, relatedType: 'purchase', supplierName: 'A供应商饮料' },
+      { id: 'e-previous', date: '2026-06-02', amount: 200, categoryId: 'cleaning' },
+    ];
+
+    const movement = buildExpenseRankingComparison(currentExpenses, previousExpenses, categories, [], {
+      scope: 'all',
+      sortBy: 'amount',
+      topN: 10,
+    });
+
+    expect(movement.increased[0]).toMatchObject({
+      label: 'A供应商饮料',
+      currentAmount: 300,
+      previousAmount: 100,
+      amountDelta: 200,
+      amountPercent: 200,
+    });
+    expect(movement.decreased[0]).toMatchObject({
+      label: '清洁用品',
+      currentAmount: 0,
+      previousAmount: 200,
+      amountDelta: -200,
+      amountPercent: -100,
+    });
+  });
+
   test('includes beverage sales by stock item category when order item has no category', () => {
     const orders = [
       paidOrder({

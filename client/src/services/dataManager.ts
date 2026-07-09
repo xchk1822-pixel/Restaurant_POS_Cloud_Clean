@@ -179,11 +179,11 @@ class DataManager {
   async saveData(
     key: keyof DataStore,
     data: any[],
-    options: { syncFirestore?: boolean; notify?: boolean } = {}
+    options: { syncFirestore?: boolean; notify?: boolean; persistLocal?: boolean } = {}
   ): Promise<void> {
     this.ensureStoreCache();
 
-    const { syncFirestore = true, notify = true } = options;
+    const { syncFirestore = true, notify = true, persistLocal = true } = options;
     const storageKey = getStorageKey(key);
     if (!storageKey) {
       throw new Error(`Missing storeId; refusing to save store-scoped data: ${String(key)}`);
@@ -202,8 +202,9 @@ class DataManager {
       // 1. 更新缓存
       this.cache[key] = data;
 
-      // 2. 保存到 localStorage
-      localStorage.setItem(storageKey, serializedData);
+      if (persistLocal) {
+        localStorage.setItem(storageKey, serializedData);
+      }
 
       // 3. 🔥 同步到 Firestore
       const firestoreCollectionMap: Record<string, string> = {

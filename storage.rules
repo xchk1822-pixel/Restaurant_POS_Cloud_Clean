@@ -1,15 +1,48 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserStoreId() {
+      return getUserDoc().data.storeId;
+    }
+
+    function getUserRole() {
+      return getUserDoc().data.role;
+    }
+
+    function getUserStatus() {
+      return getUserDoc().data.status;
+    }
+
+    function isActiveUser() {
+      return isAuthenticated() && getUserStatus() != 'inactive';
+    }
+
+    function isSuperAdmin() {
+      return isActiveUser() && getUserRole() == 'super_admin';
+    }
+
+    function hasStoreAccess(storeId) {
+      return isActiveUser() && (getUserStoreId() == storeId || isSuperAdmin());
+    }
+
     match /stores/{storeId}/menu-images/{menuId}/{fileName} {
       allow read: if true;
-      allow write: if request.resource != null
-        && request.resource.size < 2 * 1024 * 1024
-        && request.resource.contentType == 'image/webp';
+      allow write: if hasStoreAccess(storeId)
+        && request.resource != null
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
 
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

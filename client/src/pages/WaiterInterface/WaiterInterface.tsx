@@ -76,6 +76,12 @@ const serializeOrderForFirestore = (order: Order) => ({
   lastModified: order.lastModified || Date.now(),
 });
 
+const getPaymentStatusForTotal = (settledAmount: number, totalAmount: number): Order['paymentStatus'] => {
+  if (settledAmount >= totalAmount - 0.001) return 'paid';
+  if (settledAmount > 0) return 'partial';
+  return 'unpaid';
+};
+
 const WaiterInterface: React.FC = () => {
   const { orders: appOrders, setOrders: setAppOrders } = useAppContext();
   const publishedTablesSignatureRef = useRef<string>('');
@@ -353,10 +359,13 @@ const WaiterInterface: React.FC = () => {
     // 创建或更新订单
     if (currentOrder) {
       // 更新现有订单（加菜）
+      const nextTotalAmount = updatedItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const settledAmount = Number(currentOrder.settledAmount || currentOrder.paidAmount || 0);
       const updatedOrder: Order = {
         ...currentOrder,
         items: updatedItems,
-        totalAmount: updatedItems.reduce((sum, item) => sum + item.subtotal, 0),
+        totalAmount: nextTotalAmount,
+        paymentStatus: getPaymentStatusForTotal(settledAmount, nextTotalAmount),
         updatedAt: new Date(),
         lastModified: Date.now(),
       };

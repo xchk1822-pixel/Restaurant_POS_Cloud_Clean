@@ -25,6 +25,9 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "audit:inventory-lifecycle": "node scripts/auditInventoryLifecycle.mjs",
+    "audit:pos-lifecycle": "node scripts/auditPosLifecycle.mjs",
+    "verify:pos-smoke": "node scripts/verifyPosSmoke.mjs",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {

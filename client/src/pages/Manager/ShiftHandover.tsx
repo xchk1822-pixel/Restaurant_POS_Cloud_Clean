@@ -58,9 +58,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
     return NIO_UNITS.reduce((acc, v) => ({ ...acc, [v]: 0 }), {});
   });
   
-  const [history, setHistory] = useState<HistoryRecord[]>(() => {
-    return dataManager.getData('handovers');
-  });
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   
@@ -71,7 +69,6 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       const cloudRecords = await smartGetDocuments('handovers', true);
       const normalizedRecords = normalizeHandoverRecords(cloudRecords) as HistoryRecord[];
       setHistory(normalizedRecords);
-      await dataManager.saveData('handovers', normalizedRecords, { syncFirestore: false, notify: false });
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25:', error);

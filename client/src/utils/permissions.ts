@@ -1,5 +1,7 @@
 import { UserRole } from '../contexts/AuthContext';
 
+export const PERMISSION_SCHEMA_VERSION = 3;
+
 export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   super_admin: ['dashboard', 'settings', 'settings:stores', 'settings:exchange', 'settings:permissions', 'settings:backup'],
   store_manager: [
@@ -11,7 +13,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'inventory:menu',
     'inventory:warehouse',
     'inventory:fridge',
-    'inventory:suppliers',
+    'suppliers:manage',
     'employees',
     'employees:profile',
     'employees:attendance',
@@ -23,11 +25,42 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'manager:orders',
     'manager:reports',
     'manager:overview',
-    'manager:customers',
+    'customers:manage',
   ],
   cashier: ['pos'],
   waiter: ['waiter'],
   chef: ['kitchen'],
+};
+
+export const migrateRolePermissions = (
+  role: UserRole,
+  permissions: string[],
+  permissionSchemaVersion?: number
+): string[] => {
+  const next = permissions.filter(permission =>
+    permission !== 'inventory:suppliers' &&
+    permission !== 'manager:customers'
+  );
+
+  if (
+    role === 'store_manager' &&
+    permissionSchemaVersion !== PERMISSION_SCHEMA_VERSION &&
+    (permissions.includes('inventory') || permissions.includes('inventory:suppliers')) &&
+    !next.includes('suppliers:manage')
+  ) {
+    next.push('suppliers:manage');
+  }
+
+  if (
+    role === 'store_manager' &&
+    permissionSchemaVersion !== PERMISSION_SCHEMA_VERSION &&
+    (permissions.includes('manager') || permissions.includes('manager:customers')) &&
+    !next.includes('customers:manage')
+  ) {
+    next.push('customers:manage');
+  }
+
+  return next;
 };
 
 export const getConfiguredRolePermissions = (role: UserRole): string[] | null => {
@@ -36,7 +69,9 @@ export const getConfiguredRolePermissions = (role: UserRole): string[] | null =>
     if (!rolesData) return null;
     const roles = JSON.parse(rolesData);
     const roleConfig = Array.isArray(roles) ? roles.find((item: any) => item.id === role) : null;
-    return Array.isArray(roleConfig?.permissions) ? roleConfig.permissions : null;
+    return Array.isArray(roleConfig?.permissions)
+      ? migrateRolePermissions(role, roleConfig.permissions, roleConfig.permissionSchemaVersion)
+      : null;
   } catch {
     return null;
   }

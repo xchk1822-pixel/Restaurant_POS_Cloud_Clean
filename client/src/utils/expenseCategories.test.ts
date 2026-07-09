@@ -75,22 +75,54 @@ describe('expenseCategories', () => {
     });
   });
 
-  test('blocks deleting referenced parent or child categories', () => {
+  test('allows deleting referenced parent or child categories because records keep category snapshots', () => {
     const categories = normalizeExpenseCategories([
-      { id: 'parent-custom', name: '自定义父类', level: 'parent' },
-      { id: 'child-custom', name: '自定义子类', level: 'child', parentId: 'parent-custom' },
+      { id: 'parent-custom', name: 'Custom parent', level: 'parent' },
+      { id: 'child-custom', name: 'Custom child', level: 'child', parentId: 'parent-custom' },
     ]);
     const expenses = [
       { id: 'exp-1', parentCategoryId: 'parent-custom', categoryId: 'child-custom' },
     ];
 
     expect(canDeleteExpenseCategory('parent-custom', categories, expenses)).toEqual({
-      allowed: false,
-      reason: '该父类下面还有子类，不能删除',
+      allowed: true,
+      categoryIdsToDelete: ['parent-custom', 'child-custom'],
     });
     expect(canDeleteExpenseCategory('child-custom', categories, expenses)).toEqual({
-      allowed: false,
-      reason: '该类别已有开支记录，不能删除',
+      allowed: true,
+      categoryIdsToDelete: ['child-custom'],
+    });
+  });
+  test('allows deleting an unused parent together with its unused children', () => {
+    const categories = normalizeExpenseCategories([
+      { id: 'parent-unused', name: 'Unused parent', level: 'parent' },
+      { id: 'child-unused-a', name: 'Unused child A', level: 'child', parentId: 'parent-unused' },
+      { id: 'child-unused-b', name: 'Unused child B', level: 'child', parentId: 'parent-unused' },
+    ]);
+
+    expect(canDeleteExpenseCategory('parent-unused', categories, [])).toEqual({
+      allowed: true,
+      categoryIdsToDelete: ['parent-unused', 'child-unused-a', 'child-unused-b'],
+    });
+  });
+
+  test('allows deleting used parent and child categories because expense snapshots keep names', () => {
+    const categories = normalizeExpenseCategories([
+      { id: 'parent-used', name: 'Used parent', level: 'parent' },
+      { id: 'child-used', name: 'Used child', level: 'child', parentId: 'parent-used' },
+    ]);
+
+    expect(canDeleteExpenseCategory('parent-used', categories, [
+      { id: 'expense-1', categoryId: 'child-used' },
+    ])).toEqual({
+      allowed: true,
+      categoryIdsToDelete: ['parent-used', 'child-used'],
+    });
+    expect(canDeleteExpenseCategory('child-used', categories, [
+      { id: 'expense-1', categoryId: 'child-used' },
+    ])).toEqual({
+      allowed: true,
+      categoryIdsToDelete: ['child-used'],
     });
   });
 });

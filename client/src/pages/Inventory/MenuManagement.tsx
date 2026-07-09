@@ -88,6 +88,10 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
 };
 
+const isValidIngredientQuantityInput = (value: string): boolean => {
+  return /^\d*\.?\d*$/.test(value);
+};
+
 const MenuManagement: React.FC = () => {
   const { 
     menuItems, 
@@ -114,6 +118,7 @@ const MenuManagement: React.FC = () => {
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [menuSearchTerm, setMenuSearchTerm] = useState('');
   const [selectedMenuCategory, setSelectedMenuCategory] = useState('all');
+  const [ingredientQuantityDrafts, setIngredientQuantityDrafts] = useState<Record<number, string>>({});
   const menuCategoryStorageKey = dataService.getStoreKey('menu_categories');
   
   // 从 localStorage 加载分类配置
@@ -255,6 +260,7 @@ const MenuManagement: React.FC = () => {
             onClick={() => {
               setSelectedImageFile(null);
               setIsProcessingImage(false);
+              setIngredientQuantityDrafts({});
               setEditingMenu({
                 name: '',
                 price: 0,
@@ -412,6 +418,7 @@ const MenuManagement: React.FC = () => {
                       onClick={() => {
                         setSelectedImageFile(null);
                         setIsProcessingImage(false);
+                        setIngredientQuantityDrafts({});
                         setEditingMenu({ ...menu });
                         setShowMenuModal(true);
                       }}
@@ -659,7 +666,10 @@ const MenuManagement: React.FC = () => {
                     <input
                       type="radio"
                       checked={editingMenu.type === 'direct'}
-                      onChange={() => setEditingMenu({...editingMenu, type: 'direct', ingredients: []})}
+                      onChange={() => {
+                        setIngredientQuantityDrafts({});
+                        setEditingMenu({...editingMenu, type: 'direct', ingredients: []});
+                      }}
                       style={{ marginRight: '0.5rem' }}
                     />
                     <div>
@@ -729,14 +739,26 @@ const MenuManagement: React.FC = () => {
                         ))}
                       </select>
                       <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={ing.quantity || ''}
+                        type="text"
+                        inputMode="decimal"
+                        value={ingredientQuantityDrafts[idx] ?? (ing.quantity ? String(ing.quantity) : '')}
                         onChange={(e) => {
-                          const newIngredients = [...(editingMenu.ingredients || [])];
-                          newIngredients[idx] = { ...ing, quantity: e.target.value ? parseFloat(e.target.value) : 0 };
-                          setEditingMenu({...editingMenu, ingredients: newIngredients});
+                          const inputValue = e.target.value;
+                          if (!isValidIngredientQuantityInput(inputValue)) return;
+                          setIngredientQuantityDrafts(prev => ({ ...prev, [idx]: inputValue }));
+                          const quantity = inputValue && inputValue !== '.' ? Number(inputValue) : 0;
+                          if (!Number.isNaN(quantity)) {
+                            const newIngredients = [...(editingMenu.ingredients || [])];
+                            newIngredients[idx] = { ...ing, quantity };
+                            setEditingMenu({...editingMenu, ingredients: newIngredients});
+                          }
+                        }}
+                        onBlur={() => {
+                          setIngredientQuantityDrafts(prev => {
+                            const nextDrafts = { ...prev };
+                            delete nextDrafts[idx];
+                            return nextDrafts;
+                          });
                         }}
                         placeholder="0.5"
                         style={{
@@ -767,6 +789,7 @@ const MenuManagement: React.FC = () => {
                       <button
                         onClick={() => {
                           const newIngredients = (editingMenu.ingredients || []).filter((_, i) => i !== idx);
+                          setIngredientQuantityDrafts({});
                           setEditingMenu({...editingMenu, ingredients: newIngredients});
                         }}
                         style={{
@@ -786,6 +809,7 @@ const MenuManagement: React.FC = () => {
                   <button
                     onClick={() => {
                       const newIngredients = [...(editingMenu.ingredients || []), { itemId: '', itemName: '', quantity: 0, unit: '磅' }];
+                      setIngredientQuantityDrafts({});
                       setEditingMenu({...editingMenu, ingredients: newIngredients});
                     }}
                     style={{
@@ -811,6 +835,7 @@ const MenuManagement: React.FC = () => {
                 onClick={() => {
                   setSelectedImageFile(null);
                   setIsProcessingImage(false);
+                  setIngredientQuantityDrafts({});
                   setShowMenuModal(false);
                   setEditingMenu({
                     name: '',
@@ -901,6 +926,7 @@ const MenuManagement: React.FC = () => {
 
                     setShowMenuModal(false);
                     setSelectedImageFile(null);
+                    setIngredientQuantityDrafts({});
                     setEditingMenu({
                       name: '',
                       price: 0,

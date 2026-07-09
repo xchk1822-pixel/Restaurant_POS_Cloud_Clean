@@ -86,6 +86,7 @@ describe('finance metrics helpers', () => {
         id: 'paid-table-order',
         status: 'completed',
         paymentStatus: 'paid',
+        orderType: 'dine_in',
         totalAmount: 100,
         lastPaidAt: '2026-06-12T10:00:00.000-06:00',
       },
@@ -110,6 +111,7 @@ describe('finance metrics helpers', () => {
         id: 'paid-order-with-item-record',
         status: 'served',
         paymentStatus: 'paid',
+        orderType: 'takeout',
         totalAmount: 50,
         lastPaidAt: '2026-06-12T13:00:00.000-06:00',
         items: [
@@ -129,8 +131,27 @@ describe('finance metrics helpers', () => {
 
     expect(calculateOrderStatusSummary(orders, '2026-06-12')).toEqual({
       completedOrders: 2,
+      dineInOrders: 1,
+      takeoutOrders: 1,
+      deliveryOrders: 0,
       cancelledOrders: 1,
       cancelledItems: 3,
+    });
+  });
+
+  test('summarizes collected order counts by Mesa Barra and Delivery type', () => {
+    const orders = [
+      { id: 'mesa', orderType: 'dine_in', status: 'completed', paymentStatus: 'paid', totalAmount: 100, lastPaidAt: '2026-06-12T10:00:00.000-06:00' },
+      { id: 'barra', orderType: 'takeout', status: 'completed', paymentStatus: 'paid', totalAmount: 80, lastPaidAt: '2026-06-12T11:00:00.000-06:00' },
+      { id: 'delivery', orderType: 'delivery', status: 'completed', paymentStatus: 'paid', totalAmount: 60, lastPaidAt: '2026-06-12T12:00:00.000-06:00' },
+      { id: 'unpaid-delivery', orderType: 'delivery', status: 'confirmed', paymentStatus: 'unpaid', totalAmount: 50, createdAt: '2026-06-12T12:30:00.000-06:00' },
+    ];
+
+    expect(calculateOrderStatusSummary(orders, '2026-06-12')).toMatchObject({
+      completedOrders: 3,
+      dineInOrders: 1,
+      takeoutOrders: 1,
+      deliveryOrders: 1,
     });
   });
 

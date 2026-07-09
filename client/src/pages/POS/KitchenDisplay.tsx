@@ -36,6 +36,11 @@ const getKitchenOrderStatus = (items: OrderItem[], orderStatus?: string): Kitche
   return 'pending';
 };
 
+const isTerminalPosOrder = (order: any): boolean => {
+  if (!order) return false;
+  return order.status === 'completed' || order.status === 'cancelled';
+};
+
 const serializeOrderForFirestore = (order: any) => ({
   ...order,
   createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : order.createdAt,
@@ -130,6 +135,10 @@ const KitchenDisplay: React.FC = () => {
     const allOrders = dataManager.getData<any>('orders');
     const originalOrder = allOrders.find(order => order.id === orderId);
     if (!originalOrder) return;
+    if (isTerminalPosOrder(originalOrder)) {
+      console.warn('厨房忽略终态订单更新，避免回退 POS 状态:', orderId);
+      return;
+    }
 
     const kitchenStatusByItemId = new Map(
       updatedKitchenOrder.items.map(item => [item.id, item.status])
@@ -160,11 +169,17 @@ const KitchenDisplay: React.FC = () => {
     const allOrders = dataManager.getData<any>('orders');
     const originalOrder = allOrders.find(order => order.id === orderId);
     if (!originalOrder) return;
+    if (isTerminalPosOrder(originalOrder)) {
+      console.warn('厨房忽略终态订单出餐更新，避免回退 POS 状态:', orderId);
+      return;
+    }
 
+    const servedAt = new Date();
+    const nextServedStatus = 'served' as const;
     const updatedOrder = {
       ...originalOrder,
-      status: 'served',
-      servedAt: new Date(),
+      status: nextServedStatus,
+      servedAt,
       items: (originalOrder.items || []).map((item: any) => {
         const itemType = item.type || 'dish';
         return itemType === 'recipe' || itemType === 'dish'

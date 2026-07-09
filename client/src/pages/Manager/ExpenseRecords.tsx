@@ -3,6 +3,9 @@ import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
+import { buildExpenseRankings } from '../../utils/dashboardAnalytics';
+import { buildExpenseDetailRankings, filterExpenseRecords } from '../../utils/expenseRecordInsights';
+import { buildMissingPurchaseExpenses } from '../../utils/purchaseExpenseRepair';
 import {
   canDeleteExpenseCategory,
   getExpenseCategoryPath,
@@ -16,13 +19,14 @@ interface ExpenseRecordsProps {
   embedded?: boolean; // 是否嵌入模式
 }
 
+type ExpenseDateMode = 'today' | 'all' | 'date' | 'month';
+
 const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false }) => {
   const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
 
   // ✅ 使用统一数据管理服务
-  const [expenses, setExpenses] = useState<any[]>(() => {
-    return dataManager.getData('expenses');
-  });
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
 
   const [categories, setCategories] = useState<ExpenseCategory[]>(() => {
     const saved = localStorage.getItem(expenseCategoryStorageKey);
@@ -52,6 +56,9 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const [filterParentCategory, setFilterParentCategory] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>(getLocalDateString()); // ✅ 默认显示当天开支
+  const [filterDateMode, setFilterDateMode] = useState<'today' | 'all' | 'date' | 'month'>('today');
+  const [filterMonth, setFilterMonth] = useState<string>(getLocalDateString().slice(0, 7));
+  const [searchQuery, setSearchQuery] = useState('');
 
   // 表单数据
   const [formData, setFormData] = useState({
@@ -93,14 +100,22 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const refreshExpenseData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudExpenses, cloudCategories] = await Promise.all([
+      const [cloudExpenses, cloudCategories, cloudPurchases] = await Promise.all([
         smartGetDocuments('expenses', true),
         smartGetDocuments('expense_categories', true),
+        smartGetDocuments('purchase_orders', true),
       ]);
 
-      await dataManager.saveData('expenses', cloudExpenses, { syncFirestore: false, notify: false });
-      dataManager.clearCache('expenses');
-      setExpenses(cloudExpenses);
+      const repairedExpenses = buildMissingPurchaseExpenses(cloudPurchases, cloudExpenses);
+      if (repairedExpenses.length > 0) {
+        await Promise.all(repairedExpenses.map(expense =>
+          smartSetDocument('expenses', expense.id, expense)
+        ));
+      }
+      const nextExpenses = [...repairedExpenses, ...cloudExpenses];
+
+      setExpenses(nextExpenses);
+      setPurchaseOrders(cloudPurchases);
 
       const normalizedCloudCategories = normalizeExpenseCategories(cloudCategories);
       setCategoriesCache(normalizedCloudCategories);
@@ -118,6 +133,25 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   }, [refreshExpenseData]);
 
   useEffect(() => {
+    const handleExpensesUpdated = (event: Event) => {
+      const updatedExpenses = (event as CustomEvent<any[]>).detail;
+      setExpenses(Array.isArray(updatedExpenses) ? updatedExpenses : dataManager.getData('expenses'));
+    };
+
+    window.addEventListener('expensesUpdated', handleExpensesUpdated);
+    const handlePurchasesUpdated = (event: Event) => {
+      const updatedPurchases = (event as CustomEvent<any[]>).detail;
+      setPurchaseOrders(Array.isArray(updatedPurchases) ? updatedPurchases : dataManager.getData('purchases'));
+    };
+
+    window.addEventListener('purchasesUpdated', handlePurchasesUpdated);
+    return () => {
+      window.removeEventListener('expensesUpdated', handleExpensesUpdated);
+      window.removeEventListener('purchasesUpdated', handlePurchasesUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
     const firstParent = parentCategories[0]?.id || '';
     if (!selectedParentCategoryId && firstParent) setSelectedParentCategoryId(firstParent);
     if (!formData.parentCategoryId && firstParent) {
@@ -130,6 +164,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const handleAddExpense = async () => {
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
       alert('请输入有效金额');
+      return;
+    }
+
+    if (!window.confirm('确认保存这条开支记录吗？')) {
       return;
     }
 
@@ -265,29 +303,55 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   };
 
   // 删除类别
+  const handleRenameCategory = async (id: string) => {
+    const category = categories.find(cat => cat.id === id);
+    if (!category) return;
+    const nextName = window.prompt('New category name', category.name)?.trim();
+    if (!nextName || nextName === category.name) return;
+
+    const updatedCategory: ExpenseCategory = { ...category, name: nextName };
+    const nextCategories = categories.map(cat => cat.id === id ? updatedCategory : cat);
+    try {
+      await smartSetDocument('expense_categories', updatedCategory.id, updatedCategory);
+    } catch (error) {
+      console.error('Rename expense category failed:', error);
+      alert('Rename expense category failed. Please check the network and try again.');
+      return;
+    }
+    setCategoriesCache(nextCategories);
+  };
+
+  // 删除类别
   const handleDeleteCategory = async (id: string) => {
     const deleteCheck = canDeleteExpenseCategory(id, categories, expenses);
     if (!deleteCheck.allowed) {
-      alert(deleteCheck.reason || '该类别不能删除');
+      alert(deleteCheck.reason || 'Category cannot be deleted');
       return;
     }
-    if (window.confirm('删除类别后不可恢复，确定删除吗？')) {
-      const nextCategories = categories.filter(cat => cat.id !== id);
+    const categoryIdsToDelete = deleteCheck.categoryIdsToDelete || [id];
+    if (window.confirm('Delete this category? This cannot be undone.')) {
+      const nextCategories = categories.filter(cat => !categoryIdsToDelete.includes(cat.id));
       try {
-        await smartDeleteDocument('expense_categories', id);
+        await Promise.all(categoryIdsToDelete.map(categoryId => smartDeleteDocument('expense_categories', categoryId)));
       } catch (error) {
-        console.error('删除开支类别失败:', error);
-        alert('删除开支类别失败，请检查网络后重试');
+        console.error('Delete expense category failed:', error);
+        alert('Delete expense category failed. Please check the network and try again.');
         return;
       }
       setCategoriesCache(nextCategories);
-      if (selectedParentCategoryId === id) {
+      if (categoryIdsToDelete.includes(selectedParentCategoryId)) {
         setSelectedParentCategoryId(getExpenseParentCategories(nextCategories)[0]?.id || '');
       }
+      setFormData(current => {
+        if (!categoryIdsToDelete.includes(current.parentCategoryId) && !categoryIdsToDelete.includes(current.categoryId)) {
+          return current;
+        }
+        const nextParentId = getExpenseParentCategories(nextCategories)[0]?.id || '';
+        const nextChildId = getExpenseChildCategories(nextCategories, nextParentId)[0]?.id || '';
+        return { ...current, parentCategoryId: nextParentId, categoryId: nextChildId };
+      });
     }
   };
-
-  // 处理票据上传
   const handleReceiptUpload = (expenseId: string, file: File) => {
     const reader = new FileReader();
     reader.onloadend = async () => {
@@ -340,14 +404,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
     );
   };
 
-  const filteredExpenses = expenses
-    .filter(exp => {
-      const categoryPath = getExpenseCategoryDisplay(exp);
-      if (filterParentCategory !== 'all' && categoryPath.parentId !== filterParentCategory) return false;
-      if (filterCategory !== 'all' && exp.categoryId !== filterCategory) return false;
-      if (filterDate && exp.date !== filterDate) return false;
-      return true;
-    })
+  const filteredExpenses = filterExpenseRecords(expenses, categories, purchaseOrders, {
+    parentCategoryId: filterParentCategory,
+    categoryId: filterCategory,
+    dateMode: filterDateMode,
+    date: filterDate,
+    month: filterMonth,
+    query: searchQuery,
+  })
     .sort((a, b) => {
       const dateDiff = getExpenseDateTime(b) - getExpenseDateTime(a);
       if (dateDiff !== 0) return dateDiff;
@@ -358,14 +422,47 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const totalAmount = filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0);
   const todayExpenses = expenses.filter(exp => exp.date === getLocalDateString()); // 🔥 使用本地时间
   const todayTotal = todayExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const categoryRankings = buildExpenseRankings(filteredExpenses, categories, purchaseOrders, {
+    scope: 'all',
+    sortBy: 'amount',
+    topN: 6,
+  });
+  const detailRankings = buildExpenseDetailRankings(filteredExpenses, purchaseOrders, searchQuery, 6);
+  const groupedCategoryRankings = React.useMemo(() => {
+    return categoryRankings.reduce((groups: Array<{ title: string; items: typeof categoryRankings }>, item) => {
+      const title = item.parentCategory || '其他开支';
+      const group = groups.find(current => current.title === title);
+      if (group) {
+        group.items.push(item);
+      } else {
+        groups.push({ title, items: [item] });
+      }
+      return groups;
+    }, []);
+  }, [categoryRankings]);
+  const groupedDetailRankings = React.useMemo(() => {
+    if (detailRankings.length === 0) return [];
+    return [{ title: '商品 / 明细', items: detailRankings }];
+  }, [detailRankings]);
 
   const styles = {
     container: {
       display: 'flex',
       flexDirection: 'column' as const,
       height: '100%',
-      padding: '1.5rem',
+      overflowY: 'auto' as const,
+      padding: '1.25rem',
       background: '#f3f4f6',
+    },
+    pageShell: {
+      background: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '0.75rem',
+      boxShadow: '0 10px 30px rgba(15,23,42,0.06)',
+      padding: '1rem',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '0.75rem',
     },
     header: {
       display: 'flex',
@@ -381,25 +478,27 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       margin: 0,
     },
     statsCard: {
-      background: 'white',
+      background: '#f8fafc',
       borderRadius: '0.5rem',
-      padding: '1rem',
-      marginBottom: '1rem',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      padding: '0.6rem 0.75rem',
+      border: '1px solid #e5e7eb',
+      display: 'flex',
       gap: '1rem',
+      flexWrap: 'wrap' as const,
+      alignItems: 'center',
     },
     statItem: {
-      textAlign: 'center' as const,
-      padding: '0.75rem',
-      borderRadius: '0.5rem',
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: '0.35rem',
+      padding: '0.2rem 0',
     },
     toolbar: {
       display: 'flex',
       gap: '0.5rem',
-      marginBottom: '1rem',
+      marginBottom: '0.75rem',
       flexWrap: 'wrap' as const,
+      alignItems: 'center',
     },
     btn: (bg: string, color: string) => ({
       padding: '0.5rem 1rem',
@@ -424,11 +523,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       fontSize: '0.875rem',
     },
     card: {
-      background: 'white',
-      borderRadius: '0.5rem',
-      padding: '1.5rem',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      marginBottom: '1rem',
+      background: '#ffffff',
+      borderRadius: '0.75rem',
+      padding: '1rem',
+      border: '1px solid #e5e7eb',
     },
     formGroup: {
       marginBottom: '1rem',
@@ -472,66 +570,69 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   return (
     <div style={embedded ? {} : styles.container}>
-      {/* 头部 - 仅在非嵌入模式显示 */}
-      {!embedded && (
-        <div style={styles.header}>
-          <h1 style={styles.title}>📝 开支记录</h1>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            {lastSyncedAt && (
-              <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
-              </span>
-            )}
-            <button
-              onClick={refreshExpenseData}
-              disabled={isRefreshing}
-              style={{
-                ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1', 'white'),
-                cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
-            </button>
-            <button
-              onClick={() => setShowCategoryManager(!showCategoryManager)}
-              style={styles.btn('#8b5cf6', 'white')}
-            >
-              ⚙️ 类别管理
-            </button>
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              style={styles.btn(showAddForm ? '#6b7280' : '#10b981', 'white')}
-            >
-              {showAddForm ? '❌ 取消' : '➕ 添加开支'}
-            </button>
+      {/* 页面大容器 */}
+      <div style={styles.pageShell}>
+        {/* 头部 - 仅在非嵌入模式显示 */}
+        {!embedded && (
+          <div style={{ ...styles.header, marginBottom: 0 }}>
+            <h1 style={styles.title}>📝 开支记录</h1>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              {lastSyncedAt && (
+                <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                  {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+                </span>
+              )}
+              <button
+                onClick={refreshExpenseData}
+                disabled={isRefreshing}
+                style={{
+                  ...styles.btn(isRefreshing ? '#9ca3af' : '#6366f1', 'white'),
+                  cursor: isRefreshing ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+              </button>
+              <button
+                onClick={() => setShowCategoryManager(!showCategoryManager)}
+                style={styles.btn('#8b5cf6', 'white')}
+              >
+                ⚙️ 类别管理
+              </button>
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                style={styles.btn(showAddForm ? '#6b7280' : '#10b981', 'white')}
+              >
+                {showAddForm ? '❌ 取消' : '➕ 添加开支'}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* 统计卡片 */}
-      <div style={styles.statsCard}>
-        <div style={{ ...styles.statItem, background: '#dbeafe' }}>
-          <div style={{ fontSize: '0.75rem', color: '#1e40af' }}>今日开支</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e40af' }}>
-            C$ {todayTotal.toFixed(2)}
+        {/* 紧凑摘要 */}
+        <div style={styles.statsCard}>
+          <div style={styles.statItem}>
+            <span style={{ fontSize: '0.75rem', color: '#1e40af' }}>今日开支</span>
+            <strong style={{ fontSize: '1rem', color: '#1e40af' }}>C$ {todayTotal.toFixed(2)}</strong>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{todayExpenses.length} 笔</span>
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#1e40af' }}>{todayExpenses.length} 笔</div>
-        </div>
-        <div style={{ ...styles.statItem, background: '#fef3c7' }}>
-          <div style={{ fontSize: '0.75rem', color: '#92400e' }}>筛选后总计</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#92400e' }}>
-            C$ {totalAmount.toFixed(2)}
+          <div style={styles.statItem}>
+            <span style={{ fontSize: '0.75rem', color: '#92400e' }}>筛选后总计</span>
+            <strong style={{ fontSize: '1rem', color: '#92400e' }}>C$ {totalAmount.toFixed(2)}</strong>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{filteredExpenses.length} 笔</span>
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#92400e' }}>{filteredExpenses.length} 笔</div>
-        </div>
-        <div style={{ ...styles.statItem, background: '#fce7f3' }}>
-          <div style={{ fontSize: '0.75rem', color: '#9d174d' }}>总记录数</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#9d174d' }}>
-            {expenses.length}
+          <div style={styles.statItem}>
+            <span style={{ fontSize: '0.75rem', color: '#9d174d' }}>总记录数</span>
+            <strong style={{ fontSize: '1rem', color: '#9d174d' }}>{expenses.length}</strong>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>条</span>
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#9d174d' }}>条记录</div>
+          <div style={styles.statItem}>
+            <span style={{ fontSize: '0.75rem', color: '#047857' }}>当前命中</span>
+            <strong style={{ fontSize: '1rem', color: '#047857' }}>{filteredExpenses.length}</strong>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              {searchQuery.trim() ? `搜索：${searchQuery.trim()}` : '按当前筛选'}
+            </span>
+          </div>
         </div>
-      </div>
 
       {/* 类别管理 */}
       {showCategoryManager && (
@@ -575,6 +676,12 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                       {parent.name}
                     </button>
                     <button
+                      onClick={() => handleRenameCategory(parent.id)}
+                      style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                    >
+                      {'\u6539\u540d'}
+                    </button>
+                    <button
                       onClick={() => handleDeleteCategory(parent.id)}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}
                     >
@@ -616,6 +723,12 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                     }}
                   >
                     <span>{cat.name}</span>
+                    <button
+                      onClick={() => handleRenameCategory(cat.id)}
+                      style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                    >
+                      {'\u6539\u540d'}
+                    </button>
                     <button
                       onClick={() => handleDeleteCategory(cat.id)}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}
@@ -767,6 +880,47 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {/* 筛选工具栏 */}
       <div style={styles.toolbar}>
         <select
+          value={filterDateMode}
+          onChange={(e) => {
+            const nextMode = e.target.value as ExpenseDateMode;
+            setFilterDateMode(nextMode);
+            if (nextMode === 'today') {
+              setFilterDate(getLocalDateString());
+            }
+            if (nextMode === 'month' && !filterMonth) {
+              setFilterMonth(getLocalDateString().slice(0, 7));
+            }
+          }}
+          style={styles.select}
+        >
+          <option value="today">今天</option>
+          <option value="all">全部</option>
+          <option value="date">指定日期</option>
+          <option value="month">月份</option>
+        </select>
+        {(filterDateMode === 'today' || filterDateMode === 'date') && (
+          <input
+            type="date"
+            value={filterDate}
+            onChange={(e) => {
+              setFilterDate(e.target.value);
+              setFilterDateMode('date');
+            }}
+            style={styles.input}
+          />
+        )}
+        {filterDateMode === 'month' && (
+          <input
+            type="month"
+            value={filterMonth}
+            onChange={(e) => {
+              setFilterMonth(e.target.value);
+              setFilterDateMode('month');
+            }}
+            style={styles.input}
+          />
+        )}
+        <select
           value={filterParentCategory}
           onChange={(e) => {
             setFilterParentCategory(e.target.value);
@@ -793,34 +947,31 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           ))}
         </select>
         <input
-          type="date"
-          value={filterDate}
-          onChange={(e) => setFilterDate(e.target.value)}
-          style={styles.input}
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="搜索开支、供应商、单号、商品，如 鸡肉"
+          style={{ ...styles.input, minWidth: '260px', flex: '1 1 280px' }}
         />
-        <button
-          onClick={() => { setFilterParentCategory('all'); setFilterCategory('all'); setFilterDate(getLocalDateString()); }}
-          style={styles.btn('#6b7280', 'white')}
-        >
-          📅 今天
-        </button>
-        <button
-          onClick={() => { setFilterParentCategory('all'); setFilterCategory('all'); setFilterDate(''); }}
-          style={styles.btn('#3b82f6', 'white')}
-        >
-          📋 全部
-        </button>
+        {searchQuery.trim() && (
+          <button
+            onClick={() => setSearchQuery('')}
+            style={styles.btn('#e5e7eb', '#374151')}
+          >
+            清除搜索
+          </button>
+        )}
       </div>
 
       {/* 开支列表 */}
-      <div style={{ ...styles.card, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ ...styles.card, display: 'flex', flexDirection: 'column' }}>
         {filteredExpenses.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📭</div>
             <div>暂无开支记录</div>
           </div>
         ) : (
-          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto' }}>
             <table style={{ ...styles.table, background: 'white' }}>
               <thead>
                 <tr>
@@ -920,6 +1071,79 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
             </table>
           </div>
         )}
+      </div>
+
+      {/* 开支分析 */}
+      <div style={{ ...styles.card, padding: '1rem', marginBottom: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '1rem', marginBottom: '0.75rem' }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>开支排名</div>
+            <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>基于上方筛选结果，先按大类归类，再看小类和商品明细。</div>
+          </div>
+          <span style={{ fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+            {filteredExpenses.length} 笔 / C$ {totalAmount.toFixed(2)}
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
+              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>类别开支排名</strong>
+              <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Top {categoryRankings.length}</span>
+            </div>
+            {groupedCategoryRankings.length === 0 ? (
+              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>暂无排名数据</div>
+            ) : groupedCategoryRankings.map(group => (
+              <div key={group.title} style={{ marginBottom: '0.75rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem' }}>{group.title}</div>
+                {group.items.map((item, index) => (
+                  <div key={item.key} style={{ marginBottom: '0.45rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.83rem' }}>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: '#94a3b8', marginRight: '0.4rem' }}>#{index + 1}</span>{item.label}
+                      </span>
+                      <strong style={{ color: '#b45309', whiteSpace: 'nowrap' }}>C$ {item.amount.toFixed(2)}</strong>
+                    </div>
+                    <div style={{ height: '4px', background: '#f1f5f9', borderRadius: '999px', marginTop: '0.25rem', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, item.amountShare)}%`, height: '100%', background: '#f59e0b' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
+              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>商品 / 明细排名</strong>
+              <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Top {detailRankings.length}</span>
+            </div>
+            {groupedDetailRankings.length === 0 ? (
+              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>暂无明细数据</div>
+            ) : groupedDetailRankings.map(group => (
+              <div key={group.title}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem' }}>{group.title}</div>
+                {group.items.map((item, index) => (
+                  <div key={item.key} style={{ marginBottom: '0.45rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.83rem' }}>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: '#94a3b8', marginRight: '0.4rem' }}>#{index + 1}</span>{item.label}
+                        <span style={{ color: '#64748b', marginLeft: '0.4rem', fontSize: '0.75rem' }}>
+                          {item.quantity > 0 ? `数量 ${item.quantity}` : `${item.count} 笔`}
+                        </span>
+                      </span>
+                      <strong style={{ color: '#0f766e', whiteSpace: 'nowrap' }}>C$ {item.amount.toFixed(2)}</strong>
+                    </div>
+                    <div style={{ height: '4px', background: '#f1f5f9', borderRadius: '999px', marginTop: '0.25rem', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, item.amountShare)}%`, height: '100%', background: '#0f766e' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   );

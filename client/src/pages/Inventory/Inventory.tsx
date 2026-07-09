@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PurchaseManagement from './PurchaseManagement';
 import { useAppContext } from '../../contexts/AppContext';
 import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
@@ -54,12 +54,140 @@ interface StockRecord {
   id: string;
   itemId: string;
   itemName: string;
-  type: 'in' | 'out' | 'adjust' | 'waste';
+  type: 'in' | 'out' | 'adjust' | 'waste' | 'transfer';
   quantity: number;
+  signedQuantity?: number;
+  beforeStock?: number;
+  afterStock?: number;
   reason: string;
   date: Date;
+  createdAt?: any;
+  createdAtMs?: number;
+  lastModified?: number;
   operator: string;
+  orderNumber?: string;
+  source?: string;
+  sourceId?: string;
 }
+
+const isLegacyDemoStockRecord = (record: Partial<StockRecord>): boolean => {
+  return record.id === 'rec1' || record.id === 'rec2';
+};
+
+const normalizeStockRecordDate = (...values: any[]): Date => {
+  for (const value of values) {
+    if (!value) continue;
+
+    if (value?.toDate) {
+      const date = value.toDate();
+      if (Number.isFinite(date.getTime())) return date;
+    }
+
+    if (value instanceof Date && Number.isFinite(value.getTime())) return value;
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const date = new Date(value);
+      if (Number.isFinite(date.getTime())) return date;
+    }
+
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split('-').map(Number);
+      const localDate = new Date(year, month - 1, day);
+      if (Number.isFinite(localDate.getTime())) return localDate;
+    }
+
+    if (typeof value === 'object') {
+      const seconds = Number(value.seconds ?? value._seconds);
+      if (Number.isFinite(seconds)) {
+        const nanoseconds = Number(value.nanoseconds ?? value._nanoseconds ?? 0);
+        const date = new Date(seconds * 1000 + Math.floor(nanoseconds / 1000000));
+        if (Number.isFinite(date.getTime())) return date;
+      }
+    }
+
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+
+  return new Date();
+};
+
+const formatStockRecordTime = (record: StockRecord): string => {
+  return normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date)
+    .toLocaleString('zh-CN');
+};
+
+const getStockRecordSignedQuantity = (record: StockRecord): number => {
+  const explicitSignedQuantity = Number(record.signedQuantity);
+  if (Number.isFinite(explicitSignedQuantity)) return explicitSignedQuantity;
+
+  if (record.type === 'adjust') {
+    if (Number.isFinite(Number(record.beforeStock)) && Number.isFinite(Number(record.afterStock))) {
+      return Number(record.afterStock) - Number(record.beforeStock);
+    }
+  }
+
+  const quantity = Number(record.quantity) || 0;
+  if (record.type === 'in') return Math.abs(quantity);
+  if (record.type === 'out' || record.type === 'waste') return -Math.abs(quantity);
+  return quantity;
+};
+
+const formatStockRecordQuantity = (record: StockRecord): string => {
+  const signedQuantity = getStockRecordSignedQuantity(record);
+  return `${signedQuantity > 0 ? '+' : ''}${signedQuantity}`;
+};
+
+const formatStockRecordReason = (record: StockRecord): string => {
+  switch (record.reason) {
+    case 'warehouse to fridge':
+      return '仓库调拨到冰箱';
+    case 'fridge to warehouse':
+      return '冰箱退回仓库';
+    case 'pos sale':
+      return record.orderNumber ? `销售出库 ${record.orderNumber}` : '销售出库';
+    case 'purchase order':
+      return record.orderNumber ? `采购入库 ${record.orderNumber}` : '采购入库';
+    case 'warehouse stocktake':
+      return '仓库盘点调整';
+    case 'fridge stocktake':
+      return '冰箱盘点调整';
+    case 'inventory item edit':
+      return '物品编辑调整';
+    default:
+      return record.reason || '-';
+  }
+};
+
+const formatStockRecordOperator = (operator?: string): string => {
+  if (!operator || operator === 'system') return '系统操作';
+  if (operator === 'pos') return 'POS收银';
+  return operator;
+};
+
+const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem: InventoryItem, now: number): StockRecord | null => {
+  const stockDifference = Number(updatedItem.currentStock || 0) - Number(oldItem.currentStock || 0);
+  if (stockDifference === 0) return null;
+
+  return {
+    id: `inventory-edit-${updatedItem.id}-${now}`,
+    itemId: updatedItem.id,
+    itemName: updatedItem.name,
+    type: 'adjust',
+    quantity: Math.abs(stockDifference),
+    signedQuantity: stockDifference,
+    beforeStock: Number(oldItem.currentStock || 0),
+    afterStock: Number(updatedItem.currentStock || 0),
+    reason: 'inventory item edit',
+    source: 'inventory_item_edit',
+    sourceId: updatedItem.id,
+    date: new Date(now),
+    createdAt: new Date(now),
+    createdAtMs: now,
+    lastModified: now,
+    operator: 'system'
+  };
+};
 
 interface InventoryProps {
   defaultTab?: 'items' | 'menu' | 'purchase' | 'records';
@@ -229,6 +357,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   
   const [activeTab, setActiveTab] = useState<'items' | 'menu' | 'purchase' | 'records'>(defaultTab);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [stockStatusFilter, setStockStatusFilter] = useState<'all' | 'negative' | 'low'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInventorySummary, setShowInventorySummary] = useState(false);
@@ -438,36 +567,60 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     saveInventoryCategorySnapshot(orderedCategories);
   }, [saveInventoryCategorySnapshot, saveInventoryCategoryToCloud]);
 
-  const [stockRecords] = useState<StockRecord[]>(() => {
+  const stockRecordsStorageKey = dataService.getStoreKey('inventory_stock_records');
+
+  const [stockRecords, setStockRecords] = useState<StockRecord[]>(() => {
     try {
-      const stockRecordsStorageKey = dataService.getStoreKey('inventory_stock_records');
       const saved = localStorage.getItem(stockRecordsStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         // 恢复 Date 对象
-        return parsed.map((r: any) => ({
-          ...r,
-          date: r.date ? new Date(r.date) : new Date()
-        }));
+        return parsed.map((record: any) => {
+          const normalizedDate = normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date);
+          return {
+            ...record,
+            date: normalizedDate
+          };
+        }).filter((record: StockRecord) => !isLegacyDemoStockRecord(record));
       }
     } catch (error) {
       console.error('加载库存记录失败:', error);
     }
-    // 默认值
-    return [
-      { id: 'rec1', itemId: 'item1', itemName: '大米', type: 'in', quantity: 50000, reason: '采购入库', date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), operator: '张三' },
-      { id: 'rec2', itemId: 'item3', itemName: '可乐', type: 'out', quantity: 12, reason: '销售出库', date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), operator: '系统' },
-    ];
+    return [];
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStockRecords = async () => {
+      try {
+        const cloudRecords = await smartGetDocuments('inventory_stock_records', true);
+        const sortedRecords = cloudRecords
+          .map((record: any) => {
+            const normalizedDate = normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date);
+            return {
+              ...record,
+              date: normalizedDate
+            };
+          })
+          .filter((record: StockRecord) => !isLegacyDemoStockRecord(record))
+          .sort((a: StockRecord, b: StockRecord) => b.date.getTime() - a.date.getTime());
+        if (cancelled) return;
+        setStockRecords(sortedRecords);
+        localStorage.setItem(stockRecordsStorageKey, JSON.stringify(sortedRecords));
+      } catch (error) {
+        console.error('加载云端库存记录失败:', error);
+      }
+    };
+
+    loadStockRecords();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stockRecordsStorageKey]);
 
   // 过滤库存物品
-  const filteredItems = inventoryItems.filter(item => {
-    const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
-    const matchSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                       (item.barcode && item.barcode.includes(searchTerm));
-    return matchCategory && matchSearch;
-  });
-
   // 获取类别名称 - 从 inventoryCategories 中动态查找
   const getCategoryName = (category: string) => {
     const cat = inventoryCategories.find(c => c.key === category);
@@ -500,6 +653,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
   // 检查总库存是否低于警戒线
   const isLowStock = (item: InventoryItem) => getTotalStock(item) <= item.minStock;
+  const isNegativeStockItem = (item: InventoryItem) => item.currentStock < 0 || getFridgeStock(item.id) < 0 || getTotalStock(item) < 0;
+  const negativeStockItems = inventoryItems.filter(isNegativeStockItem);
+
+  const filteredItems = inventoryItems.filter(item => {
+    const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
+    const matchSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                       (item.barcode && item.barcode.includes(searchTerm));
+    const matchStatus = stockStatusFilter === 'all'
+      || (stockStatusFilter === 'negative' && isNegativeStockItem(item))
+      || (stockStatusFilter === 'low' && isLowStock(item));
+    return matchCategory && matchSearch && matchStatus;
+  });
 
   // 模拟扫码功能
   const handleScanBarcode = () => {
@@ -583,7 +748,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
         {/* 搜索和筛选 */}
         {activeTab === 'items' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(160px, 220px) auto', gap: '0.55rem', alignItems: 'center', backgroundColor: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.55rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(150px, 190px) minmax(150px, 190px) auto', gap: '0.55rem', alignItems: 'center', backgroundColor: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.55rem' }}>
             <input
               type="text"
               placeholder="搜索商品名称或条形码..."
@@ -605,6 +770,17 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               {inventoryCategories.map(cat => (
                 <option key={cat.key} value={cat.key}>{cat.icon} {cat.name}</option>
               ))}
+            </select>
+            <select
+              value={stockStatusFilter}
+              onChange={(e) => setStockStatusFilter(e.target.value as 'all' | 'negative' | 'low')}
+              style={{
+                ...inventoryInputStyle,
+              }}
+            >
+              <option value="all">全部状态</option>
+              <option value="negative">负库存</option>
+              <option value="low">低库存</option>
             </select>
             <button
               onClick={() => setShowInventoryCategoryModal(true)}
@@ -797,6 +973,41 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </div>
                 
                 {/* 低库存预警 */}
+                {negativeStockItems.length > 0 && (
+                  <div style={{
+                    padding: '0.75rem',
+                    backgroundColor: '#fff1f2',
+                    borderRadius: '0.375rem',
+                    border: '1px solid #fecdd3',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: lowStockItems.length > 0 ? '0.75rem' : 0
+                  }}>
+                    <div>
+                      <span style={{ fontWeight: '700', color: '#be123c' }}>负库存</span>
+                      <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: '#9f1239' }}>
+                        {negativeStockItems.length} 种物品库存为负，需要盘点修正
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setStockStatusFilter('negative')}
+                      style={{
+                        padding: '0.35rem 0.7rem',
+                        backgroundColor: '#be123c',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer',
+                        fontWeight: '700',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      查看负库存
+                    </button>
+                  </div>
+                )}
+
                 {lowStockItems.length > 0 && (
                   <div style={{
                     padding: '0.75rem',
@@ -825,6 +1036,38 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             );
           })()}
           
+          {negativeStockItems.length > 0 && (
+            <div style={{
+              padding: '0.65rem 0.85rem',
+              backgroundColor: '#fff1f2',
+              borderBottom: '1px solid #fecdd3',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '0.75rem',
+              flexShrink: 0
+            }}>
+              <div style={{ color: '#9f1239', fontWeight: 700 }}>
+                负库存 {negativeStockItems.length} 种，需要盘点修正
+              </div>
+              <button
+                onClick={() => setStockStatusFilter('negative')}
+                style={{
+                  padding: '0.35rem 0.7rem',
+                  backgroundColor: '#be123c',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontWeight: '700',
+                  fontSize: '0.8rem'
+                }}
+              >
+                查看负库存
+              </button>
+            </div>
+          )}
+
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
@@ -910,7 +1153,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       )}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      {isLowStock(item) ? (
+                      {isNegativeStockItem(item) ? (
+                        <span style={{
+                          padding: '0.25rem 0.5rem',
+                          backgroundColor: '#ffe4e6',
+                          color: '#be123c',
+                          borderRadius: '0.25rem',
+                          fontSize: '0.75rem',
+                          fontWeight: '700'
+                        }}>
+                          负库存
+                        </span>
+                      ) : isLowStock(item) ? (
                         <span style={{
                           padding: '0.25rem 0.5rem',
                           backgroundColor: '#fee2e2',
@@ -1185,10 +1439,16 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </tr>
               </thead>
               <tbody>
-                {stockRecords.map(record => (
+                {stockRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
+                      暂无真实出入库记录
+                    </td>
+                  </tr>
+                ) : stockRecords.map(record => (
                   <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>
-                      {new Date(record.date).toLocaleString('zh-CN')}
+                      {formatStockRecordTime(record)}
                     </td>
                     <td style={{ padding: '0.75rem', fontWeight: '600' }}>{record.itemName}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
@@ -1204,10 +1464,10 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                      {record.type === 'in' ? '+' : '-'}{record.quantity}
+                      {formatStockRecordQuantity(record)}
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{record.reason}</td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>{record.operator}</td>
+                    <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordReason(record)}</td>
+                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>{formatStockRecordOperator(record.operator)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1671,12 +1931,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       lastUpdated: new Date(),
                       lastModified: now
                     };
+                    const stockAdjustmentRecord = oldItem
+                      ? createInventoryItemEditStockRecord(oldItem, updatedInventoryItem, now)
+                      : null;
                     
                     let updatedMenuItem: any = null;
                     try {
                       await smartUpdateDocument('inventory_items', newId, {
                         ...updatedInventoryItem,
                       });
+                      if (stockAdjustmentRecord) {
+                        await smartAddDocument('inventory_stock_records', stockAdjustmentRecord);
+                      }
                       if (barcodeChanged) {
                         await smartDeleteDocument('inventory_items', editingItem.id);
                       }
@@ -1719,6 +1985,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     setInventoryItems(items => items.map(item =>
                       item.id === editingItem.id ? updatedInventoryItem : item
                     ));
+                    if (stockAdjustmentRecord) {
+                      setStockRecords(records => [stockAdjustmentRecord, ...records]);
+                    }
 
                     if (updatedMenuItem) {
                       setMenuItems(items => {
@@ -2532,8 +2801,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       try {
                         await saveInventoryCategoryChange([...inventoryCategories, newCategory], newCategory);
                       } catch (error) {
-                        console.error('淇濆瓨搴撳瓨绫诲埆澶辫触:', error);
-                        alert('淇濆瓨绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                        console.error('保存库存类别失败:', error);
+                        alert('保存类别失败，请检查网络后重试');
                         return;
                       }
                       setEditingInventoryCategory({ key: '', name: '', icon: '📦' });
@@ -2642,8 +2911,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                             try {
                               await saveInventoryCategoryChange(newCats, updatedCategory);
                             } catch (error) {
-                              console.error('淇濆瓨搴撳瓨绫诲埆澶辫触:', error);
-                              alert('淇濆瓨绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                              console.error('保存库存类别失败:', error);
+                              alert('保存类别失败，请检查网络后重试');
                             }
                           }
                         }}
@@ -2673,8 +2942,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           try {
                             await deleteInventoryCategoryFromCloud(nextCategories, cat);
                           } catch (error) {
-                            console.error('鍒犻櫎搴撳瓨绫诲埆澶辫触:', error);
-                            alert('鍒犻櫎绫诲埆澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯');
+                            console.error('删除库存类别失败:', error);
+                            alert('删除类别失败，请检查网络后重试');
                             return;
                           }
                         }}

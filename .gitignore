@@ -28,5 +28,13 @@ npm-debug.log*
 
 # Local Product Design / brainstorming previews
 .superpowers/
+/.playwright-cli/
+/output/
+client/output/
+client/output-*.png
 client/.playwright-cli/
 client/output/playwright/
+*.conf.lock
+local-print-bridge/logs/
+local-print-bridge/print-bridge.log
+local-print-bridge/config/printers.json

@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
-import { DEFAULT_ROLE_PERMISSIONS } from '../../utils/permissions';
+import { DEFAULT_ROLE_PERMISSIONS, PERMISSION_SCHEMA_VERSION, migrateRolePermissions } from '../../utils/permissions';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface PermissionNode {
@@ -22,9 +22,10 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'inventory:menu', name: '菜品管理', icon: '🍽️' },
       { id: 'inventory:warehouse', name: '仓库盘点', icon: '🏪' },
       { id: 'inventory:fridge', name: '冰箱盘点', icon: '🧊' },
-      { id: 'inventory:suppliers', name: '供应商管理', icon: '👥' },
     ]
   },
+  { id: 'suppliers:manage', name: '供应商管理', icon: 'SP' },
+  { id: 'customers:manage', name: '客户管理', icon: 'CU' },
   {
     id: 'employees', name: '员工管理', icon: '👥',
     children: [
@@ -42,7 +43,6 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'manager:orders', name: '历史订单', icon: '📋' },
       { id: 'manager:reports', name: '财务报表', icon: '📈' },
       { id: 'manager:overview', name: '数据概览', icon: '📊' },
-      { id: 'manager:customers', name: '客户管理', icon: '🤝' },
     ]
   },
   {
@@ -62,6 +62,7 @@ interface Role {
   name: string;
   description: string;
   permissions: string[];
+  permissionSchemaVersion?: number;
   color: string;
   icon: string;
 }
@@ -72,6 +73,7 @@ const CANONICAL_ROLES: Role[] = [
     name: '店长',
     description: '分店经营管理权限',
     permissions: DEFAULT_ROLE_PERMISSIONS.store_manager,
+    permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
     color: '#2563eb',
     icon: '🏢',
   },
@@ -80,6 +82,7 @@ const CANONICAL_ROLES: Role[] = [
     name: '收银',
     description: 'POS收银权限',
     permissions: DEFAULT_ROLE_PERMISSIONS.cashier,
+    permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
     color: '#16a34a',
     icon: '💰',
   },
@@ -88,6 +91,7 @@ const CANONICAL_ROLES: Role[] = [
     name: '服务生',
     description: '服务生点餐权限',
     permissions: DEFAULT_ROLE_PERMISSIONS.waiter,
+    permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
     color: '#f59e0b',
     icon: '🍽️',
   },
@@ -96,6 +100,7 @@ const CANONICAL_ROLES: Role[] = [
     name: '厨师',
     description: '厨房显示权限',
     permissions: DEFAULT_ROLE_PERMISSIONS.chef,
+    permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
     color: '#ef4444',
     icon: '👨‍🍳',
   },
@@ -126,11 +131,14 @@ const getCanonicalRoleId = (role: any): string | null => {
 const normalizeRoles = (cloudRoles: any[]): Role[] => {
   return CANONICAL_ROLES.map(defaultRole => {
     const matched = cloudRoles.find(role => getCanonicalRoleId(role) === defaultRole.id);
+    const permissions = Array.isArray(matched?.permissions) && matched.permissions.length > 0
+      ? migrateRolePermissions(defaultRole.id as any, matched.permissions, matched.permissionSchemaVersion)
+      : defaultRole.permissions;
+
     return {
       ...defaultRole,
-      permissions: Array.isArray(matched?.permissions) && matched.permissions.length > 0
-        ? matched.permissions
-        : defaultRole.permissions,
+      permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
+      permissions,
     };
   });
 };
@@ -308,6 +316,7 @@ const PermissionsModule: React.FC = () => {
       description: formDesc.trim(),
       icon: formIcon,
       color: formColor,
+      permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
       permissions: formPerms,
     };
 

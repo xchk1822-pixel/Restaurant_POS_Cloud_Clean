@@ -49,7 +49,6 @@ class DataService {
         const globalData = localStorage.getItem(collectionName);
         if (globalData) {
           const parsed = JSON.parse(globalData);
-          console.log(`📂 从全局路径读取 ${collectionName} (${parsed.length}条)`);
           return parsed;
         }
         return [];
@@ -63,13 +62,11 @@ class DataService {
         const storeData = localStorage.getItem(storeKey);
         if (storeData) {
           const parsed = JSON.parse(storeData);
-          console.log(`📂 从分店专属路径读取 ${collectionName}:`, storeKey, `(${parsed.length}条)`);
           return parsed;
         }
       }
 
       // 没有storeId或分店key中没有数据，返回空数组
-      console.log(`⚠️ 分店 ${collectionName} 数据为空`);
       return [];
     } catch (error) {
       console.error(`❌ 读取 ${collectionName} 失败:`, error);
@@ -105,13 +102,11 @@ class DataService {
       if (isGlobalCollection) {
         // 全局集合：只保存到全局key
         localStorage.setItem(collectionName, JSON.stringify(dataWithTimestamp));
-        console.log(`💾 已保存全局 ${collectionName}: ${dataWithTimestamp.length} 条`);
       } else {
         // 分店专属集合：只保存到分店key
         if (storeId) {
           const storeKey = `store_${storeId}_${collectionName}`;
           localStorage.setItem(storeKey, JSON.stringify(dataWithTimestamp));
-          console.log(`💾 已保存分店 ${collectionName}: ${dataWithTimestamp.length} 条`);
         } else {
           console.warn(`⚠️ 没有 storeId，无法保存分店数据: ${collectionName}`);
         }
@@ -204,7 +199,6 @@ class DataService {
     // 保存到 Firestore（老板可查看）
     try {
       await smartAddDocument(`stores/${storeId}/financial_summary`, summary);
-      console.log('✅ 财务汇总已生成并上传');
     } catch (error) {
       console.error('❌ 财务汇总上传失败', error);
     }
@@ -217,12 +211,13 @@ class DataService {
    * 登录时调用，确保多设备数据一致
    */
   async syncStoreData(storeId: string): Promise<void> {
-    console.log(`🔄 开始从 Firestore 同步分店 ${storeId} 的数据...`);
 
-    // 🔥 第一步：同步全局数据（users、stores）
-    await this.syncGlobalData();
+    const currentUserRaw = localStorage.getItem('current_user');
+    const currentUser = currentUserRaw ? JSON.parse(currentUserRaw) : null;
+    if (currentUser?.role === 'super_admin') {
+      await this.syncGlobalData();
+    }
 
-    // 🔥 第二步：同步分店专属数据
     const collections = [
       'inventory_items',
       'menu_items',
@@ -246,9 +241,6 @@ class DataService {
       'pos_held_orders',
       'pos_tables'
     ];
-
-    let syncedCount = 0;
-
     for (const collection of collections) {
       try {
         // 🔥 直接读取分店专属集合，不使用smartGetDocuments（避免路径重复）
@@ -265,17 +257,13 @@ class DataService {
         const localKey = `store_${storeId}_${collection}`;
         localStorage.setItem(localKey, JSON.stringify(cloudData));
         if (cloudData.length > 0) {
-          console.log(`✅ 已同步 ${collection}: ${cloudData.length} 条`);
         } else {
-          console.log(`⚠️ ${collection} Cloud empty; cleared local cache`);
         }
-        syncedCount++;
       } catch (error) {
         console.error(`❌ 同步 ${collection} 失败:`, error);
       }
     }
 
-    console.log(`🎉 同步完成，共 ${syncedCount} 个集合`);
 
     // 触发自定义事件，通知 AppContext 更新
     window.dispatchEvent(new Event('dataSynced'));
@@ -285,7 +273,6 @@ class DataService {
    * 🔥 同步全局数据（users、stores、system_roles）
    */
   private async syncGlobalData(): Promise<void> {
-    console.log('🔄 开始同步全局数据...');
 
     const globalCollections = ['users', 'stores', 'system_roles'];
 
@@ -304,9 +291,7 @@ class DataService {
         if (cloudData.length > 0) {
           // 保存到 localStorage
           localStorage.setItem(collectionName, JSON.stringify(cloudData));
-          console.log(`✅ 已同步全局 ${collectionName}: ${cloudData.length} 条`);
         } else {
-          console.log(`⚠️ 全局 ${collectionName} 在云端为空`);
         }
       } catch (error) {
         console.error(`❌ 同步全局 ${collectionName} 失败:`, error);

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { getLocalDateString } from '../../utils/exchangeRate'; // 濠碘槅鍋撶徊浠嬪疮椤栫偛姹?闂備浇顕уù鐑藉极閹间礁鍌ㄧ憸鏂跨暦閿濆骞㈡繛鎴灻悵妯侯渻閵堝棗鍧婇柛瀣尰缁绘繈鍩€椤掑嫬绠绘い鏃囧亹閻嫰姊洪棃娑辨闂傚嫬瀚板畷娲磼濠ф儳浜鹃悷娆忓閸嬬娀鏌涙惔銊ゆ喚鐎?
+import { smartAddDocument, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
+import { getSingleSalaryDefaultPeriod } from '../../utils/employeeRecords';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface Employee {
@@ -26,6 +27,9 @@ interface AttendanceRecord {
   workHours: number;
   status: 'normal' | 'late' | 'early_leave' | 'absent' | 'leave' | 'rest' | 'empty';
   notes?: string;
+  settledSalaryId?: string;
+  settledSalaryPeriod?: string;
+  settledAt?: string;
 }
 
 interface SalaryRecord {
@@ -34,12 +38,12 @@ interface SalaryRecord {
   month: string;
   startDate: string;
   endDate: string;
-  periodType: 'first_half' | 'second_half'; // 上半月/下半月
+  periodType: 'first_half' | 'second_half';
   baseSalary: number;
   overtimeHours: number;
   overtimePay: number;
-  benefits: number; // 当月福利（动态）
-  subsidy: number; // 当月补贴（动态）
+  benefits: number; // 闂佽崵鍠愮划搴㈡櫠濡ゅ懎绠伴悹鍥嚋閼板潡鏌嶈閸撴稓妲愰幒妤€纾兼慨妯夸含椤斿洭姊虹化鏇熸珔閻庢矮鍗冲顐㈩吋婢跺﹪鍞跺┑鐘绘涧閺屽﹤螖閸涱喚鍘靛銈嗗灱濞夋洜绮佃箛鏇犵＜?
+  subsidy: number; // 闂佽崵鍠愮划搴㈡櫠濡ゅ懎绠伴悹鍥嚋閼板潡鏌嶈閸撶喖骞冪捄琛℃闁哄诞鍐ㄐ撻梻浣告啞鐢鎯勯鐐叉瀬鐎广儱顦柋鍥ㄧ節闂堟稒鐓€婵°倕鎳忛悡娆愩亜閹达絾纭剁紒娑樼箳缁?
   socialSecurityEmployee: number;
   socialSecurityCompany: number;
   loanAmount: number;
@@ -81,6 +85,7 @@ interface CashFlowRecord {
 interface SalarySettlementProps {
   employees: Employee[];
   attendanceRecords: AttendanceRecord[];
+  setAttendanceRecords: React.Dispatch<React.SetStateAction<AttendanceRecord[]>>;
   salaryRecords: SalaryRecord[];
   setSalaryRecords: React.Dispatch<React.SetStateAction<SalaryRecord[]>>;
   loanRecords: LoanRecord[];
@@ -92,6 +97,7 @@ interface SalarySettlementProps {
 const SalarySettlement: React.FC<SalarySettlementProps> = ({
   employees,
   attendanceRecords,
+  setAttendanceRecords,
   salaryRecords,
   setSalaryRecords,
   loanRecords,
@@ -100,31 +106,32 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   setCashFlowRecords,
 }) => {
   const [settlementMode, setSettlementMode] = useState<'single' | 'batch'>('single');
+  const [salaryHistoryStartDate, setSalaryHistoryStartDate] = useState(getLocalDateString(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000)));
+  const [salaryHistoryEndDate, setSalaryHistoryEndDate] = useState(getLocalDateString());
   
-  // 批量结算状态
   const [batchPeriod, setBatchPeriod] = useState({
-    startDate: getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), // 🔥 使用本地时间
-    endDate: getLocalDateString(), // 🔥 使用本地时间
+    startDate: getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), // 濠碘槅鍋撶徊浠嬪疮椤栫偛姹?婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲倻褰夋俊鐐€栧濠氬磻閹惧绡€闁逞屽墴楠炴﹢顢欓懖鈺冩綁闂備礁澹婇崑鍛哄鈧弫?
+    endDate: getLocalDateString(), // 濠碘槅鍋撶徊浠嬪疮椤栫偛姹?婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲倻褰夋俊鐐€栧濠氬磻閹惧绡€闁逞屽墴楠炴﹢顢欓懖鈺冩綁闂備礁澹婇崑鍛哄鈧弫?
     periodType: 'second_half' as 'first_half' | 'second_half',
   });
   
-  // 单人结算时的动态福利/补贴/社保
+  // 闂傚倷绀侀幉锟犮€冮崱妞曟椽骞嬪顑嫬绶炵€光偓閳ь剛澹曟總鍛婄厵闁诡垎鍐炬殺闂佸搫妫崜鐔煎蓟閿熺姴绀冮柕濞垮労閺嗐垹鈹戦悙鑼闁搞劌鐏濋悾宄扳攽鐎ｎ€晠鏌ㄩ弮鍌涘殌濞存粍鍎抽湁闁挎繂瀚鐔哥箾閹绘帗鍋ラ柡?闂備浇宕甸崑鐐电矙韫囨稑纾块柟缁㈠枛缁€?缂傚倸鍊风拋鏌ュ磻閹剧粯鐓曟繛鍡楃Т閸斻倗绱?
   const [dynamicBenefits, setDynamicBenefits] = useState<Record<string, number>>({});
   const [dynamicSubsidy, setDynamicSubsidy] = useState<Record<string, number>>({});
   const [dynamicSocialSecurity, setDynamicSocialSecurity] = useState<Record<string, number>>({});
 
 
 
-  const recordCashFlow = async (flow: Omit<CashFlowRecord, 'id'>) => {
+  const recordCashFlow = async (flow: Omit<CashFlowRecord, 'id'> & { id?: string }) => {
     const newFlow: CashFlowRecord = {
-      id: Date.now().toString(),
       ...flow,
+      id: flow.id || `cash_flow_${Date.now()}`,
     };
     
     try {
       await smartAddDocument('cash_flow_records', newFlow);
     } catch (error) {
-      console.error('同步工资现金流水失败:', error);
+      console.error('闂傚倷绀侀幉锟犳嚌妤ｅ啫瀚夋い鎺戝閺佸棝鏌ｉ幇顒佲枙闁哥喎鎳橀弻鏇熷緞閸繂顬嬮梺闈涚墱閸嬪﹪寮婚敐鍜佺叆闁逞屽墴瀹曪繝骞庨挊澶愭７闂佽鍨奸悘鎰喆閸曨剙顎撻柣鐔哥懃鐎氼剟鎯佺紒妯肩瘈闁靛繆鈧啿濮哥紓渚囧枛婢т粙骞?', error);
       throw error;
     }
 
@@ -142,7 +149,34 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     return activeLoans.reduce((sum, loan) => sum + loan.remainingAmount, 0);
   };
 
-  // 计算薪资（核心逻辑）
+  const getSalaryRecordId = (employeeId: string, startDate: string, endDate: string) =>
+    `salary_${employeeId}_${startDate}_${endDate}`;
+
+  const getSalaryExpenseId = (salaryRecordId: string) =>
+    `expense_${salaryRecordId}`;
+
+  const markAttendanceRecordsSettled = async (employeeId: string, startDate: string, endDate: string, salaryRecordId: string) => {
+    const salaryPeriod = `${startDate}_${endDate}`;
+    const settledAt = getLocalDateString();
+    const recordsToSettle = attendanceRecords
+      .filter(record => record.employeeId === employeeId && record.date >= startDate && record.date <= endDate)
+      .map(record => ({
+        ...record,
+        settledSalaryId: salaryRecordId,
+        settledSalaryPeriod: salaryPeriod,
+        settledAt
+      }));
+
+    if (recordsToSettle.length === 0) return attendanceRecords;
+
+    const settledRecordMap = new Map(recordsToSettle.map(record => [record.id, record]));
+    const nextAttendanceRecords = attendanceRecords.map(record => settledRecordMap.get(record.id) || record);
+
+    await Promise.all(recordsToSettle.map(record => smartSetDocument('attendance_records', record.id, record)));
+    setAttendanceRecords(nextAttendanceRecords);
+    return nextAttendanceRecords;
+  };
+
   const calculateSalary = (
     employee: Employee, 
     startDate: string, 
@@ -162,17 +196,16 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     const end = new Date(endDate);
     const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     
-    // 统计各种状态的天数
+    // 缂傚倸鍊搁崐鐑芥嚄閸洖绐楅柡鍥ュ焺閺佸洭鏌熼梻瀵割槮閻熸瑱绠撻弻娑㈠即閵娿儱瀛ｅ┑鐐插悑瀹€鎼佸蓟閿濆憘鐔煎垂椤旀儳甯块梻渚€鈧偛鑻崢鎼佹煠鐎圭姵纭鹃柍缁樻崌楠炲鎮欓懠顒傜嵁闂備礁鍟块幖顐﹀磹閻熸壋鏋?
     const workDays = attendances.filter(r => r.status === 'normal').length;
     const restDays = attendances.filter(r => r.status === 'rest').length;
     const absentDays = attendances.filter(r => r.status === 'absent').length;
     const leaveDays = attendances.filter(r => r.status === 'leave').length;
     
-    // 工作日薪 = 日薪 × (上班天数 + 休息天数)
+    // 闂佽姘﹂～澶愬箖閸洖纾块柟娈垮枤缁€濠囨煛閸愩劎澧曠紒顐㈢Ч閺屾洘寰勯崼婵嗩瀴闂?= 闂傚倷绀侀幖顐﹀疮閵娾晛纾块柟缁㈠枛閽?闂?(婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨鏇氶檷娴滆銇勯弮鍥棄缂佸墎鍋ら弻宥夊传閸曨偀鍋撻悷鎵虫灁?+ 婵犵數鍋炲娆撳触鐎ｎ喖鍨傞柤鎼佹涧椤曢亶鏌涘☉鍗炴灈缂佸墎鍋ら弻宥夊传閸曨偀鍋撻悷鎵虫灁?
     const paidDays = workDays + restDays;
     const basePay = employee.dailyRate * paidDays;
     
-    // 计算加班（超过9小时/天的部分）
     let overtimeHours = 0;
     attendances.filter(r => r.status === 'normal').forEach(r => {
       if (r.workHours > 9) {
@@ -182,38 +215,37 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     
     const overtimePay = overtimeHours * employee.overtimeRate;
 
-    // 使用动态输入的福利、补贴和社保
+    // 婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲嫷妲烽梻渚€娼ч…顓㈡嚈瑜版帒纾婚柟鎯х摠婵挳鏌ｉ敐鍛伇闁绘劖娲熷铏圭矙鐠恒劎鐤勯梺绋块閸熷潡鍩㈤幘璇茬闁绘鏁搁悞鍧楁椤愩垺澶勯柟鍛婃倐閹偛煤椤忓懐鍘梺绯曞墲濞叉绮婃导瀛樺癄闁绘柨鍚嬮崑锝夋煙闁箑骞楃紓宥嗗灴閺岀喖鏌ㄧ€ｎ亶妫嗙紓渚囧枛閻楁挸鐣烽敐澶娢ㄧ憸蹇涱敊?
     const benefits = monthBenefits !== undefined ? monthBenefits : 0;
     const subsidy = monthSubsidy !== undefined ? monthSubsidy : 0;
 
-    // 社保：如果手动输入了则使用输入值，否则根据发薪类型决定
+    // 缂傚倸鍊风拋鏌ュ磻閹剧粯鐓曟繛鍡楃Т閸斻倗绱掗悩杈╃煓闁哄被鍔岄埥澶娾枎閹烘埈妫熸俊鐐€愰弫顏堝炊瑜嶉崵鎴濃攽閻樿宸ラ悗姘煎墴璺〒姘ｅ亾闁哄本鐩顒傛嫚閹绘帩娼婄紓鍌欑窔椤ゅ倿宕ｉ崘銊ф殾婵°倕鎳庡敮闂侀潧鐗嗗ú銈夊疾閳哄懏鈷戦柛娑橈工缁楁岸鏌ｉ悢鏉戔偓鏍崲濞戙垹鐐婃い鎺嶇娴犳椽姊洪棃娑辩劸闁告柨娴风槐娆愮節濮橆厾鍘遍棅顐㈡搐椤戝懘宕濆鑸电厓鐟滄粓宕滃☉銏犖ラ悗锝庡墯椤洘绻濋棃娑卞剰閻熸瑱绠撻弻銊╁即濡も偓娴滈箖姊洪崜鑼帥闁搞劏娉涢锝夋偩鐏炴儳鏋傞梺鍛婃处閸嬪棝濡堕敃鍌涒拺闁告稑锕﹂幊鍕煕閵娿儯鍋㈢€殿喖顭峰畷鎺戭煥閸涱厽娈梺鑽ゅТ濞测晝浜稿▎鎾崇劦妞ゆ帒鍊搁崢瀵糕偓瑙勬礃閿曘垹鐣峰鈧幊鐘活敆娴ｅ湱妲?
     let socialSecurityEmployee = 0;
     if (monthSocialSecurity !== undefined) {
-      // 如果手动输入了社保，则使用输入值
       socialSecurityEmployee = monthSocialSecurity;
     } else if (periodType === 'second_half') {
-      // 下半月且未手动输入，默认为0（因为员工档案中已移除）
+      // 婵犵數鍋為崹鍫曞箰閹间緡鏁勯柛娑卞幘閺嗭箓鏌熼悧鍫熺凡閻庢艾顦甸弻娑㈩敃閿濆洨鐓傞梺鑽ゅ櫏閸撶喖寮婚敓鐘查唶妞ゆ劧绱曢崙瑙勭節閳封偓閸曨厾鐓夐悗瑙勬礃缁诲牊淇婇幖浣肝╃憸蹇涙倷閺囥垺鈷戠紒瀣硶缁犵偤鏌涙惔銈呭惞婵″弶鍔曢埞鎴﹀炊閼稿吀绮繝纰樻閸ㄩ亶顢栧▎鎾宠Е闁搞儜鈧Σ?闂傚倷鐒︾€笛呯矙閹达附鍋嬮柛鈩冾樅閸濆嫷鐓ラ柛鏇ㄥ幐閺嬫牠姊洪崨濠勭畵閻庢凹鍙冨畷浼村川椤栨浜鹃悷娆忓閸嬬娀鏌涙惔銏㈠弨濠碘剝鎸冲畷鎺戭潩閸忚偐顩梻浣稿閸嬪懐鍒掕箛娑樺偍妞ゆ帒鍊甸崑鎾舵喆閸曨厽鎲欓柣蹇撶箲閻熴倗鑺卞ú顏呪拻闁稿本鑹鹃銉╂煕婵炑冩噺椤?
       socialSecurityEmployee = 0;
     }
 
     const socialSecurity = {
       employee: socialSecurityEmployee,
-      company: 0, // 公司部分暂不使用
+      company: 0, // 闂傚倷鑳堕…鍫澝瑰璺虹婵炲棗娴氶崵妤呮煕閹伴潧鏋熼柣鎺楃畺閺屾洘绻涢崹顔煎闂佽楠搁…鐑藉蓟閿熺姴骞㈡俊銈傚亾闁逞屽墴椤ユ挾鍒掗鐔风窞閻庯綆鍋勯鎾绘煟閻樺厖鑸柛鏂跨Ч瀵?
     };
 
-    // 获取剩余借款
+    // 闂傚倷绀侀崥瀣磿閹惰棄搴婇柤鑹扮堪娴滃綊鏌涢妷顔煎缂佲偓閸儲鐓冮悶娑掆偓鍏呭缂傚倸鍊哥粔鐢稿垂閸喚鏆﹂柟鎵閸嬪嫰鏌涢幘鏉戠祷闁?
     const remainingLoan = getRemainingLoan(employee.id);
-    // 借款扣除最多为工资的30%
+    // 闂傚倷鑳堕…鍫ユ晝閿曞倸绐楅柟浼村亰閺佸嫭绻涢崱妯诲碍缂佺姰鍎甸弻銊モ攽閸♀晜效闂佺粯绻勯崰鏍蓟閿熺姴閱囨慨姗嗗厸婢规洖鈹戦悩顔肩伇闁糕晜鐗犻幆宀勵敊閻愵剙顏搁梺缁樻煥椤ㄥ酣宕崨瀛樼厪濠㈣泛鐗嗘俊鍧楁煏閸偄浜伴柡?0%
     const maxLoanDeduction = basePay * 0.3;
     const loanRepayment = Math.min(remainingLoan, maxLoanDeduction);
 
-    // 实际到手工资 = 工作日薪 + 加班费 + 福利 + 补贴 - 借款扣除 - 社保
+    // 闂備浇顕ф绋匡耿闁秴纾婚柕鍫濇媼閻庤埖銇勯弽顐粶缂佲偓閸℃稒鐓熸俊銈傚亾闁绘妫濊矾濞达綀銆€閸嬫挾鎲撮崟顒€浠╅梺绋块椤曨厾鍒?= 闂佽姘﹂～澶愬箖閸洖纾块柟娈垮枤缁€濠囨煛閸愩劎澧曠紒顐㈢Ч閺屾洘寰勯崼婵嗩瀴闂?+ 闂傚倷绀侀幉鈥愁潖缂佹ɑ鍙忛柣銈庡灛娴滆銇勯弮鍌氫壕閻?+ 缂傚倸鍊风粈渚€宕愰崫銉﹀床闁圭増婢橀弰?+ 闂備浇宕甸崑鐐电矙韫囨稑纾块柟缁㈠枛缁€?- 闂傚倷鑳堕…鍫ユ晝閿曞倸绐楅柟浼村亰閺佸嫭绻涢崱妯诲碍缂佺姰鍎甸弻銊モ攽閸♀晜效闂?- 缂傚倸鍊风拋鏌ュ磻閹剧粯鐓曟繛鍡楃Т閸斻倗绱?
     const grossSalary = basePay + overtimePay + benefits + subsidy;
     const totalDeductions = socialSecurity.employee + loanRepayment;
     const actualSalary = grossSalary - totalDeductions;
 
     return {
-      id: Date.now().toString(),
+      id: getSalaryRecordId(employee.id, startDate, endDate),
       employeeId: employee.id,
       month: startDate.slice(0, 7),
       startDate,
@@ -230,34 +262,44 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       loanRepayment: Math.round(loanRepayment * 100) / 100,
       remainingLoan: Math.round((remainingLoan - loanRepayment) * 100) / 100,
       actualSalary: Math.round(actualSalary * 100) / 100,
-      status: 'pending',
-      notes: `总计${totalDays}天 | 上班${workDays}天 | 休息${restDays}天 | 缺勤${absentDays}天 | 请假${leaveDays}天`,
+      paidDate: getLocalDateString(),
+      status: 'paid',
+      notes: `Total ${totalDays} days | Work ${workDays} | Rest ${restDays} | Absent ${absentDays} | Leave ${leaveDays}`,
     };
   };
 
-  // 处理单个员工结算
-  const handleSingleSettlement = async (employeeId: string, period: string) => {
+  // 婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪炊瑜忛、鍛存⒑閸濆嫭澶勭€光偓閹间礁鍚归悗锝庡枟閻撴洘绻涢幋鐑嗕痪妞ゅ繐鎳庨閬嶆煙闁箑鏋ょ痪鎯с偢閺岀喖骞嗚椤ｆ娊鏌?
+  const handleSingleSettlement = async (employeeId: string, period: string, options: { showSlip?: boolean } = {}): Promise<SalaryRecord | null> => {
     const employee = employees.find(e => e.id === employeeId);
-    if (!employee) return;
+    if (!employee) return null;
 
     const [startDate, endDate] = period.split('_');
     if (!startDate || !endDate) {
-      alert('日期格式错误');
-      return;
+      alert('Formato de fecha invalido');
+      return null;
     }
 
-    // 判断是上半月还是下半月
+    const existingSalary = salaryRecords.find(record =>
+      record.employeeId === employeeId &&
+      record.startDate === startDate &&
+      record.endDate === endDate
+    );
+    if (existingSalary) {
+      alert(`Este empleado ya tiene salario cerrado entre ${startDate} y ${endDate}`);
+      return null;
+    }
+
     const startDay = new Date(startDate).getDate();
     const periodType: 'first_half' | 'second_half' = startDay <= 15 ? 'first_half' : 'second_half';
 
-    // 获取动态输入的福利、补贴和社保
+    // 闂傚倷绀侀崥瀣磿閹惰棄搴婇柤鑹扮堪娴滃綊鏌涢妷顔煎缂佲偓婢舵劖鐓忓┑鐘茬箺閸氬倿鏌涚€ｎ偅灏伴柟宄版嚇閹儳鐣濋埀顒勬倷閺囥垺鈷戠紒瀣硶缁犵偤鏌涙惔鈥虫毐闁崇粯鎹囬獮瀣偐閻㈢數鍔归梻濠庡亜濞诧箓骞愰幖浣瑰€挎繛宸簼閻撳繘鏌涢埄鍐╃缂佷椒鍗抽幐濠囨偄閸忕厧浠梺褰掑亰閸樼晫绱為幋锔界厵闂佸灝顑呴ˉ瀣磼椤旇偐澧︾€规洩缍佹俊鐤槾妞?
     const monthBenefits = dynamicBenefits[employeeId] || 0;
     const monthSubsidy = dynamicSubsidy[employeeId] || 0;
     const monthSocialSecurity = dynamicSocialSecurity[employeeId] || 0;
 
     const salaryRecord = calculateSalary(employee, startDate, endDate, periodType, monthBenefits, monthSubsidy, monthSocialSecurity);
     
-    // 处理借款扣除
+    // 婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪炊瑜忛敍娆撴⒑缂佹ɑ鐓ュ鐟帮躬瀹曟洟濡烽埡鍌滃幍缂佺偓婢橀ˇ杈╃矓椤旂晫绠?
     const activeLoans = getActiveLoansForEmployee(employeeId);
 
     const maxDeduction = salaryRecord.baseSalary * 0.3;
@@ -272,7 +314,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       totalDeduction += deductAmount;
     }
 
-    // 更新借款记录
+    // 闂傚倷绀侀幖顐⒚洪妶澶嬪仱闁靛ň鏅涢拑鐔封攽閻樺弶鎼愮痪鎯х秺閺岋綁寮崹顕呮闂佺绨洪崕鐢稿箖鐟欏嫭濯撮悷娆忓閸戯紕绱?
     const updatedLoans = loanRecords.map(loan => {
       const deduction = loansToDeduct.find(d => d.loanId === loan.id);
       if (deduction) {
@@ -287,28 +329,27 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       return loan;
     });
 
-    // 更新薪资记录
+    // 闂傚倷绀侀幖顐⒚洪妶澶嬪仱闁靛ň鏅涢拑鐔封攽閻樺弶澶勯悗鍨戦妵鍕疀閹炬潙绐涢梺闈涚墱閸嬪﹪骞冪憴鍕閻熸瑥瀚崙锛勭磽?
     salaryRecord.loanRepayment = totalDeduction;
     salaryRecord.remainingLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0) - totalDeduction;
     salaryRecord.actualSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy - salaryRecord.socialSecurityEmployee - totalDeduction;
     
-    const updatedSalaries = [...salaryRecords, salaryRecord];
 
-    // 🔄 同步创建开支记录（从营业额扣除）- 使用 dataManager
-    const expenseDate = getLocalDateString(); // 🔥 使用本地时间
+    // 濠碘槅鍋撶徊浠嬪疮椤栫偛鏋?闂傚倷绀侀幉锟犳嚌妤ｅ啫瀚夋い鎺戝閺佸棝鏌ｉ幇顒佹儓缂佲偓閸℃绠鹃柟瀵稿剱閻掔晫绱掗幉瀣洭闁逞屽墯椤旀牠宕伴幒妤€纾婚柟鍓х帛閻撴盯鏌嶈閸撶喖銆佸☉妯锋斀闁归偊鍓氶弳顏堟煟閻斿摜鐭屽褎顨呯叅闁冲搫鍟～鏇熺箾閸℃ê濮夋い鈺冨厴楠炴牕菐椤掆偓閳ь剚鐗犲畷鏇熷緞婵炵偓顫嶉梺鍦亾濞兼瑩宕悜妯镐簻闁靛牆鎳庨埀顒€娼￠悰顔碱吋婢跺娅滄繝銏ｆ硾椤戝洩銇愰幋锔解拺? 婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎?dataManager
+    const expenseDate = getLocalDateString(); // 濠碘槅鍋撶徊浠嬪疮椤栫偛姹?婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲倻褰夋俊鐐€栧濠氬磻閹惧绡€闁逞屽墴楠炴﹢顢欓懖鈺冩綁闂備礁澹婇崑鍛哄鈧弫?
     
     const salaryExpense = {
-      id: `salary_${Date.now()}`,
+      id: getSalaryExpenseId(salaryRecord.id),
       date: expenseDate,
       categoryId: 'employee_salary',
-      categoryName: '员工薪资',
+      categoryName: 'Employee Salary',
       amount: salaryRecord.actualSalary,
-      description: `薪资结算 - ${employee.name} (${salaryRecord.startDate} 至 ${salaryRecord.endDate})`,
+      description: `Salary settlement - ${employee.name} (${salaryRecord.startDate} - ${salaryRecord.endDate})`,
       employeeId: employee.id,
       employeeName: employee.name,
       relatedType: 'salary',
       salaryPeriod: `${salaryRecord.startDate}_${salaryRecord.endDate}`,
-      createdAt: getLocalDateString(), // 🔥 使用本地时间
+      createdAt: getLocalDateString(), // 濠碘槅鍋撶徊浠嬪疮椤栫偛姹?婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲倻褰夋俊鐐€栧濠氬磻閹惧绡€闁逞屽墴楠炴﹢顢欓懖鈺冩綁闂備礁澹婇崑鍛哄鈧弫?
     };
 
     try {
@@ -321,85 +362,95 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       await smartAddDocument('expenses', salaryExpense);
       if (totalDeduction > 0) {
         await recordCashFlow({
+          id: `cash_${salaryRecord.id}_loan_deduction`,
           type: 'salary_deduction',
           amount: totalDeduction,
           employeeId: employeeId,
           employeeName: employee.name,
           date: expenseDate,
-          description: `${period} 薪资结算扣除借款`,
+          description: 'Salary loan deduction - ' + period,
           salaryPeriod: period,
         });
       }
     } catch (error) {
-      console.error('❌ 保存工资结算失败:', error);
-      alert('保存工资结算失败，请检查网络后重试');
-      return;
+      console.error('Failed to save salary settlement:', error);
+      alert('No se pudo guardar el cierre de salario. Revise la red e intente otra vez');
+      return null;
     }
 
+    await markAttendanceRecordsSettled(employeeId, startDate, endDate, salaryRecord.id);
     setLoanRecords(updatedLoans);
-    setSalaryRecords(updatedSalaries);
+    setSalaryRecords(records => records.some(record => record.id === salaryRecord.id) ? records : [...records, salaryRecord]);
     const nextExpenses = [...dataManager.getData('expenses'), salaryExpense];
     await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
 
-    // 显示结算结果
-    showSalarySlip(salaryRecord, employee);
+    // 闂傚倷绀侀幖顐も偓姘煎墯閺呰埖绂掔€ｎ€附鎱ㄥΟ澶稿惈缁炬儳銈搁弻鐔煎箚瑜嶉。鎶芥煛閸♀晛澧扮紒杈ㄦ尰閹峰懐鎲撮崟顐︾€洪梻?
+    if (options.showSlip !== false) {
+      showSalarySlip(salaryRecord, employee);
+    }
+    return salaryRecord;
   };
 
-  // 批量结算
-  const handleBatchSettlement = () => {
+  // 闂傚倷绀佺紞濠傤焽瑜忕槐鐐寸節閸パ囨７闂佹儳绻愬﹢杈╁婵傚憡鐓欓柟顖嗗喚鏆㈤梺?
+  const handleBatchSettlement = async () => {
     const { startDate, endDate, periodType } = batchPeriod;
-    
+
     if (!startDate || !endDate) {
-      alert('请选择日期范围');
+                        alert('Seleccione el rango de fechas');
       return;
     }
 
     const activeEmployees = employees.filter(e => e.status === 'active');
     if (activeEmployees.length === 0) {
-      alert('没有在职员工');
+      alert('No hay empleados activos');
       return;
     }
 
-    if (!window.confirm(`确认为 ${activeEmployees.length} 名员工结算工资吗？\n\n期间：${startDate} 至 ${endDate}\n类型：${periodType === 'first_half' ? '上半月' : '下半月'}`)) {
+    const periodLabel = periodType === 'first_half' ? 'Primera quincena' : 'Segunda quincena';
+    const confirmMessage =
+      'Confirmar cierre de salario para ' + activeEmployees.length + ' empleados?' +
+      '\n\nPeriodo: ' + startDate + ' - ' + endDate +
+      '\nTipo: ' + periodLabel;
+    if (!window.confirm(confirmMessage)) {
       return;
     }
 
     let successCount = 0;
-    activeEmployees.forEach(emp => {
+    for (const emp of activeEmployees) {
       try {
-        const period = `${startDate}_${endDate}`;
-        handleSingleSettlement(emp.id, period);
-        successCount++;
+        const period = startDate + '_' + endDate;
+        const result = await handleSingleSettlement(emp.id, period, { showSlip: false });
+        if (result) successCount++;
       } catch (error) {
-        console.error(`结算失败：${emp.name}`, error);
+        console.error('Salary settlement failed for ' + emp.name, error);
       }
-    });
+    }
 
-    alert(`✅ 批量结算完成！\n\n成功：${successCount} 人`);
+    alert('Cierre de salario terminado.\n\nExitosos: ' + successCount);
   };
 
-  // 打印薪资单
   const printSalarySlip = (salaryRecord: SalaryRecord, employee: Employee) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('请允许弹出窗口以打印薪资单');
+      alert('Permita ventanas emergentes para imprimir');
       return;
     }
 
+    const grossSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy;
+    const totalDeductions = salaryRecord.socialSecurityEmployee + salaryRecord.loanRepayment;
     const content = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>薪资单 - ${employee.name}</title>
+        <title>Comprobante de salario - ${employee.name}</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+          body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; color: #111827; }
           .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
           .company-name { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
           .title { font-size: 18px; color: #666; }
           .info-section { margin-bottom: 20px; }
-          .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+          .info-row { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
           .info-label { font-weight: bold; color: #666; }
-          .info-value { color: #333; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
           th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
           th { background-color: #f5f5f5; font-weight: bold; }
@@ -413,94 +464,35 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       </head>
       <body>
         <div class="header">
-          <div class="company-name">餐厅管理系统</div>
-          <div class="title">薪资单</div>
+          <div class="company-name">Restaurant POS</div>
+          <div class="title">Comprobante de salario</div>
         </div>
-
         <div class="info-section">
-          <div class="info-row">
-            <span class="info-label">员工姓名：</span>
-            <span class="info-value">${employee.name}</span>
-            <span class="info-label">职位：</span>
-            <span class="info-value">${employee.position}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">结算周期：</span>
-            <span class="info-value">${salaryRecord.startDate} 至 ${salaryRecord.endDate}</span>
-            <span class="info-label">类型：</span>
-            <span class="info-value">${salaryRecord.periodType === 'first_half' ? '上半月' : '下半月'}</span>
-          </div>
+          <div class="info-row">-</span> ${employee.name}</span>-</span> ${employee.position}</span></div>
+          <div class="info-row">-</span> ${salaryRecord.startDate} - ${salaryRecord.endDate}</span>-</span> ${salaryRecord.paidDate || '-'}</span></div>
         </div>
-
-        <h3>收入明细</h3>
+        <h3>Ingresos</h3>
         <table>
-          <tr>
-            <th>项目</th>
-            <th class="amount">金额 (C$)</th>
-          </tr>
-          <tr>
-            <td>工作日薪 (${salaryRecord.notes?.match(/上班(\d+)天/)?.[1] || 0}天 + 休息${salaryRecord.notes?.match(/休息(\d+)天/)?.[1] || 0}天)</td>
-            <td class="amount">${salaryRecord.baseSalary.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td>加班费 (${salaryRecord.overtimeHours.toFixed(1)}小时)</td>
-            <td class="amount">${salaryRecord.overtimePay.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td>福利</td>
-            <td class="amount">${salaryRecord.benefits.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td>补贴</td>
-            <td class="amount">${salaryRecord.subsidy.toFixed(2)}</td>
-          </tr>
-          <tr class="total-row">
-            <td>应发总额</td>
-            <td class="amount">${(salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy).toFixed(2)}</td>
-          </tr>
+          <tr><th>Concepto</th><th class="amount">Monto (C$)</th></tr>
+          <tr><td>Salario base</td><td class="amount">${salaryRecord.baseSalary.toFixed(2)}</td></tr>
+          <tr><td>Horas extra (${salaryRecord.overtimeHours.toFixed(1)}h)</td><td class="amount">${salaryRecord.overtimePay.toFixed(2)}</td></tr>
+          <tr><td>Beneficios</td><td class="amount">${salaryRecord.benefits.toFixed(2)}</td></tr>
+          <tr><td>Subsidio</td><td class="amount">${salaryRecord.subsidy.toFixed(2)}</td></tr>
+          <tr class="total-row"><td>Total ingresos</td><td class="amount">${grossSalary.toFixed(2)}</td></tr>
         </table>
-
-        <h3>扣款明细</h3>
+        <h3>Deducciones</h3>
         <table>
-          <tr>
-            <th>项目</th>
-            <th class="amount">金额 (C$)</th>
-          </tr>
-          <tr>
-            <td>社保个人部分${salaryRecord.periodType === 'first_half' ? ' (上半月不扣)' : ''}</td>
-            <td class="amount">${salaryRecord.socialSecurityEmployee.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td>借款扣除</td>
-            <td class="amount">${salaryRecord.loanRepayment.toFixed(2)}</td>
-          </tr>
-          <tr class="total-row">
-            <td>扣款总额</td>
-            <td class="amount">${(salaryRecord.socialSecurityEmployee + salaryRecord.loanRepayment).toFixed(2)}</td>
-          </tr>
+          <tr><th>Concepto</th><th class="amount">Monto (C$)</th></tr>
+          <tr><td>Seguro social</td><td class="amount">${salaryRecord.socialSecurityEmployee.toFixed(2)}</td></tr>
+          <tr><td>Deduccion prestamo</td><td class="amount">${salaryRecord.loanRepayment.toFixed(2)}</td></tr>
+          <tr class="total-row"><td>Total deducciones</td><td class="amount">${totalDeductions.toFixed(2)}</td></tr>
         </table>
-
-        <h3>实发工资</h3>
-        <table>
-          <tr class="total-row" style="font-size: 18px;">
-            <td>实际到手工资</td>
-            <td class="amount" style="color: #10b981;">C$ ${salaryRecord.actualSalary.toFixed(2)}</td>
-          </tr>
-        </table>
-
+        <h3>Neto a pagar</h3>
+        <table><tr class="total-row" style="font-size: 18px;"><td>Salario neto</td><td class="amount" style="color: #10b981;">C$ ${salaryRecord.actualSalary.toFixed(2)}</td></tr></table>
         <div class="signature">
-          <div class="signature-item">
-            <div>员工签字</div>
-            <div class="signature-line"></div>
-          </div>
-          <div class="signature-item">
-            <div>财务审核</div>
-            <div class="signature-line"></div>
-          </div>
-          <div class="signature-item">
-            <div>日期</div>
-            <div class="signature-line">${new Date().toLocaleDateString('zh-CN')}</div>
-          </div>
+          <div class="signature-item"><div>Firma empleado</div><div class="signature-line"></div></div>
+          <div class="signature-item"><div>Revision</div><div class="signature-line"></div></div>
+          <div class="signature-item"><div>Fecha</div><div class="signature-line">${new Date().toLocaleDateString('es-NI')}</div></div>
         </div>
       </body>
       </html>
@@ -513,35 +505,28 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     }, 250);
   };
 
-  // 显示薪资单（弹窗）
   const showSalarySlip = (salaryRecord: SalaryRecord, employee: Employee) => {
+    const grossSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy;
     const result = window.confirm(
-      `✅ 薪资结算完成！\n\n` +
-      `员工：${employee.name}\n` +
-      `期间：${salaryRecord.startDate} 至 ${salaryRecord.endDate}\n\n` +
-      `【收入明细】\n` +
-      `工作日薪：C$ ${salaryRecord.baseSalary.toFixed(2)}\n` +
-      `加班费：C$ ${salaryRecord.overtimePay.toFixed(2)}\n` +
-      `福利：C$ ${salaryRecord.benefits.toFixed(2)}\n` +
-      `补贴：C$ ${salaryRecord.subsidy.toFixed(2)}\n\n` +
-      `应发总额：C$ ${(salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy).toFixed(2)}\n\n` +
-      `【扣款明细】\n` +
-      `社保个人：C$ ${salaryRecord.socialSecurityEmployee.toFixed(2)}${salaryRecord.periodType === 'first_half' ? ' (上半月不扣)' : ''}\n` +
-      `借款扣除：C$ ${salaryRecord.loanRepayment.toFixed(2)}\n\n` +
-      `💰 实发工资：C$ ${salaryRecord.actualSalary.toFixed(2)}\n\n` +
-      `是否打印薪资单？`
+      `Cierre de salario terminado.\n\n` +
+      `Empleado: ${employee.name}\n` +
+      `Periodo: ${salaryRecord.startDate} - ${salaryRecord.endDate}\n\n` +
+      `Ingresos: C$ ${grossSalary.toFixed(2)}\n` +
+      `Seguro social: C$ ${salaryRecord.socialSecurityEmployee.toFixed(2)}\n` +
+      `Deduccion prestamo: C$ ${salaryRecord.loanRepayment.toFixed(2)}\n\n` +
+      `Neto a pagar: C$ ${salaryRecord.actualSalary.toFixed(2)}\n\n` +
+      `Desea imprimir el comprobante?`
     );
-    
+
     if (result) {
       printSalarySlip(salaryRecord, employee);
     }
   };
 
-  // 打印全员汇总表
   const printBatchSummary = (records: SalaryRecord[]) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('请允许弹出窗口以打印汇总表');
+      alert('Permita ventanas emergentes para imprimir');
       return;
     }
 
@@ -557,9 +542,9 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       <!DOCTYPE html>
       <html>
       <head>
-        <title>薪资汇总表</title>
+        <title>Resumen de salarios</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; }
+          body { font-family: Arial, sans-serif; padding: 20px; color: #111827; }
           .header { text-align: center; margin-bottom: 20px; }
           .title { font-size: 24px; font-weight: bold; }
           .period { font-size: 16px; color: #666; margin-top: 5px; }
@@ -573,57 +558,34 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       </head>
       <body>
         <div class="header">
-          <div class="title">员工薪资汇总表</div>
-          <div class="period">${records[0]?.startDate || ''} 至 ${records[0]?.endDate || ''} (${records[0]?.periodType === 'first_half' ? '上半月' : '下半月'})</div>
+          <div class="title">Resumen de salarios</div>
+          <div class="period">${records[0]?.startDate || ''} - ${records[0]?.endDate || ''}</div>
         </div>
-
         <table>
           <thead>
             <tr>
-              <th>员工姓名</th>
-              <th>职位</th>
-              <th class="amount">工作日薪</th>
-              <th class="amount">加班费</th>
-              <th class="amount">福利</th>
-              <th class="amount">补贴</th>
-              <th class="amount">社保</th>
-              <th class="amount">借款扣除</th>
-              <th class="amount">实发工资</th>
+              <th>Empleado</th><th>Puesto</th><th class="amount">Base</th><th class="amount">Extra</th><th class="amount">Beneficios</th><th class="amount">Subsidio</th><th class="amount">Seguro</th><th class="amount">Prestamo</th><th class="amount">Neto</th>
             </tr>
           </thead>
           <tbody>
             ${records.map(record => {
               const emp = employees.find(e => e.id === record.employeeId);
-              return `
-                <tr>
-                  <td>${emp?.name || '未知'}</td>
-                  <td>${emp?.position || '-'}</td>
-                  <td class="amount">${record.baseSalary.toFixed(2)}</td>
-                  <td class="amount">${record.overtimePay.toFixed(2)}</td>
-                  <td class="amount">${record.benefits.toFixed(2)}</td>
-                  <td class="amount">${record.subsidy.toFixed(2)}</td>
-                  <td class="amount">${record.socialSecurityEmployee.toFixed(2)}</td>
-                  <td class="amount">${record.loanRepayment.toFixed(2)}</td>
-                  <td class="amount"><strong>${record.actualSalary.toFixed(2)}</strong></td>
-                </tr>
-              `;
+              return `<tr>
+                <td>${emp?.name || '-'}</td>
+                <td>${emp?.position || '-'}</td>
+                <td class="amount">${record.baseSalary.toFixed(2)}</td>
+                <td class="amount">${record.overtimePay.toFixed(2)}</td>
+                <td class="amount">${record.benefits.toFixed(2)}</td>
+                <td class="amount">${record.subsidy.toFixed(2)}</td>
+                <td class="amount">${record.socialSecurityEmployee.toFixed(2)}</td>
+                <td class="amount">${record.loanRepayment.toFixed(2)}</td>
+                <td class="amount">${record.actualSalary.toFixed(2)}</td>
+              </tr>`;
             }).join('')}
-            <tr class="total-row">
-              <td colspan="2">合计</td>
-              <td class="amount">${totalBaseSalary.toFixed(2)}</td>
-              <td class="amount">${totalOvertimePay.toFixed(2)}</td>
-              <td class="amount">${totalBenefits.toFixed(2)}</td>
-              <td class="amount">${totalSubsidy.toFixed(2)}</td>
-              <td class="amount">${totalSocialSecurity.toFixed(2)}</td>
-              <td class="amount">${totalLoanRepayment.toFixed(2)}</td>
-              <td class="amount">${totalActualSalary.toFixed(2)}</td>
-            </tr>
+            <tr class="total-row"><td colspan="2">Total</td><td class="amount">${totalBaseSalary.toFixed(2)}</td><td class="amount">${totalOvertimePay.toFixed(2)}</td><td class="amount">${totalBenefits.toFixed(2)}</td><td class="amount">${totalSubsidy.toFixed(2)}</td><td class="amount">${totalSocialSecurity.toFixed(2)}</td><td class="amount">${totalLoanRepayment.toFixed(2)}</td><td class="amount">${totalActualSalary.toFixed(2)}</td></tr>
           </tbody>
         </table>
-
-        <div style="margin-top: 20px; text-align: right; font-size: 12px; color: #666;">
-          打印时间：${new Date().toLocaleString('zh-CN')}
-        </div>
+        <div style="margin-top: 20px; text-align: right; font-size: 12px; color: #666;">Impreso: ${new Date().toLocaleString('es-NI')}</div>
       </body>
       </html>
     `;
@@ -694,16 +656,18 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     },
   };
 
+  const filteredSalaryRecords = salaryRecords.filter(record => record.endDate >= salaryHistoryStartDate && record.startDate <= salaryHistoryEndDate);
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: '1rem', flexShrink: 0 }}>
-        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>💰 薪资结算</h2>
+        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>Cierre de salarios</h2>
         <p style={{ color: colors.textSecondary, marginTop: '0.35rem', marginBottom: 0, fontSize: font.body }}>
-          支持单人结算和批量结算，半月发薪制
+          Calculo de salarios, prestamos y cierre por rango de fechas.
         </p>
       </div>
 
-      {/* 结算模式切换 - 固定在顶部 */}
+      {/* 缂傚倸鍊搁崐鐑芥倿閿曞倸绠板Δ锝呭暞閸嬧晠鎮归崶褍妫橀柣鏃傚帶閻忓磭鈧娲栧ú銊┿€侀崨瀛樷拺闁告稑锕ょ粭鎺撶箾鐠囇呯暠闁?- 闂傚倷鐒﹂幃鍫曞磿闁秴绠规い鎰堕檮閸嬧晛螖閿濆懎鏆欓柟鐟扮埣閺屾洘绻涢悙顒佹緭闂侀€炲苯澧柨鏇ㄤ邯瀵?*/}
       <div style={{ ...styles.card, flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
@@ -713,7 +677,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               flex: 1,
             }}
           >
-            👤 单人结算
+            Cierre individual
           </button>
           <button
             onClick={() => setSettlementMode('batch')}
@@ -722,21 +686,22 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               flex: 1,
             }}
           >
-            👥 批量结算
+            Cierre masivo
           </button>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
 
-      {/* 单人结算 */}
+      {/* 闂傚倷绀侀幉锟犮€冮崱妞曟椽骞嬪顑嫬绶炵€光偓閳ь剛澹曟總鍛婄厵闁诡垎鍐炬殺闂?*/}
       {settlementMode === 'single' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>📅 选择员工和日期范围</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Seleccionar empleado y rango</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '0.85rem' }}>
             {employees.filter(e => e.status === 'active').map((emp) => {
               const activeLoans = getActiveLoansForEmployee(emp.id);
               const totalLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0);
+              const defaultPeriod = getSingleSalaryDefaultPeriod(emp, salaryRecords, getLocalDateString());
               
               return (
                 <div key={emp.id} style={{
@@ -747,18 +712,18 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                 }}>
                   <div style={{ fontWeight: 750, marginBottom: '0.35rem', color: colors.textPrimary }}>{emp.name}</div>
                   <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.5rem' }}>
-                    {emp.position} · 日薪 C$ {(emp.dailyRate || 0).toFixed(2)}
+                    {emp.position} - Dia C$ {(emp.dailyRate || 0).toFixed(2)}
                   </div>
                   {totalLoan > 0 && (
                     <div style={{ fontSize: font.caption, color: colors.amber, marginBottom: '0.75rem' }}>
-                      ⚠️ 剩余借款: C$ {totalLoan.toFixed(2)}
+                      Prestamo pendiente: C$ {totalLoan.toFixed(2)}
                     </div>
                   )}
                   
-                  {/* 动态福利、补贴和社保输入 */}
+                  {/* 闂傚倷绀侀幉锟犲蓟閿濆绀夌€广儱顦悞鍨亜閹达絽鍔甸柛蹇撴湰閵囧嫰鍩￠崒娑樺攭閻庤娲樺畝鎼佸春閻愬瓨鍎熼柟鎯у帠婢规洘绻涙潏鍓у埌濠㈣鐟﹀鍕沪閹屼紩闂備礁鎼ˇ浼村垂閸撲讲鍋撳鍐茬毢缂佽鲸甯￠崺鈧い鎺戝閻鏌曟竟顖氭媼閸熷秹姊洪崫鍕垫Ц闁绘锕獮鎰板箹娴ｅ摜鐓?*/}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                     <div>
-                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月福利 (C$)</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Beneficios</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -768,7 +733,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月补贴 (C$)</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Subsidio</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -778,7 +743,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                      <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>本月社保 (C$)</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Seguro social</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -790,19 +755,19 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                   </div>
                   
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>结算日期范围：</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Rango de pago</div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <input
                         type="date"
                         id={`start-${emp.id}`}
-                        defaultValue={getLocalDateString(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000))} // 🔥 使用本地时间
+                        defaultValue={defaultPeriod.startDate}
                         style={{ ...styles.input, flex: 1, fontSize: font.caption }}
                       />
-                      <span style={{ lineHeight: '2rem' }}>至</span>
+                      <span style={{ lineHeight: '2rem' }}>-</span>
                       <input
                         type="date"
                         id={`end-${emp.id}`}
-                        defaultValue={getLocalDateString()} // 🔥 使用本地时间
+                        defaultValue={defaultPeriod.endDate}
                         style={{ ...styles.input, flex: 1, fontSize: font.caption }}
                       />
                     </div>
@@ -813,7 +778,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       const startDate = (document.getElementById(`start-${emp.id}`) as HTMLInputElement)?.value;
                       const endDate = (document.getElementById(`end-${emp.id}`) as HTMLInputElement)?.value;
                       if (!startDate || !endDate) {
-                        alert('请选择日期范围');
+                        alert('Seleccione el rango de fechas');
                         return;
                       }
                       handleSingleSettlement(emp.id, `${startDate}_${endDate}`);
@@ -830,7 +795,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       fontSize: font.body,
                     }}
                   >
-                    💵 立即结算
+                    Cerrar salario
                   </button>
                 </div>
               );
@@ -839,14 +804,14 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
         </div>
       )}
 
-      {/* 批量结算 */}
+      {/* 闂傚倷绀佺紞濠傤焽瑜忕槐鐐寸節閸パ囨７闂佹儳绻愬﹢杈╁婵傚憡鐓欓柟顖嗗喚鏆㈤梺?*/}
       {settlementMode === 'batch' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>👥 批量结算配置</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Cierre masivo de salarios</h3>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>开始日期</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Fecha inicio</label>
               <input
                 type="date"
                 value={batchPeriod.startDate}
@@ -855,7 +820,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>结束日期</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Fecha fin</label>
               <input
                 type="date"
                 value={batchPeriod.endDate}
@@ -864,14 +829,14 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>发薪类型</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Tipo</label>
               <select
                 value={batchPeriod.periodType}
                 onChange={(e) => setBatchPeriod({ ...batchPeriod, periodType: e.target.value as 'first_half' | 'second_half' })}
                 style={styles.select}
               >
-                <option value="first_half">上半月 (1-15号)</option>
-                <option value="second_half">下半月 (16号-月底)</option>
+                <option value="first_half">Primera quincena</option>
+                <option value="second_half">Segunda quincena</option>
               </select>
             </div>
           </div>
@@ -881,7 +846,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               onClick={handleBatchSettlement}
               style={{ ...styles.btn(colors.success), flex: 1 }}
             >
-              ✅ 开始批量结算
+              Iniciar cierre masivo
             </button>
             <button
               onClick={() => {
@@ -889,60 +854,63 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                 if (recentRecords.length > 0) {
                   printBatchSummary(recentRecords);
                 } else {
-                  alert('暂无薪资记录可打印');
+                  alert('No hay registros de salario para imprimir');
                 }
               }}
               style={{ ...styles.btn(colors.blue), flex: 1 }}
             >
-              🖨️ 打印汇总表
+              Imprimir resumen
             </button>
           </div>
         </div>
       )}
 
-      {/* 薪资历史记录 */}
+      {/* 闂傚倷娴囨慨銈夋偋椤掍胶顩查柨婵嗘川閻牊銇勯幇鍓佺暠闁稿被鍔戦弻娑㈠焺閸愮偓鐣堕梺鑺ュ灥椤︾敻骞冪憴鍕閻熸瑥瀚崙锛勭磽?*/}
       <div style={styles.card}>
-        <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>📊 薪资历史记录</h3>
-        {salaryRecords.length === 0 ? (
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Historial de salarios</h3>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <input
+            type="date"
+            value={salaryHistoryStartDate}
+            onChange={(e) => setSalaryHistoryStartDate(e.target.value)}
+            style={styles.input}
+          />
+          <span style={{ color: colors.textSecondary, fontSize: font.body }}>-</span>
+          <input
+            type="date"
+            value={salaryHistoryEndDate}
+            onChange={(e) => setSalaryHistoryEndDate(e.target.value)}
+            style={styles.input}
+          />
+        </div>
+        {filteredSalaryRecords.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
-            暂无薪资记录
+            Sin registros de salario
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>员工</th>
-                  <th style={styles.th}>周期</th>
-                  <th style={styles.th}>类型</th>
-                  <th style={styles.th}>基本工资</th>
-                  <th style={styles.th}>加班费</th>
-                  <th style={styles.th}>福利</th>
-                  <th style={styles.th}>补贴</th>
-                  <th style={styles.th}>社保</th>
-                  <th style={styles.th}>借款扣除</th>
-                  <th style={styles.th}>实发工资</th>
-                  <th style={styles.th}>操作</th>
+                  <th style={styles.th}>Empleado</th>
+                  <th style={styles.th}>Periodo</th>
+                  <th style={styles.th}>Base</th>
+                  <th style={styles.th}>Extra</th>
+                  <th style={styles.th}>Beneficios</th>
+                  <th style={styles.th}>Subsidio</th>
+                  <th style={styles.th}>Seguro</th>
+                  <th style={styles.th}>Prestamo</th>
+                  <th style={styles.th}>Neto</th>
+                  <th style={styles.th}>Accion</th>
                 </tr>
               </thead>
               <tbody>
-                {salaryRecords.slice().reverse().map((record) => {
+                {filteredSalaryRecords.slice().reverse().map((record) => {
                   const emp = employees.find(e => e.id === record.employeeId);
                   return (
                     <tr key={record.id}>
-                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || '未知'}</td>
-                      <td style={styles.td}>{record.month}</td>
-                      <td style={styles.td}>
-                        <span style={{
-                          padding: '0.25rem 0.5rem',
-                          borderRadius: radii.pill,
-                          fontSize: font.caption,
-                          backgroundColor: record.periodType === 'first_half' ? colors.blueSoft : colors.amberSoft,
-                          color: record.periodType === 'first_half' ? colors.blue : colors.amber,
-                        }}>
-                          {record.periodType === 'first_half' ? '上半月' : '下半月'}
-                        </span>
-                      </td>
+                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || '-'}</td>
+                      <td style={styles.td}>{record.startDate} - {record.endDate}</td>
                       <td style={styles.td}>C$ {record.baseSalary.toFixed(2)}</td>
                       <td style={styles.td}>C$ {record.overtimePay.toFixed(2)}</td>
                       <td style={styles.td}>C$ {record.benefits.toFixed(2)}</td>
@@ -967,7 +935,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                             fontSize: '0.75rem',
                           }}
                         >
-                          🖨️ 打印
+                          Imprimir
                         </button>
                       </td>
                     </tr>
