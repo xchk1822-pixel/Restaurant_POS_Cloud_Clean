@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { dataManager } from '../../services/dataManager';
-import { smartAddDocument, smartIncrementField, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartDeleteDocument, smartIncrementField, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { calculatePurchaseLineSubtotal, calculatePurchaseOrderTotal, roundPurchaseAmount } from './purchaseCalculations';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 
 interface Supplier {
@@ -95,6 +96,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
   const [isSubmittingPurchaseOrder, setIsSubmittingPurchaseOrder] = useState(false);
+  const [deletingPurchaseOrderId, setDeletingPurchaseOrderId] = useState<string | null>(null);
   const isSubmittingPurchaseOrderRef = useRef(false);
   
   // 查询筛选状态
@@ -143,14 +145,17 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       const item = inventoryItems.find(i => i.id === value);
       if (item) {
         newItems[index].itemName = item.name;
-        newItems[index].unitPrice = item.costPrice; // 使用进价
-        newItems[index].subtotal = newItems[index].quantity * item.costPrice;
+        newItems[index].unitPrice = roundPurchaseAmount(item.costPrice); // 使用进价
+        newItems[index].subtotal = calculatePurchaseLineSubtotal(newItems[index].quantity, item.costPrice);
       }
     }
     
     // 如果修改数量或单价，重新计算小计
     if (field === 'quantity' || field === 'unitPrice') {
-      newItems[index].subtotal = newItems[index].quantity * newItems[index].unitPrice;
+      if (field === 'unitPrice') {
+        newItems[index].unitPrice = roundPurchaseAmount(newItems[index].unitPrice);
+      }
+      newItems[index].subtotal = calculatePurchaseLineSubtotal(newItems[index].quantity, newItems[index].unitPrice);
     }
     
     setNewOrder({ ...newOrder, items: newItems });
@@ -166,7 +171,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
 
   // 计算总金额
   const calculateTotal = () => {
-    return newOrder.items.reduce((sum, item) => sum + item.subtotal, 0);
+    return calculatePurchaseOrderTotal(newOrder.items);
   };
 
 
@@ -188,6 +193,11 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       alert('请输入发票号码（订单号）');
       return;
     }
+    const submittedOrderNumber = newOrder.orderNumber.trim();
+    if (purchaseOrders.some(order => String(order.orderNumber || '').trim() === submittedOrderNumber)) {
+      alert('该采购单号已存在，请核对后再提交');
+      return;
+    }
 
     const supplier = suppliers.find(s => s.id === newOrder.supplierId);
     if (!supplier) return;
@@ -199,15 +209,20 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     setIsSubmittingPurchaseOrder(true);
 
     try {
-    const totalAmount = calculateTotal();
+    const normalizedOrderItems = newOrder.items.map(item => ({
+      ...item,
+      unitPrice: roundPurchaseAmount(item.unitPrice),
+      subtotal: calculatePurchaseLineSubtotal(item.quantity, item.unitPrice),
+    }));
+    const totalAmount = calculatePurchaseOrderTotal(normalizedOrderItems);
     const now = Date.now();
 
     const order: PurchaseOrder = {
       id: `po-${Date.now()}`,
-      orderNumber: newOrder.orderNumber,
+      orderNumber: submittedOrderNumber,
       supplierId: newOrder.supplierId,
       supplierName: supplier.name,
-      items: newOrder.items,
+      items: normalizedOrderItems,
       totalAmount,
       paidAmount: newOrder.paymentType === 'cash' ? totalAmount : 0,
       paymentType: newOrder.paymentType,
@@ -219,14 +234,14 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     };
 
     const nextPurchaseOrders = [order, ...purchaseOrders];
-    const inventoryUpdates = newOrder.items.map(orderItem => ({
+    const inventoryUpdates = normalizedOrderItems.map(orderItem => ({
       orderItem,
       inventoryItem: inventoryItems.find(item => item.id === orderItem.itemId)
     }));
     const supplierCloudUpdate = newOrder.paymentType === 'credit' ? (() => {
-      const recalculatedBalance = nextPurchaseOrders
+      const recalculatedBalance = roundPurchaseAmount(nextPurchaseOrders
         .filter(order => order.supplierId === newOrder.supplierId)
-        .reduce((sum, order) => sum + Math.max((Number(order.totalAmount) || 0) - (Number(order.paidAmount) || 0), 0), 0);
+        .reduce((sum, order) => sum + Math.max(roundPurchaseAmount((Number(order.totalAmount) || 0) - (Number(order.paidAmount) || 0)), 0), 0));
       return { ...supplier, balance: recalculatedBalance, lastUpdated: new Date(), lastModified: now };
     })() : null;
     let purchaseExpense: any = null;
@@ -239,27 +254,38 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
         categoryId: 'supplier_payment',
         categoryName: '\u4f9b\u5e94\u5546\u8d27\u6b3e',
         amount: totalAmount,
-        description: `\u91c7\u8d2d\u73b0\u7ed3 - ${supplier.name} (${newOrder.orderNumber})`,
+        description: `\u91c7\u8d2d\u73b0\u7ed3 - ${supplier.name} (${submittedOrderNumber})`,
         type: 'purchase',
         supplierId: newOrder.supplierId,
         supplierName: supplier.name,
         purchaseOrderId: order.id,
         orderId: order.id,
         relatedType: 'purchase',
-        orderNumber: newOrder.orderNumber,
+        orderNumber: submittedOrderNumber,
         createdAt: getLocalDateString(),
         lastModified: now,
       };
     }
 
+    const submittedDraft = { ...newOrder, items: [...newOrder.items] };
+    setShowNewOrderModal(false);
+    setNewOrder({
+      supplierId: '',
+      orderNumber: '',
+      paymentType: 'credit',
+      notes: '',
+      items: [],
+    });
+    setItemCategoryFilters({});
+
     try {
       await smartAddDocument('purchase_orders', order);
-      await Promise.all(newOrder.items.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', orderItem.quantity, {
+      await Promise.all(normalizedOrderItems.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', orderItem.quantity, {
         lastModified: now,
         lastUpdated: new Date(),
         syncOperationId: `purchase-stock-${order.id}-${orderItem.itemId}-${itemIndex}`
       })));
-      await Promise.all(newOrder.items.map(async (orderItem, itemIndex) => {
+      await Promise.all(normalizedOrderItems.map(async (orderItem, itemIndex) => {
         const inventoryItem = inventoryItems.find(item => item.id === orderItem.itemId);
         const beforeStock = Number(inventoryItem?.currentStock) || 0;
         const stockRecord = {
@@ -295,38 +321,35 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
       }
     } catch (error) {
       console.error('\u4fdd\u5b58\u91c7\u8d2d\u5355\u5931\u8d25:', error);
+      setNewOrder(submittedDraft);
       alert('\u4fdd\u5b58\u91c7\u8d2d\u5355\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
       return;
     }
 
     setPurchaseOrders(nextPurchaseOrders);
-    await dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false });
     setInventoryItems(items => items.map(item => {
       const inventoryUpdate = inventoryUpdates.find(update => update.orderItem.itemId === item.id);
       if (!inventoryUpdate) return item;
       return { ...item, currentStock: item.currentStock + inventoryUpdate.orderItem.quantity, lastModified: now, lastUpdated: new Date() };
     }));
-    if (purchaseExpense) {
-      const nextExpenses = [
-        purchaseExpense,
-        ...dataManager.getData('expenses').filter(expense => expense.id !== purchaseExpense.id)
-      ];
-      await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
-    }
     if (supplierCloudUpdate) {
       setSuppliers(suppliers => suppliers.map(sup =>
         sup.id === newOrder.supplierId ? supplierCloudUpdate : sup
       ));
     }
-    setShowNewOrderModal(false);
-    setNewOrder({
-      supplierId: '',
-      orderNumber: '',
-      paymentType: 'credit',
-      notes: '',
-      items: [],
-    });
-    alert(`采购单 ${newOrder.orderNumber} 创建成功！`);
+    window.setTimeout(() => {
+      alert(`采购单 ${submittedOrderNumber} 云端写入成功`);
+    }, 0);
+    void dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false })
+      .catch(error => console.error('保存采购单本地缓存失败:', error));
+    if (purchaseExpense) {
+      const nextExpenses = [
+        purchaseExpense,
+        ...dataManager.getData('expenses').filter(expense => expense.id !== purchaseExpense.id)
+      ];
+      void dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })
+        .catch(error => console.error('保存采购开支本地缓存失败:', error));
+    }
     } finally {
       isSubmittingPurchaseOrderRef.current = false;
       setIsSubmittingPurchaseOrder(false);
@@ -334,6 +357,73 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
   };
 
   // 入库操作
+  const deletePurchaseOrder = async (order: PurchaseOrder) => {
+    if (deletingPurchaseOrderId) {
+      return;
+    }
+    if (!window.confirm(`确定删除采购单 ${order.orderNumber}？删除后会同步撤销库存、采购开支和供应商余额。`)) {
+      return;
+    }
+
+    const now = Date.now();
+    const remainingPurchaseOrders = purchaseOrders.filter(existingOrder => existingOrder.id !== order.id);
+    const quantityByItemId = order.items.reduce<Record<string, number>>((acc, orderItem) => {
+      const quantity = Number(orderItem.quantity) || 0;
+      acc[orderItem.itemId] = (acc[orderItem.itemId] || 0) + quantity;
+      return acc;
+    }, {});
+    const supplier = suppliers.find(item => item.id === order.supplierId);
+    const supplierCloudUpdate = order.paymentType === 'credit' && supplier ? {
+      ...supplier,
+      balance: remainingPurchaseOrders
+        .filter(existingOrder => existingOrder.supplierId === order.supplierId)
+        .reduce((sum, existingOrder) => sum + Math.max(roundPurchaseAmount((Number(existingOrder.totalAmount) || 0) - (Number(existingOrder.paidAmount) || 0)), 0), 0),
+      lastUpdated: new Date(),
+      lastModified: now,
+    } : null;
+
+    setDeletingPurchaseOrderId(order.id);
+    try {
+      await smartDeleteDocument('purchase_orders', order.id);
+      await Promise.all(order.items.map(async (orderItem, itemIndex) => {
+        const quantity = Number(orderItem.quantity) || 0;
+        if (!quantity) return;
+        await smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', -quantity, {
+          lastModified: now,
+          lastUpdated: new Date(),
+          syncOperationId: `purchase-delete-stock-${order.id}-${orderItem.itemId}-${itemIndex}`
+        });
+        await smartDeleteDocument('inventory_stock_records', `stock-record-${order.id}-${orderItem.itemId}-${itemIndex}`);
+      }));
+      await smartDeleteDocument('expenses', `purchase-expense-${order.id}`);
+      if (supplierCloudUpdate) {
+        await smartUpdateDocument('suppliers', order.supplierId, supplierCloudUpdate);
+      }
+
+      setPurchaseOrders(remainingPurchaseOrders);
+      setInventoryItems(items => items.map(item => {
+        const removedQuantity = quantityByItemId[item.id] || 0;
+        if (!removedQuantity) return item;
+        return { ...item, currentStock: item.currentStock - removedQuantity, lastUpdated: new Date() };
+      }));
+      if (supplierCloudUpdate) {
+        setSuppliers(items => items.map(item => item.id === order.supplierId ? supplierCloudUpdate : item));
+      }
+
+      void dataManager.saveData('purchases', remainingPurchaseOrders, { syncFirestore: false })
+        .catch(error => console.error('保存采购删除本地缓存失败', error));
+      const nextExpenses = dataManager.getData('expenses').filter(expense => expense.id !== `purchase-expense-${order.id}`);
+      void dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })
+        .catch(error => console.error('保存采购开支删除本地缓存失败', error));
+      alert(`采购单 ${order.orderNumber} 已删除`);
+    } catch (error) {
+      console.error('删除采购单失败:', error);
+      alert('删除采购单失败，请检查网络后重试');
+    } finally {
+      setDeletingPurchaseOrderId(null);
+    }
+  };
+
   // 🖨️ 打印采购单
   const printPurchaseOrder = (order: PurchaseOrder) => {
     const printWindow = window.open('', '_blank');
@@ -714,6 +804,22 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                       }}
                     >
                       🖨️ 打印
+                    </button>
+                    <button
+                      onClick={() => deletePurchaseOrder(order)}
+                      disabled={deletingPurchaseOrderId === order.id}
+                      style={{
+                        padding: '0.4rem 0.8rem',
+                        backgroundColor: deletingPurchaseOrderId === order.id ? '#9ca3af' : '#dc2626',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        fontWeight: '600',
+                        cursor: deletingPurchaseOrderId === order.id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      {deletingPurchaseOrderId === order.id ? '删除中...' : '删除'}
                     </button>
                   </div>
                 </div>

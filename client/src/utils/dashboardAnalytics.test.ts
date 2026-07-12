@@ -302,4 +302,16 @@ describe('dashboardAnalytics', () => {
       previousEndDateExclusive: '2026-06-10',
     });
   });
+
+  test('normalizes selected dashboard month as the full calendar month', () => {
+    const range = normalizeDashboardRange('month', '2026-07-01', '2026-07-31', new Date('2026-07-09T12:00:00.000-06:00'), '2026-06');
+
+    expect(range).toMatchObject({
+      startDate: '2026-06-01',
+      endDateExclusive: '2026-07-01',
+      previousStartDate: '2026-05-01',
+      previousEndDateExclusive: '2026-06-01',
+      label: '2026-06',
+    });
+  });
 });

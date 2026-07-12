@@ -1020,14 +1020,93 @@ describe('production data safety guards', () => {
     );
 
     expect(backgroundBlock).toContain('publishOrderImmediately(completedOrder)');
+    expect(backgroundBlock).toContain('const runStockDeductionAfterCompletion = () => {');
     expect(backgroundBlock).toContain('return deductStockForOrder(completedOrder)');
     expect(backgroundBlock.indexOf('publishOrderImmediately(completedOrder)')).toBeLessThan(
-      backgroundBlock.indexOf('return deductStockForOrder(completedOrder)')
+      backgroundBlock.indexOf('return runStockDeductionAfterCompletion();', backgroundBlock.indexOf('publishOrderImmediately(completedOrder)'))
     );
     expect(backgroundBlock).not.toContain('deductStockForOrder(order)');
     expect(deductionCatchBlock).toContain('status: order.status');
     expect(deductionCatchBlock).toContain('completedAt: order.completedAt');
     expect(deductionCatchBlock).toContain('clearedAt: order.clearedAt');
+  });
+
+  test('POS completion still attempts stock deduction when completed order publish is queued locally', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const backgroundBlock = source.slice(
+      source.indexOf('const startCompletionBackgroundSync = (order: Order, completedOrder: Order) => {'),
+      source.indexOf('const completeOrderWithStockDeduction')
+    );
+    const publishStart = backgroundBlock.indexOf('publishOrderImmediately(completedOrder)');
+    const publishCatchStart = backgroundBlock.indexOf('.catch(error => {', publishStart);
+    const publishCatchBlock = backgroundBlock.slice(
+      publishCatchStart,
+      backgroundBlock.indexOf('});', publishCatchStart)
+    );
+
+    expect(backgroundBlock).toContain('const runStockDeductionAfterCompletion = () => {');
+    expect(publishCatchBlock).toContain('return runStockDeductionAfterCompletion();');
+  });
+
+  test('POS does not deduct stock again when an order already has stock ledger rows', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const syncPath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const syncSource = fs.readFileSync(syncPath, 'utf8');
+    const deductBlock = posSource.slice(
+      posSource.indexOf('const deductStockForOrder = async'),
+      posSource.indexOf('const syncPointsForCompletedOrder')
+    );
+
+    expect(posSource).toContain('smartHasOrderStockRecords');
+    expect(syncSource).toContain('export const smartHasOrderStockRecords = async');
+    expect(deductBlock).toContain('const hasExistingStockRows = await smartHasOrderStockRecords(order.id, order.orderNumber);');
+    expect(deductBlock.indexOf('const hasExistingStockRows = await smartHasOrderStockRecords')).toBeLessThan(
+      deductBlock.indexOf('await smartClaimOrderStockDeduction')
+    );
+    expect(deductBlock).toContain('const markedOrder = markOrderStockDeducted(order);');
+    expect(deductBlock).toContain('await publishStockDeductionMarker(markedOrder);');
+    expect(deductBlock).toContain('return markedOrder;');
+  });
+
+  test('POS retries stale pending stock deduction for completed orders', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const retryBlock = source.slice(
+      source.indexOf('const isCompletedOrderStockDeductionStale = (order: Order) => {'),
+      source.indexOf('const syncPointsForCompletedOrder')
+    );
+
+    expect(source).toContain('const STOCK_DEDUCTION_STALE_LOCK_MS = 2 * 60 * 1000;');
+    expect(source).toContain('const stockDeductionRetryIdsRef = useRef<Set<string>>(new Set());');
+    expect(retryBlock).toContain("order.status !== 'completed'");
+    expect(retryBlock).toContain('order.stockDeducted');
+    expect(retryBlock).toContain('!order.stockDeductionPending');
+    expect(retryBlock).toContain('Date.now() - claimedAt > STOCK_DEDUCTION_STALE_LOCK_MS');
+    expect(retryBlock).toContain('deductStockForOrder(staleOrder)');
+    expect(retryBlock).toContain('publishOrderImmediately(stockSyncedOrder)');
+    expect(retryBlock).toContain('stockDeductionPending: false');
+    expect(retryBlock).toContain('stockDeductionInProgress: false');
+  });
+
+  test('POS writes stock deduction marker immediately after stock is deducted', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const deductBlock = source.slice(
+      source.indexOf('const publishStockDeductionMarker = async'),
+      source.indexOf('const syncPointsForCompletedOrder')
+    );
+
+    expect(deductBlock).toContain("await smartUpdateDocument('pos_orders', order.id");
+    expect(deductBlock).toContain('stockDeducted: true');
+    expect(deductBlock).toContain('stockDeductionInProgress: false');
+    expect(deductBlock).toContain('stockDeductionPending: false');
+    expect(deductBlock).toContain('await publishStockDeductionMarker(markedOrder);');
+    expect(deductBlock).toContain('await publishStockDeductionMarker(stockDeductedOrder);');
+    expect(deductBlock.indexOf('await deductStock(itemsToDeduct')).toBeLessThan(
+      deductBlock.indexOf('await publishStockDeductionMarker(stockDeductedOrder);')
+    );
   });
 
   test('POS completion feedback is non-blocking so weak network does not trap the cashier', () => {
@@ -2114,12 +2193,15 @@ describe('production data safety guards', () => {
     const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
     const source = fs.readFileSync(purchasePath, 'utf8');
     const createBlock = source.slice(
-      source.indexOf('const order: PurchaseOrder = {'),
-      source.indexOf("alert(`闁插洩鍠橀崡?")
+      source.indexOf('const normalizedOrderItems = newOrder.items.map'),
+      source.indexOf('const printPurchaseOrder')
     );
 
+    expect(createBlock).toContain('const normalizedOrderItems = newOrder.items.map');
+    expect(createBlock).toContain('unitPrice: roundPurchaseAmount(item.unitPrice)');
+    expect(createBlock).toContain('subtotal: calculatePurchaseLineSubtotal(item.quantity, item.unitPrice)');
     expect(createBlock).toContain("await smartAddDocument('purchase_orders', order)");
-    expect(createBlock).toContain("await Promise.all(newOrder.items.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId");
+    expect(createBlock).toContain("await Promise.all(normalizedOrderItems.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId");
     expect(createBlock).toContain('syncOperationId: `purchase-stock-${order.id}-${orderItem.itemId}-${itemIndex}`');
     expect(createBlock).toContain("source: 'purchase_order'");
     expect(createBlock).toContain("await smartAddDocument('inventory_stock_records', stockRecord)");
@@ -2129,22 +2211,26 @@ describe('production data safety guards', () => {
     expect(createBlock).toContain("type: 'purchase'");
     expect(createBlock).toContain('purchaseOrderId: order.id');
     expect(createBlock).toContain('orderId: order.id');
-    expect(createBlock).toContain("await dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false })");
-    expect(createBlock).toContain("await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })");
+    expect(createBlock).toContain("void dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false })");
+    expect(createBlock).toContain("void dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })");
     expect(createBlock.indexOf("await smartAddDocument('purchase_orders', order)")).toBeLessThan(
       createBlock.indexOf('setPurchaseOrders(nextPurchaseOrders)')
     );
-    expect(createBlock.indexOf("await Promise.all(newOrder.items.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId")).toBeLessThan(
+    expect(createBlock.indexOf("await Promise.all(normalizedOrderItems.map((orderItem, itemIndex) => smartIncrementField('inventory_items', orderItem.itemId")).toBeLessThan(
       createBlock.indexOf('setInventoryItems(items => items.map')
     );
     expect(createBlock.indexOf("await smartAddDocument('inventory_stock_records', stockRecord)")).toBeLessThan(
       createBlock.indexOf('setInventoryItems(items => items.map')
     );
     expect(createBlock.indexOf("await smartSetDocument('expenses', purchaseExpense.id, purchaseExpense)")).toBeLessThan(
-      createBlock.indexOf("await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })")
+      createBlock.indexOf("void dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })")
+    );
+    expect(createBlock.indexOf('setShowNewOrderModal(false);')).toBeLessThan(
+      createBlock.indexOf("void dataManager.saveData('purchases', nextPurchaseOrders, { syncFirestore: false })")
     );
     expect(createBlock).not.toContain("smartIncrementField('inventory_items', item.id");
-    expect(createBlock).not.toContain('.catch(error =>');
+    expect(createBlock).toContain("catch(error => console.error('保存采购单本地缓存失败:', error))");
+    expect(createBlock).toContain("catch(error => console.error('保存采购开支本地缓存失败:', error))");
   });
 
   test('purchase expenses notify expense records and financial reports immediately', () => {
@@ -2206,14 +2292,95 @@ describe('production data safety guards', () => {
     expect(submitBlock).toContain('setIsSubmittingPurchaseOrder(true);');
     expect(submitBlock).toContain('finally {');
     expect(submitBlock).toContain('isSubmittingPurchaseOrderRef.current = false;');
-    const successAlertIndex = submitBlock.lastIndexOf('alert(`');
-    expect(successAlertIndex).toBeGreaterThan(-1);
-    expect(submitBlock.indexOf('setShowNewOrderModal(false);')).toBeLessThan(successAlertIndex);
-    expect(submitBlock.indexOf('setNewOrder({')).toBeLessThan(successAlertIndex);
+    expect(submitBlock.indexOf('setShowNewOrderModal(false);')).toBeGreaterThan(-1);
+    expect(submitBlock.indexOf('setNewOrder({')).toBeGreaterThan(-1);
     expect(submitButtonBlock).toContain('disabled={isSubmittingPurchaseOrder}');
     expect(submitButtonBlock).toContain("backgroundColor: isSubmittingPurchaseOrder ? '#9ca3af' : '#10b981'");
     expect(submitButtonBlock).toContain("cursor: isSubmittingPurchaseOrder ? 'not-allowed' : 'pointer'");
     expect(submitButtonBlock).toContain("isSubmittingPurchaseOrder ? '提交中...' :");
+  });
+
+  test('purchase order submit closes the modal before non-critical local cache writes', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+    const submitBlock = source.slice(
+      source.indexOf('const submitPurchaseOrder = async () => {'),
+      source.indexOf('const printPurchaseOrder')
+    );
+    const closeIndex = submitBlock.indexOf('setShowNewOrderModal(false);');
+    const cloudWriteIndex = submitBlock.indexOf("await smartAddDocument('purchase_orders', order)");
+    const purchaseCacheIndex = submitBlock.indexOf("dataManager.saveData('purchases'");
+    const expenseCacheIndex = submitBlock.indexOf("dataManager.saveData('expenses'");
+
+    expect(closeIndex).toBeGreaterThan(-1);
+    expect(cloudWriteIndex).toBeGreaterThan(-1);
+    expect(purchaseCacheIndex).toBeGreaterThan(-1);
+    expect(expenseCacheIndex).toBeGreaterThan(-1);
+    expect(closeIndex).toBeLessThan(cloudWriteIndex);
+    expect(closeIndex).toBeLessThan(purchaseCacheIndex);
+    expect(closeIndex).toBeLessThan(expenseCacheIndex);
+    expect(submitBlock).toContain("catch(error => console.error('保存采购单本地缓存失败:', error))");
+    expect(submitBlock).toContain("catch(error => console.error('保存采购开支本地缓存失败:', error))");
+  });
+
+  test('purchase order submit shows cloud success confirmation only after closing the modal', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+    const submitBlock = source.slice(
+      source.indexOf('const submitPurchaseOrder = async () => {'),
+      source.indexOf('const printPurchaseOrder')
+    );
+    const closeIndex = submitBlock.indexOf('setShowNewOrderModal(false);');
+    const successTimerIndex = submitBlock.indexOf('window.setTimeout(() => {');
+    const successAlertIndex = submitBlock.indexOf("alert(`采购单 ${submittedOrderNumber} 云端写入成功`)");
+
+    expect(closeIndex).toBeGreaterThan(-1);
+    expect(successTimerIndex).toBeGreaterThan(-1);
+    expect(successAlertIndex).toBeGreaterThan(-1);
+    expect(closeIndex).toBeLessThan(successTimerIndex);
+    expect(successTimerIndex).toBeLessThan(successAlertIndex);
+  });
+
+  test('purchase order delete reverses linked cloud records before removing the local row', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+    const deleteBlock = source.slice(
+      source.indexOf('const deletePurchaseOrder = async (order: PurchaseOrder) => {'),
+      source.indexOf('const printPurchaseOrder')
+    );
+
+    expect(source).toContain('const [deletingPurchaseOrderId, setDeletingPurchaseOrderId] = useState<string | null>(null)');
+    expect(source).toContain('if (!window.confirm(`确定删除采购单 ${order.orderNumber}？删除后会同步撤销库存、采购开支和供应商余额。`))');
+    expect(deleteBlock).toContain("await smartDeleteDocument('purchase_orders', order.id)");
+    expect(deleteBlock).toContain("await smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', -quantity");
+    expect(deleteBlock).toContain("syncOperationId: `purchase-delete-stock-${order.id}-${orderItem.itemId}-${itemIndex}`");
+    expect(deleteBlock).toContain("await smartDeleteDocument('inventory_stock_records', `stock-record-${order.id}-${orderItem.itemId}-${itemIndex}`)");
+    expect(deleteBlock).toContain("await smartDeleteDocument('expenses', `purchase-expense-${order.id}`)");
+    expect(deleteBlock).toContain("await smartUpdateDocument('suppliers', order.supplierId, supplierCloudUpdate)");
+    expect(deleteBlock).toContain("void dataManager.saveData('purchases', remainingPurchaseOrders, { syncFirestore: false })");
+    expect(deleteBlock).toContain("void dataManager.saveData('expenses', nextExpenses, { syncFirestore: false })");
+    expect(deleteBlock.indexOf("await smartDeleteDocument('purchase_orders', order.id)")).toBeLessThan(
+      deleteBlock.indexOf('setPurchaseOrders(remainingPurchaseOrders)')
+    );
+    expect(deleteBlock.indexOf("await smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', -quantity")).toBeLessThan(
+      deleteBlock.indexOf('setInventoryItems(items => items.map')
+    );
+  });
+
+  test('purchase order list exposes a locked delete button', () => {
+    const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
+    const source = fs.readFileSync(purchasePath, 'utf8');
+    const deleteButtonStart = source.indexOf('onClick={() => deletePurchaseOrder(order)}');
+    const deleteButtonBlock = source.slice(
+      deleteButtonStart,
+      source.indexOf('</button>', deleteButtonStart)
+    );
+
+    expect(deleteButtonStart).toBeGreaterThan(-1);
+    expect(deleteButtonBlock).toContain('disabled={deletingPurchaseOrderId === order.id}');
+    expect(deleteButtonBlock).toContain("backgroundColor: deletingPurchaseOrderId === order.id ? '#9ca3af' : '#dc2626'");
+    expect(deleteButtonBlock).toContain("cursor: deletingPurchaseOrderId === order.id ? 'not-allowed' : 'pointer'");
+    expect(deleteButtonBlock).toContain("deletingPurchaseOrderId === order.id ? '删除中...' : '删除'");
   });
 
   test('purchase orders do not keep a separate invoice image upload entry', () => {
@@ -2777,6 +2944,15 @@ describe('production data safety guards', () => {
     expect(filterBlock).not.toContain('return getLocalDateString(orderDate) === today;');
   });
 
+  test('POS cancelled zero-amount orders stay visible with a cancelled label', () => {
+    const lifecycleSource = fs.readFileSync(path.join(process.cwd(), 'src/utils/posLifecycle.ts'), 'utf8');
+    const posSource = fs.readFileSync(path.join(process.cwd(), 'src/pages/POS/POS.tsx'), 'utf8');
+
+    expect(lifecycleSource).toContain("const hasCancellationRecord = order.status === 'cancelled'");
+    expect(posSource).toContain('Pedido anulado');
+    expect(posSource).toContain("order.status === 'cancelled' && Number(order.paidAmount || 0) <= 0 && Number(order.totalAmount || 0) <= 0");
+  });
+
   test('POS local business caches use scoped storage keys only', () => {
     const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
     const source = fs.readFileSync(posPath, 'utf8');
@@ -3207,6 +3383,18 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("smartSubscribeToCollection('pos_orders'");
   });
 
+  test('manager dashboard date selector drives every analytics module from one range', () => {
+    const dashboardPath = path.join(process.cwd(), 'src/pages/Manager/Dashboard.tsx');
+    const source = fs.readFileSync(dashboardPath, 'utf8');
+
+    expect(source).toContain("useState<'today' | 'month' | 'custom'>('today')");
+    expect(source).toContain('normalizeDashboardRange(timeRange, startDate, endDate, new Date(), calendarMonth)');
+    expect(source).toContain("const activeCalendarMonth = timeRange === 'month' ? calendarMonth : range.startDate.slice(0, 7)");
+    expect(source).toContain('buildMonthlySalesCalendar(dashboardOrders, activeCalendarMonth)');
+    expect(source).not.toContain("['week'");
+    expect(source).not.toContain("['month', '近30天']");
+  });
+
   test('manager dashboard UI polish uses shared tokens without changing analytics refresh paths', () => {
     const dashboardPath = path.join(process.cwd(), 'src/pages/Manager/Dashboard.tsx');
     const source = fs.readFileSync(dashboardPath, 'utf8');
@@ -3214,7 +3402,7 @@ describe('production data safety guards', () => {
     expect(source).toContain("import { colors, font, radii, shadows } from '../../styles/uiTokens';");
     expect(source).toContain('buildKpis(financialOrders');
     expect(source).toContain('buildSalesRankings(financialOrders');
-    expect(source).toContain('buildMonthlySalesCalendar(dashboardOrders, calendarMonth)');
+    expect(source).toContain('buildMonthlySalesCalendar(dashboardOrders, activeCalendarMonth)');
     expect(source).toContain("smartGetDocuments('pos_orders'");
     expect(source).not.toContain("smartSubscribeToCollection('pos_orders'");
   });
@@ -3539,6 +3727,21 @@ describe('production data safety guards', () => {
     expect(source).not.toContain("localStorage.getItem('inventory_stock_records')");
   });
 
+  test('inventory stock records tab supports local search filtering', () => {
+    const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
+    const source = fs.readFileSync(inventoryPath, 'utf8');
+
+    expect(source).toContain('const [stockRecordSearchTerm, setStockRecordSearchTerm] = useState');
+    expect(source).toContain('const filteredStockRecords = React.useMemo');
+    expect(source).toContain('formatStockRecordReason(record)');
+    expect(source).toContain('formatStockRecordOperator(record.operator)');
+    expect(source).toContain('record.orderNumber');
+    expect(source).toContain('(record as any).fridgeName');
+    expect(source).toContain('value={stockRecordSearchTerm}');
+    expect(source).toContain('onChange={(event) => setStockRecordSearchTerm(event.target.value)}');
+    expect(source).toContain('filteredStockRecords.map(record =>');
+  });
+
   test('inventory item list exposes negative stock visibility without mutating stock data', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');
@@ -3576,7 +3779,7 @@ describe('production data safety guards', () => {
 
     expect(source).toContain('const isLegacyDemoStockRecord');
     expect(source).toContain('filter((record: StockRecord) => !isLegacyDemoStockRecord(record))');
-    expect(source).toContain('stockRecords.length === 0');
+    expect(source).toContain('filteredStockRecords.length === 0');
     expect(source).not.toContain("itemId: 'item1'");
     expect(source).not.toContain("itemId: 'item3'");
     expect(source).not.toContain("itemName: '澶х背'");
@@ -4353,7 +4556,7 @@ describe('production data safety guards', () => {
       addLoanBlock.indexOf('setLoanRecords(updated)')
     );
     expect(addLoanBlock.indexOf("await smartAddDocument('expenses', newExpense)")).toBeLessThan(
-      addLoanBlock.indexOf("dataManager.saveData('expenses', nextExpenses")
+      addLoanBlock.indexOf('setLoanExpenseRecords(records =>')
     );
     expect(addLoanBlock.indexOf('await recordCashFlow({')).toBeLessThan(
       addLoanBlock.indexOf('setLoanRecords(updated)')
@@ -4371,6 +4574,50 @@ describe('production data safety guards', () => {
     expect(salarySource).not.toContain('console.log');
     expect(salaryBlock).not.toContain("console.error('鍚屾鍊熸鎵ｅ噺璁板綍澶辫触:'");
     expect(salaryBlock).not.toContain("console.error('鉂?鍚屾宸ヨ祫缁撶畻璁板綍澶辫触:'");
+  });
+
+  test('employee module refreshes only employee loan expenses before filtering active loans', () => {
+    const employeesPath = path.join(process.cwd(), 'src/pages/Employees/Employees.tsx');
+    const employeesSource = fs.readFileSync(employeesPath, 'utf8');
+    const loadBlock = employeesSource.slice(
+      employeesSource.indexOf('const loadEmployeeModuleData = useCallback(async () => {'),
+      employeesSource.indexOf('useEffect(() => {', employeesSource.indexOf('const loadEmployeeModuleData = useCallback'))
+    );
+
+    expect(loadBlock).toContain('loanExpenseData');
+    expect(loadBlock).toContain("smartGetDocumentsWhereEqual('expenses', 'relatedType', 'loan', true, 'employee_loan_expenses')");
+    expect(loadBlock).toContain("smartGetDocumentsWhereEqual('expenses', 'categoryId', 'employee_loan', true, 'employee_loan_expenses')");
+    expect(loadBlock).not.toContain("smartGetDocuments('expenses', true)");
+    expect(loadBlock).not.toContain("dataManager.saveData('expenses'");
+  });
+
+  test('employee module refresh does not duplicate large expenses cache or fail on auxiliary cache writes', () => {
+    const employeesSource = fs.readFileSync(path.join(process.cwd(), 'src/pages/Employees/Employees.tsx'), 'utf8');
+    const saveHelperBlock = employeesSource.slice(
+      employeesSource.indexOf('const saveLocalCollection = (collectionName: string, records: any[]) => {'),
+      employeesSource.indexOf('const EmployeesModule: React.FC')
+    );
+    const loadBlock = employeesSource.slice(
+      employeesSource.indexOf('const loadEmployeeModuleData = useCallback(async () => {'),
+      employeesSource.indexOf('useEffect(() => {', employeesSource.indexOf('const loadEmployeeModuleData = useCallback'))
+    );
+
+    expect(loadBlock).not.toContain("await dataManager.saveData('expenses',");
+    expect(loadBlock).not.toContain("saveLocalCollection('expenses', expensesData)");
+    expect(loadBlock).toContain("removeLocalCollection('expenses')");
+    expect(saveHelperBlock).toContain('try {');
+    expect(saveHelperBlock).toContain('localStorage.setItem');
+    expect(saveHelperBlock).toContain('catch {');
+  });
+
+  test('employee loan and salary screens use scoped loan expenses instead of the full expense cache', () => {
+    const loanSource = fs.readFileSync(path.join(process.cwd(), 'src/pages/Employees/LoanManagement.tsx'), 'utf8');
+    const salarySource = fs.readFileSync(path.join(process.cwd(), 'src/pages/Employees/SalarySettlement.tsx'), 'utf8');
+
+    expect(loanSource).toContain('loanExpenseRecords');
+    expect(salarySource).toContain('loanExpenseRecords');
+    expect(loanSource).not.toContain("dataManager.getData('expenses')");
+    expect(salarySource).not.toContain("getVisibleLoanRecords(loanRecords, dataManager.getData('expenses'))");
   });
 
   test('salary batch settlement awaits each employee and uses deterministic salary and expense ids', () => {

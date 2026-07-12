@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { dataManager } from '../../services/dataManager';
 import { smartAddDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
 import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
@@ -45,10 +44,22 @@ interface CashFlowRecord {
   salaryPeriod?: string;
 }
 
+interface LoanExpenseRecord {
+  id?: string;
+  employeeId?: string;
+  date?: string;
+  amount?: number;
+  categoryId?: string;
+  relatedType?: string;
+  relatedLoanId?: string;
+}
+
 interface LoanManagementProps {
   employees: Employee[];
   loanRecords: LoanRecord[];
   setLoanRecords: React.Dispatch<React.SetStateAction<LoanRecord[]>>;
+  loanExpenseRecords: LoanExpenseRecord[];
+  setLoanExpenseRecords: React.Dispatch<React.SetStateAction<LoanExpenseRecord[]>>;
   cashFlowRecords: CashFlowRecord[];
   setCashFlowRecords: React.Dispatch<React.SetStateAction<CashFlowRecord[]>>;
 }
@@ -57,6 +68,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   employees,
   loanRecords,
   setLoanRecords,
+  loanExpenseRecords,
+  setLoanExpenseRecords,
   cashFlowRecords,
   setCashFlowRecords,
 }) => {
@@ -147,8 +160,10 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     }
 
     setLoanRecords(updated);
-    const nextExpenses = [...dataManager.getData('expenses'), newExpense];
-    await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
+    setLoanExpenseRecords(records => records.some(record => record.id === newExpense.id)
+      ? records
+      : [...records, newExpense]
+    );
     
     setShowLoanModal(false);
     setLoanFormData({
@@ -264,8 +279,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     },
   };
 
-  const loanExpenses = dataManager.getData('expenses');
-  const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenses);
+  const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

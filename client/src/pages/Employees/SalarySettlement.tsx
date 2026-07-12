@@ -82,6 +82,16 @@ interface CashFlowRecord {
   salaryPeriod?: string;
 }
 
+interface LoanExpenseRecord {
+  id?: string;
+  employeeId?: string;
+  date?: string;
+  amount?: number;
+  categoryId?: string;
+  relatedType?: string;
+  relatedLoanId?: string;
+}
+
 interface SalarySettlementProps {
   employees: Employee[];
   attendanceRecords: AttendanceRecord[];
@@ -90,6 +100,7 @@ interface SalarySettlementProps {
   setSalaryRecords: React.Dispatch<React.SetStateAction<SalaryRecord[]>>;
   loanRecords: LoanRecord[];
   setLoanRecords: React.Dispatch<React.SetStateAction<LoanRecord[]>>;
+  loanExpenseRecords: LoanExpenseRecord[];
   cashFlowRecords: CashFlowRecord[];
   setCashFlowRecords: React.Dispatch<React.SetStateAction<CashFlowRecord[]>>;
 }
@@ -102,6 +113,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   setSalaryRecords,
   loanRecords,
   setLoanRecords,
+  loanExpenseRecords,
   cashFlowRecords,
   setCashFlowRecords,
 }) => {
@@ -140,7 +152,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   };
 
   const getActiveLoansForEmployee = (employeeId: string): LoanRecord[] => {
-    return getVisibleLoanRecords(loanRecords, dataManager.getData('expenses'))
+    return getVisibleLoanRecords(loanRecords, loanExpenseRecords)
       .filter(loan => loan.employeeId === employeeId);
   };
 

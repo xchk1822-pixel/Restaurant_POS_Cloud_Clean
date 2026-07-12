@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { smartGetDocuments } from '../../services/smartSyncService';
+import { smartGetDocuments, smartGetDocumentsWhereEqual } from '../../services/smartSyncService';
 import { dataManager } from '../../services/dataManager';
 import { filterActiveEmployees } from '../../utils/employeeRecords';
 import EmployeeList from './EmployeeList';
@@ -93,7 +93,27 @@ const getScopedStorageKey = (collectionName: string): string => {
 };
 
 const saveLocalCollection = (collectionName: string, records: any[]) => {
-  localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
+  try {
+    localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
+  } catch {
+    // Auxiliary cache only; cloud data and current React state remain authoritative.
+  }
+};
+
+const removeLocalCollection = (collectionName: string) => {
+  try {
+    localStorage.removeItem(getScopedStorageKey(collectionName));
+  } catch {
+    // Non-critical cleanup only.
+  }
+};
+
+const mergeById = (records: any[]): any[] => {
+  const merged = new Map<string, any>();
+  records.forEach(record => {
+    if (record?.id) merged.set(String(record.id), record);
+  });
+  return Array.from(merged.values());
 };
 
 const EmployeesModule: React.FC = () => {
@@ -114,6 +134,7 @@ const EmployeesModule: React.FC = () => {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [salaryRecords, setSalaryRecords] = useState<SalaryRecord[]>([]);
   const [loanRecords, setLoanRecords] = useState<LoanRecord[]>([]);
+  const [loanExpenseRecords, setLoanExpenseRecords] = useState<any[]>([]);
   const [cashFlowRecords, setCashFlowRecords] = useState<CashFlowRecord[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -135,6 +156,8 @@ const EmployeesModule: React.FC = () => {
         salaryData,
         loanData,
         cashFlowData,
+        loanExpensesByType,
+        loanExpensesByCategory,
       ] = await Promise.all([
         smartGetDocuments('employees', true),
         smartGetDocuments('employee_deletions', true),
@@ -142,19 +165,25 @@ const EmployeesModule: React.FC = () => {
         smartGetDocuments('salary_records', true),
         smartGetDocuments('loan_records', true),
         smartGetDocuments('cash_flow_records', true),
+        smartGetDocumentsWhereEqual('expenses', 'relatedType', 'loan', true, 'employee_loan_expenses'),
+        smartGetDocumentsWhereEqual('expenses', 'categoryId', 'employee_loan', true, 'employee_loan_expenses'),
       ]);
+      const loanExpenseData = mergeById([...loanExpensesByType, ...loanExpensesByCategory]);
 
       const activeEmployees = filterActiveEmployees(employeesData, employeeDeletionsData);
       setEmployees(activeEmployees);
       setAttendanceRecords(attendanceData);
       setSalaryRecords(salaryData);
       setLoanRecords(loanData);
+      setLoanExpenseRecords(loanExpenseData);
       setCashFlowRecords(cashFlowData);
       await dataManager.saveData('employees', activeEmployees, { syncFirestore: false, notify: false });
+      removeLocalCollection('expenses');
       saveLocalCollection('employee_deletions', employeeDeletionsData);
       saveLocalCollection('attendance_records', attendanceData);
       saveLocalCollection('salary_records', salaryData);
       saveLocalCollection('loan_records', loanData);
+      saveLocalCollection('employee_loan_expenses', loanExpenseData);
       saveLocalCollection('cash_flow_records', cashFlowData);
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -258,6 +287,8 @@ const EmployeesModule: React.FC = () => {
             employees={employees}
             loanRecords={loanRecords}
             setLoanRecords={setLoanRecords}
+            loanExpenseRecords={loanExpenseRecords}
+            setLoanExpenseRecords={setLoanExpenseRecords}
             cashFlowRecords={cashFlowRecords}
             setCashFlowRecords={setCashFlowRecords}
           />
@@ -271,6 +302,7 @@ const EmployeesModule: React.FC = () => {
             setSalaryRecords={setSalaryRecords}
             loanRecords={loanRecords}
             setLoanRecords={setLoanRecords}
+            loanExpenseRecords={loanExpenseRecords}
             cashFlowRecords={cashFlowRecords}
             setCashFlowRecords={setCashFlowRecords}
           />

@@ -173,11 +173,13 @@ export const normalizeDashboardRange = (
   range: 'today' | 'week' | 'month' | 'custom',
   startDate: string,
   endDate: string,
-  now = new Date()
+  now = new Date(),
+  monthKey?: string
 ): DashboardRange => {
   let start: Date;
   let endExclusive: Date;
   let label: string;
+  let previousOverride: { previousStartDate: string; previousEndDateExclusive: string } | null = null;
 
   if (range === 'today') {
     start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -188,9 +190,20 @@ export const normalizeDashboardRange = (
     start = addDays(endExclusive, -7);
     label = '近7天';
   } else if (range === 'month') {
+    if (monthKey) {
+      const [year, month] = getMonthKey(monthKey).split('-').map(Number);
+      start = new Date(year, month - 1, 1);
+      endExclusive = new Date(year, month, 1);
+      label = getMonthKey(monthKey);
+      previousOverride = {
+        previousStartDate: toDateKey(new Date(year, month - 2, 1)),
+        previousEndDateExclusive: toDateKey(start),
+      };
+    } else {
     endExclusive = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate()), 1);
     start = addDays(endExclusive, -30);
     label = '近30天';
+    }
   } else {
     start = parseDateKey(startDate);
     endExclusive = addDays(parseDateKey(endDate), 1);
@@ -199,7 +212,7 @@ export const normalizeDashboardRange = (
 
   const normalizedStart = toDateKey(start);
   const normalizedEnd = toDateKey(endExclusive);
-  const previous = calculatePreviousRange(normalizedStart, normalizedEnd);
+  const previous = previousOverride || calculatePreviousRange(normalizedStart, normalizedEnd);
 
   return {
     startDate: normalizedStart,

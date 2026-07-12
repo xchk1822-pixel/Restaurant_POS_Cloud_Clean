@@ -1363,6 +1363,47 @@ export const smartClaimOrderStockDeduction = async (
   }
 };
 
+export const smartHasOrderStockRecords = async (orderId: string, orderNumber?: string): Promise<boolean> => {
+  const storeCollectionPath = getStoreCollectionPath('inventory_stock_records');
+  if (!storeCollectionPath || (!orderId && !orderNumber)) {
+    return false;
+  }
+
+  const hasLocalStockRows = () => excludeDeletedRecords(getFromLocalStorage('inventory_stock_records')).some(record =>
+    (orderId && record?.orderId === orderId) ||
+    (orderNumber && record?.orderNumber === orderNumber)
+  );
+
+  if (!isOnline || !FIRESTORE_ENABLED) {
+    return hasLocalStockRows();
+  }
+
+  try {
+    if (orderId) {
+      const byOrderId = await withWeakNetworkTimeout(
+        () => getDocs(query(collection(db, storeCollectionPath), where('orderId', '==', orderId), limit(1))),
+        `stock-ledger-order:${orderId}`
+      );
+      if (!byOrderId.empty) return true;
+    }
+
+    if (orderNumber) {
+      const byOrderNumber = await withWeakNetworkTimeout(
+        () => getDocs(query(collection(db, storeCollectionPath), where('orderNumber', '==', orderNumber), limit(1))),
+        `stock-ledger-number:${orderNumber}`
+      );
+      if (!byOrderNumber.empty) return true;
+    }
+  } catch (error) {
+    if (!isExpectedOfflineReadError(error)) {
+      console.error('Smart sync operation failed:', error);
+    }
+    return hasLocalStockRows();
+  }
+
+  return hasLocalStockRows();
+};
+
 /**
  */
 export const smartGetDocuments = async (collectionName: string, forceServer = false) => {
@@ -1397,6 +1438,44 @@ export const smartGetDocuments = async (collectionName: string, forceServer = fa
   } else {
     return excludeDeletedRecords(getFromLocalStorage(collectionName));
   }
+};
+
+export const smartGetDocumentsWhereEqual = async (
+  collectionName: string,
+  fieldName: string,
+  fieldValue: any,
+  forceServer = false,
+  localFallbackCollectionName = collectionName
+) => {
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath) {
+    return [];
+  }
+
+  const localFallback = () => excludeDeletedRecords(getFromLocalStorage(localFallbackCollectionName))
+    .filter(record => record?.[fieldName] === fieldValue);
+
+  if (isOnline) {
+    try {
+      const queryRef = query(collection(db, storeCollectionPath), where(fieldName, '==', fieldValue));
+      const querySnapshot = forceServer
+        ? await withWeakNetworkTimeout(() => getDocsFromServer(queryRef), `read:${collectionName}:${fieldName}`)
+        : await getDocs(queryRef);
+      const docs = querySnapshot.docs.map(doc => normalizeRecordForCollection(
+        collectionName,
+        convertTimestampsToLocalTime({ id: doc.id, ...doc.data() })
+      ));
+
+      return excludeDeletedRecords(docs);
+    } catch (error) {
+      if (!isExpectedOfflineReadError(error)) {
+        console.error('Firestore filtered read failed, reading local cache:', error);
+      }
+      return localFallback();
+    }
+  }
+
+  return localFallback();
 };
 
 /**

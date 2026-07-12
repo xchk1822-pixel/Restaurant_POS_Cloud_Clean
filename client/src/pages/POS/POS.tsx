@@ -6,7 +6,7 @@ import { dataService } from '../../services/DataService';
 import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
-import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId } from '../../services/smartSyncService';
+import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId, smartHasOrderStockRecords } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import {
   getOrderSignature,
@@ -197,6 +197,8 @@ type PosToast = {
   message: string;
   tone: 'success' | 'error' | 'warning';
 };
+
+const STOCK_DEDUCTION_STALE_LOCK_MS = 2 * 60 * 1000;
 
 const stripUndefinedValues = (value: any): any => {
   if (Array.isArray(value)) {
@@ -535,6 +537,7 @@ const POS: React.FC = () => {
   const deletedTableIdsRef = useRef<Set<string>>(new Set());
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
   const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
+  const stockDeductionRetryIdsRef = useRef<Set<string>>(new Set());
 
   const publishOrderImmediately = async (order: Order) => {
     pendingOrderSyncIdsRef.current.add(order.id);
@@ -2063,6 +2066,39 @@ const POS: React.FC = () => {
 
   const getStockDeductionKey = (item: OrderItem) => item.id || item.menuItemId;
 
+  const getStockDeductedItemsFromOrder = (order: Order): Record<string, number> => {
+    const deductedItems: Record<string, number> = {};
+    order.items.forEach(item => {
+      deductedItems[getStockDeductionKey(item)] = item.quantity;
+    });
+    return deductedItems;
+  };
+
+  const markOrderStockDeducted = (order: Order): Order => ({
+    ...order,
+    stockDeducted: true,
+    stockDeductedAt: order.stockDeductedAt || new Date(),
+    stockDeductedItems: order.stockDeductedItems || getStockDeductedItemsFromOrder(order),
+    stockDeductionOperationId: order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id),
+    stockDeductionInProgress: false,
+    stockDeductionPending: false,
+    stockDeductionError: undefined,
+    lastModified: Date.now()
+  });
+
+  const publishStockDeductionMarker = async (order: Order) => {
+    await smartUpdateDocument('pos_orders', order.id, stripUndefinedValues({
+      stockDeducted: true,
+      stockDeductedAt: serializeDateForFirestore(order.stockDeductedAt || new Date()),
+      stockDeductedItems: order.stockDeductedItems || getStockDeductedItemsFromOrder(order),
+      stockDeductionOperationId: order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id),
+      stockDeductionInProgress: false,
+      stockDeductionPending: false,
+      stockDeductionError: undefined,
+      lastModified: order.lastModified || Date.now()
+    }));
+  };
+
   const deductStockForOrder = async (order: Order): Promise<Order> => {
     if (order.stockDeducted) {
       return {
@@ -2095,6 +2131,13 @@ const POS: React.FC = () => {
 
     if (itemsToDeduct.length === 0) {
       return order;
+    }
+
+    const hasExistingStockRows = await smartHasOrderStockRecords(order.id, order.orderNumber);
+    if (hasExistingStockRows) {
+      const markedOrder = markOrderStockDeducted(order);
+      await publishStockDeductionMarker(markedOrder);
+      return markedOrder;
     }
 
     const operationId = order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id);
@@ -2154,16 +2197,97 @@ const POS: React.FC = () => {
     setDeductedOrderIds(nextDeductedOrderIds);
         localStorage.setItem(getScopedStorageKey('pos_deducted_orders'), JSON.stringify(Array.from(nextDeductedOrderIds)));
 
-    return {
+    const stockDeductedOrder = {
       ...order,
       stockDeducted: true,
       stockDeductedAt: new Date(),
       stockDeductedItems: nextDeductedItems,
       stockDeductionOperationId: operationId,
       stockDeductionInProgress: false,
+      stockDeductionPending: false,
       lastModified: Date.now()
     };
+
+    await publishStockDeductionMarker(stockDeductedOrder);
+    return stockDeductedOrder;
   };
+
+  const isCompletedOrderStockDeductionStale = (order: Order) => {
+    if (
+      order.status !== 'completed' ||
+      order.stockDeducted ||
+      !order.stockDeductionPending ||
+      !order.items ||
+      order.items.length === 0
+    ) {
+      return false;
+    }
+
+    if (!order.stockDeductionInProgress) {
+      return true;
+    }
+
+    const claimedAt = toTimestampMillis(order.stockDeductionClaimedAt);
+    return !claimedAt || Date.now() - claimedAt > STOCK_DEDUCTION_STALE_LOCK_MS;
+  };
+
+  useEffect(() => {
+    const staleOrder = orders.find(order =>
+      isCompletedOrderStockDeductionStale(order) &&
+      !stockDeductionRetryIdsRef.current.has(order.id)
+    );
+    if (!staleOrder) return;
+
+    stockDeductionRetryIdsRef.current.add(staleOrder.id);
+    let cancelled = false;
+
+    deductStockForOrder(staleOrder)
+      .then(stockDeductedOrder => {
+        if (cancelled) return;
+        const stockSyncedOrder: Order = {
+          ...staleOrder,
+          ...stockDeductedOrder,
+          status: 'completed',
+          completedAt: staleOrder.completedAt,
+          clearedAt: staleOrder.clearedAt,
+          stockDeductionPending: false,
+          stockDeductionInProgress: false,
+          lastModified: Date.now()
+        };
+
+        setOrders(prevOrders => prevOrders.map(order =>
+          order.id === staleOrder.id ? stockSyncedOrder : order
+        ));
+        publishOrderImmediately(stockSyncedOrder).catch(error => {
+          console.error('sync recovered stock-deducted order failed:', staleOrder.id, error);
+        });
+      })
+      .catch(error => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error || 'unknown');
+        console.error('recover pending stock deduction failed:', staleOrder.id, error);
+        const failedOrder: Order = {
+          ...staleOrder,
+          stockDeductionInProgress: false,
+          stockDeductionFailedAt: Date.now(),
+          stockDeductionError: message,
+          lastModified: Date.now()
+        };
+
+        setOrders(prevOrders => prevOrders.map(order =>
+          order.id === staleOrder.id ? failedOrder : order
+        ));
+        publishOrderImmediately(failedOrder).catch(syncError => {
+          console.error('sync recovered stock-deduction failure marker failed:', staleOrder.id, syncError);
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // This recovery should only react to order-list changes; helper functions are render-local by design here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders]);
 
   const syncPointsForCompletedOrder = (completedOrder: Order) => {
     processCustomerPointsForCompletedOrder(completedOrder)
@@ -2195,6 +2319,50 @@ const POS: React.FC = () => {
   };
 
   const startCompletionBackgroundSync = (order: Order, completedOrder: Order) => {
+    const runStockDeductionAfterCompletion = () => {
+      if (order.stockDeducted || !order.items || order.items.length === 0) {
+        return undefined;
+      }
+
+      return deductStockForOrder(completedOrder)
+        .then(stockDeductedOrder => {
+          const stockSyncedOrder: Order = {
+            ...completedOrder,
+            ...stockDeductedOrder,
+            status: 'completed',
+            completedAt: completedOrder.completedAt,
+            clearedAt: completedOrder.clearedAt,
+            stockDeductionPending: false,
+            lastModified: Date.now()
+          };
+
+          setOrders(prevOrders => prevOrders.map(o =>
+            o.id === order.id ? stockSyncedOrder : o
+          ));
+          publishOrderImmediately(stockSyncedOrder).catch(error => {
+            console.error('sync stock-deducted completed order failed:', order.id, error);
+          });
+        })
+        .catch(error => {
+          const message = error instanceof Error ? error.message : String(error || 'unknown');
+          console.error('background stock deduction failed:', order.id, error);
+          const failedOrder: Order = {
+            ...completedOrder,
+            stockDeductionPending: true,
+            stockDeductionInProgress: false,
+            stockDeductionFailedAt: Date.now(),
+            stockDeductionError: message,
+            lastModified: Date.now()
+          };
+          setOrders(prevOrders => prevOrders.map(o =>
+            o.id === order.id ? failedOrder : o
+          ));
+          publishOrderImmediately(failedOrder).catch(syncError => {
+            console.error('sync stock-deduction failure marker failed:', order.id, syncError);
+          });
+        });
+    };
+
     publishOrderImmediately(completedOrder)
       .then(result => {
         const completionSyncPending = result?.pending || result?.success === false;
@@ -2202,50 +2370,11 @@ const POS: React.FC = () => {
           syncPointsForCompletedOrder(completedOrder);
         }
 
-        if (order.stockDeducted || !order.items || order.items.length === 0) {
-          return;
-        }
-
-        return deductStockForOrder(completedOrder)
-          .then(stockDeductedOrder => {
-            const stockSyncedOrder: Order = {
-              ...completedOrder,
-              ...stockDeductedOrder,
-              status: 'completed',
-              completedAt: completedOrder.completedAt,
-              clearedAt: completedOrder.clearedAt,
-              stockDeductionPending: false,
-              lastModified: Date.now()
-            };
-
-            setOrders(prevOrders => prevOrders.map(o =>
-              o.id === order.id ? stockSyncedOrder : o
-            ));
-            publishOrderImmediately(stockSyncedOrder).catch(error => {
-              console.error('sync stock-deducted completed order failed:', order.id, error);
-            });
-          })
-          .catch(error => {
-            const message = error instanceof Error ? error.message : String(error || 'unknown');
-            console.error('background stock deduction failed:', order.id, error);
-            const failedOrder: Order = {
-              ...completedOrder,
-              stockDeductionPending: true,
-              stockDeductionInProgress: false,
-              stockDeductionFailedAt: Date.now(),
-              stockDeductionError: message,
-              lastModified: Date.now()
-            };
-            setOrders(prevOrders => prevOrders.map(o =>
-              o.id === order.id ? failedOrder : o
-            ));
-            publishOrderImmediately(failedOrder).catch(syncError => {
-              console.error('sync stock-deduction failure marker failed:', order.id, syncError);
-            });
-          });
+        return runStockDeductionAfterCompletion();
       })
       .catch(error => {
         console.error('complete order publish queued locally:', completedOrder.id, error);
+        return runStockDeductionAfterCompletion();
       });
   };
 
@@ -5027,6 +5156,20 @@ const POS: React.FC = () => {
                             {' '}/ anulado C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}
                           </span>
                         )}
+                      </div>
+                    )}
+
+                    {order.status === 'cancelled' && Number(order.paidAmount || 0) <= 0 && Number(order.totalAmount || 0) <= 0 && (
+                      <div style={{
+                        padding: '0.4rem 0.6rem',
+                        backgroundColor: '#f3f4f6',
+                        borderRadius: '0.25rem',
+                        marginBottom: '0.5rem',
+                        fontSize: '0.8rem',
+                        color: '#4b5563',
+                        fontWeight: 600
+                      }}>
+                        Pedido anulado
                       </div>
                     )}
 

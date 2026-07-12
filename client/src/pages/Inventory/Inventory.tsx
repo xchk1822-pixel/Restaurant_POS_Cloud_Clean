@@ -588,6 +588,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     }
     return [];
   });
+  const [stockRecordSearchTerm, setStockRecordSearchTerm] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -619,6 +620,30 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       cancelled = true;
     };
   }, [stockRecordsStorageKey]);
+
+  const filteredStockRecords = React.useMemo(() => {
+    const keyword = stockRecordSearchTerm.trim().toLowerCase();
+    if (!keyword) return stockRecords;
+
+    return stockRecords.filter(record => {
+      const searchableText = [
+        record.itemName,
+        record.itemId,
+        record.orderNumber,
+        record.source,
+        record.sourceId,
+        record.reason,
+        formatStockRecordReason(record),
+        record.operator,
+        formatStockRecordOperator(record.operator),
+        (record as any).locationType,
+        (record as any).fridgeId,
+        (record as any).fridgeName,
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      return searchableText.includes(keyword);
+    });
+  }, [stockRecords, stockRecordSearchTerm]);
 
   // 过滤库存物品
   // 获取类别名称 - 从 inventoryCategories 中动态查找
@@ -1426,6 +1451,25 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       {/* 出入库记录 */}
       {activeTab === 'records' && (
         <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={stockRecordSearchTerm}
+              onChange={(event) => setStockRecordSearchTerm(event.target.value)}
+              placeholder="搜索商品、订单号、原因、操作员、冰箱"
+              style={{
+                flex: '1 1 320px',
+                padding: '0.65rem 0.8rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.45rem',
+                fontSize: '0.92rem',
+                outline: 'none'
+              }}
+            />
+            <span style={{ color: '#6b7280', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+              显示 {filteredStockRecords.length} / {stockRecords.length} 条
+            </span>
+          </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
@@ -1439,13 +1483,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </tr>
               </thead>
               <tbody>
-                {stockRecords.length === 0 ? (
+                {filteredStockRecords.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
                       暂无真实出入库记录
                     </td>
                   </tr>
-                ) : stockRecords.map(record => (
+                ) : filteredStockRecords.map(record => (
                   <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>
                       {formatStockRecordTime(record)}

@@ -225,8 +225,8 @@ const getHeatBackground = (intensity: number, inMonth: boolean): string => {
 
 const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders }) => {
   const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
-  const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
-  const [startDate, setStartDate] = useState(getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
+  const [timeRange, setTimeRange] = useState<'today' | 'month' | 'custom'>('today');
+  const [startDate, setStartDate] = useState(getLocalDateString());
   const [endDate, setEndDate] = useState(getLocalDateString());
   const [calendarMonth, setCalendarMonth] = useState(getLocalDateString().slice(0, 7));
 
@@ -416,7 +416,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
 
   const loadDashboardData = React.useCallback(() => {
     try {
-      const range = normalizeDashboardRange(timeRange, startDate, endDate, new Date());
+      const range = normalizeDashboardRange(timeRange, startDate, endDate, new Date(), calendarMonth);
+      const activeCalendarMonth = timeRange === 'month' ? calendarMonth : range.startDate.slice(0, 7);
       const dashboardOrders = propOrders || orders || getStoreOrdersDirect();
       const filteredOrders = filterOrdersByRange(dashboardOrders, range.startDate, range.endDateExclusive);
       const previousOrders = filterOrdersByRange(dashboardOrders, range.previousStartDate, range.previousEndDateExclusive);
@@ -568,7 +569,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       });
       setFocusedRankings(buildSalesRankings(financialOrders, menuItems, inventoryItems, rankingFilters));
       setRankingMovement(buildRankingComparison(financialOrders, previousFinancialOrders, menuItems, inventoryItems, movementFilters));
-      setMonthlyCalendar(buildMonthlySalesCalendar(dashboardOrders, calendarMonth));
+      setMonthlyCalendar(buildMonthlySalesCalendar(dashboardOrders, activeCalendarMonth));
       setSalesTrend(Object.values(trendMap).sort((a, b) => a.date.localeCompare(b.date)));
       setExpenseRankings(buildExpenseRankings(currentExpenseRecords, expenseCategories, purchases, expenseRankingFilters));
       setExpenseMovement(buildExpenseRankingComparison(currentExpenseRecords, previousExpenseRecords, expenseCategories, purchases, expenseRankingFilters));
@@ -813,9 +814,8 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
         <div style={styles.toolbar}>
           {[
             ['today', '今日'],
-            ['week', '近7天'],
-            ['month', '近30天'],
-            ['custom', '自定义'],
+            ['custom', '自定义时间'],
+            ['month', '月度'],
           ].map(([key, label]) => (
             <button key={key} onClick={() => setTimeRange(key as any)} style={styles.segmentButton(timeRange === key)}>{label}</button>
           ))}
@@ -826,7 +826,9 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
               <input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} style={styles.input} />
             </>
           )}
-          <input type="month" value={calendarMonth} onChange={event => setCalendarMonth(event.target.value)} style={styles.input} />
+          {timeRange === 'month' && (
+            <input type="month" value={calendarMonth} onChange={event => setCalendarMonth(event.target.value)} style={styles.input} />
+          )}
           {lastSyncedAt && <span style={{ ...styles.muted, whiteSpace: 'nowrap' }}>最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}</span>}
           <button
             onClick={refreshManagerData}
