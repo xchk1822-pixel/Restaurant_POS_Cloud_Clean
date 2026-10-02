@@ -134,7 +134,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   minHeight: '154px',
                   display: 'flex',
                   flexDirection: 'column',
-                  justifyContent: 'space-between',
+                  justifyContent: 'flex-start',
                   overflow: 'hidden',
                   boxShadow: shadows.soft
                 }}
@@ -173,29 +173,40 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                       display: 'block'
                     }}
                   />
-                  <div style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    padding: '0.35rem 0.45rem',
-                    background: 'linear-gradient(180deg, rgba(15,23,42,0.1), rgba(15,23,42,0.88))',
-                    color: 'white',
-                    textShadow: '0 1px 2px rgba(0,0,0,0.45)'
-                  }}>
-                    <div style={{
+                </div>
+
+                {/* 使用图片下方空间完整显示菜名和价格 */}
+                <div style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  minHeight: '4.35rem',
+                  padding: '0.48rem 0.55rem 0.52rem',
+                  background: colors.surface,
+                  color: colors.textPrimary,
+                  borderTop: `1px solid ${colors.border}`,
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '0.28rem',
+                  textShadow: 'none'
+                }}>
+                  <div
+                    title={item.name}
+                    style={{
                       fontWeight: 700,
                       fontSize: '0.82rem',
-                      lineHeight: 1.15,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}>
-                      {item.name}
-                    </div>
-                    <div style={{ fontSize: '0.95rem', fontWeight: 800, lineHeight: 1.1 }}>
-                      C${item.price}
-                    </div>
+                      lineHeight: 1.22,
+                      color: colors.blue,
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word'
+                    }}
+                  >
+                    {item.name}
+                  </div>
+                  <div style={{ color: colors.danger, fontSize: '0.95rem', fontWeight: 800, lineHeight: 1.1 }}>
+                    C${item.price}
                   </div>
                 </div>
               
