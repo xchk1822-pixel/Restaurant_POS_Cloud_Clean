@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Cell,
@@ -11,9 +11,15 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { smartGetDocuments } from '../../services/smartSyncService';
+import {
+  smartGetDocuments,
+  smartGetDocumentsByDateRange,
+  smartGetDocumentsWhereEqual,
+  smartGetPosOrdersByActivityDateRange,
+} from '../../services/smartSyncService';
 import {
   buildOwnerExpenseEvidenceRows,
+  buildOwnerLowStockRisks,
   dedupeOwnerRecordsById,
   dedupeOwnerRecordsByStoreAndId,
   summarizeOwnerOrderTypes,
@@ -53,6 +59,8 @@ interface OwnerCache {
   expenses: any[];
   purchases: any[];
   inventory: any[];
+  fridgeInventory: any[];
+  suppliers: any[];
   menuItems: any[];
   expenseCategories: any[];
   employees: any[];
@@ -60,10 +68,11 @@ interface OwnerCache {
   syncedAt: string | null;
 }
 
-type TimeRange = 'today' | 'week' | 'month';
+type TimeRange = 'today' | 'month' | 'custom';
 
 const CACHE_KEY = 'owner_dashboard_cache_v1';
 const CHART_COLORS = [colors.blue, colors.success, colors.amber, colors.danger, '#7c3aed'];
+let ownerDashboardMemoryCache: OwnerCache | null = null;
 
 const money = (value: number) =>
   `C$ ${value.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -73,21 +82,20 @@ const percent = (value: number) => `${Number(value || 0).toFixed(1)}%`;
 
 const getOrderAmount = (order: any): number => getOrderCollectedAmount(order);
 
-const getOrderFinancialTime = (order: any): number => {
-  const dateKey = getOrderFinancialDateKey(order);
-  return dateKey ? new Date(`${dateKey}T00:00:00-06:00`).getTime() : 0;
+const getRecordDateKey = (record: any): string => {
+  const value = record?.date || record?.orderDate || record?.receivedDate || record?.createdAt || record?.updatedAt || record?.lastModified;
+  if (typeof value === 'string') {
+    const matchedDate = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+    if (matchedDate) return matchedDate;
+  }
+  const timestamp = toTimestampMillis(value);
+  return timestamp ? getLocalDateString(new Date(timestamp)) : '';
 };
 
-const getRecordTime = (record: any): number =>
-  toTimestampMillis(record.createdAt || record.orderDate || record.receivedDate || record.date || record.updatedAt || record.lastModified);
-
-const getRangeStart = (range: TimeRange): number => {
-  const now = new Date();
-  if (range === 'today') {
-    return new Date(`${getLocalDateString()}T00:00:00-06:00`).getTime();
-  }
-  const days = range === 'week' ? 7 : 30;
-  return now.getTime() - days * 24 * 60 * 60 * 1000;
+const getPreviousDateKey = (dateKey: string): string => {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() - 1);
+  return getLocalDateString(date);
 };
 
 const getCachedData = (): OwnerCache => {
@@ -97,12 +105,16 @@ const getCachedData = (): OwnerCache => {
     expenses: [],
     purchases: [],
     inventory: [],
+    fridgeInventory: [],
+    suppliers: [],
     menuItems: [],
     expenseCategories: [],
     employees: [],
     employeeDeletions: [],
     syncedAt: null,
   };
+
+  if (ownerDashboardMemoryCache) return ownerDashboardMemoryCache;
 
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -117,12 +129,16 @@ const getCachedData = (): OwnerCache => {
 const OwnerDashboard: React.FC = () => {
   const cached = useMemo(() => getCachedData(), []);
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
+  const [customStartDate, setCustomStartDate] = useState(() => getLocalDateString());
+  const [customEndDate, setCustomEndDate] = useState(() => getLocalDateString());
   const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
   const [stores, setStores] = useState<any[]>(dedupeOwnerRecordsById(cached.stores));
   const [orders, setOrders] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.orders));
   const [expenses, setExpenses] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.expenses));
   const [purchases, setPurchases] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.purchases));
   const [inventory, setInventory] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.inventory));
+  const [fridgeInventory, setFridgeInventory] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.fridgeInventory));
+  const [suppliers, setSuppliers] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.suppliers));
   const [menuItems, setMenuItems] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.menuItems));
   const [expenseCategories, setExpenseCategories] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.expenseCategories || []));
   const [employees, setEmployees] = useState<any[]>(dedupeOwnerRecordsByStoreAndId(cached.employees));
@@ -140,14 +156,37 @@ const OwnerDashboard: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [selectedEvidence, setSelectedEvidence] = useState<any | null>(null);
+  const todayDateKey = getLocalDateString();
+  const rankingRange = useMemo(
+    () => normalizeDashboardRange(
+      timeRange,
+      customStartDate,
+      customEndDate,
+      new Date(),
+      timeRange === 'month' ? todayDateKey.slice(0, 7) : undefined
+    ),
+    [customEndDate, customStartDate, timeRange, todayDateKey]
+  );
+  const staticDataLoadedRef = useRef(Boolean(cached.syncedAt));
+  const staticDataRef = useRef({
+    inventory: dedupeOwnerRecordsByStoreAndId(cached.inventory),
+    fridgeInventory: dedupeOwnerRecordsByStoreAndId(cached.fridgeInventory),
+    suppliers: dedupeOwnerRecordsByStoreAndId(cached.suppliers),
+    menuItems: dedupeOwnerRecordsByStoreAndId(cached.menuItems),
+    expenseCategories: dedupeOwnerRecordsByStoreAndId(cached.expenseCategories || []),
+    employees: dedupeOwnerRecordsByStoreAndId(cached.employees),
+    employeeDeletions: dedupeOwnerRecordsByStoreAndId(cached.employeeDeletions || []),
+  });
 
-  const refreshOwnerData = useCallback(async () => {
+  const refreshOwnerData = useCallback(async (options?: { forceStatic?: boolean }) => {
     const applyOwnerDashboardCache = (nextCache: OwnerCache) => {
       setStores(nextCache.stores);
       setOrders(nextCache.orders);
       setExpenses(nextCache.expenses);
       setPurchases(nextCache.purchases);
       setInventory(nextCache.inventory);
+      setFridgeInventory(nextCache.fridgeInventory);
+      setSuppliers(nextCache.suppliers);
       setMenuItems(nextCache.menuItems);
       setExpenseCategories(nextCache.expenseCategories);
       setEmployees(nextCache.employees);
@@ -161,23 +200,60 @@ const OwnerDashboard: React.FC = () => {
     try {
       const loadedStores = await smartGetDocuments('stores', true);
       const activeStores = dedupeOwnerRecordsById(loadedStores);
-      const collectionNames = ['pos_orders', 'expenses', 'purchase_orders', 'inventory_items', 'menu_items', 'expense_categories', 'employees', 'employee_deletions'] as const;
-      const buckets: Record<typeof collectionNames[number], any[]> = {
-        pos_orders: [],
-        expenses: [],
-        purchase_orders: [],
-        inventory_items: [],
-        menu_items: [],
-        expense_categories: [],
-        employees: [],
-        employee_deletions: [],
+      const rangeStartDate = [rankingRange.startDate, rankingRange.previousStartDate].sort()[0];
+      const rangeEndDate = getPreviousDateKey(
+        [rankingRange.endDateExclusive, rankingRange.previousEndDateExclusive].sort().reverse()[0]
+      );
+      const shouldRefreshStatic = Boolean(options?.forceStatic) || !staticDataLoadedRef.current;
+      const staticCollectionNames = ['inventory_items', 'fridge_inventory', 'suppliers', 'menu_items', 'expense_categories', 'employees', 'employee_deletions'] as const;
+      const rangeBuckets = {
+        pos_orders: [] as any[],
+        expenses: [] as any[],
+        purchase_orders: [] as any[],
+      };
+      const staticBuckets: Record<typeof staticCollectionNames[number], any[]> = {
+        inventory_items: shouldRefreshStatic ? [] : [...staticDataRef.current.inventory],
+        fridge_inventory: shouldRefreshStatic ? [] : [...staticDataRef.current.fridgeInventory],
+        suppliers: shouldRefreshStatic ? [] : [...staticDataRef.current.suppliers],
+        menu_items: shouldRefreshStatic ? [] : [...staticDataRef.current.menuItems],
+        expense_categories: shouldRefreshStatic ? [] : [...staticDataRef.current.expenseCategories],
+        employees: shouldRefreshStatic ? [] : [...staticDataRef.current.employees],
+        employee_deletions: shouldRefreshStatic ? [] : [...staticDataRef.current.employeeDeletions],
       };
 
       for (const store of activeStores) {
-        await Promise.all(collectionNames.map(async collectionName => {
+        const [storeOrders, storeExpenses, storePurchases, storeCreditPurchases] = await Promise.all([
+          smartGetPosOrdersByActivityDateRange(rangeStartDate, rangeEndDate, true, store.id, ['lastPaidAt'], false),
+          smartGetDocumentsByDateRange(`stores/${store.id}/expenses`, 'date', rangeStartDate, rangeEndDate, true),
+          smartGetDocumentsByDateRange(`stores/${store.id}/purchase_orders`, 'orderDate', rangeStartDate, rangeEndDate, true),
+          smartGetDocumentsWhereEqual(
+            `stores/${store.id}/purchase_orders`,
+            'paymentType',
+            'credit',
+            true
+          ),
+        ]);
+        rangeBuckets.pos_orders.push(...storeOrders.map(record => ({
+          ...record,
+          storeId: store.id,
+          storeName: store.name,
+        })));
+        rangeBuckets.expenses.push(...storeExpenses.map(record => ({
+          ...record,
+          storeId: store.id,
+          storeName: store.name,
+        })));
+        rangeBuckets.purchase_orders.push(...[...storePurchases, ...storeCreditPurchases].map(record => ({
+          ...record,
+          storeId: store.id,
+          storeName: store.name,
+        })));
+
+        if (!shouldRefreshStatic) continue;
+        await Promise.all(staticCollectionNames.map(async collectionName => {
           try {
             const records = await smartGetDocuments(`stores/${store.id}/${collectionName}`, true);
-            buckets[collectionName].push(...records.map(record => ({
+            staticBuckets[collectionName].push(...records.map(record => ({
               ...record,
               storeId: store.id,
               storeName: store.name,
@@ -191,23 +267,41 @@ const OwnerDashboard: React.FC = () => {
       const syncedAt = new Date();
       const nextCache: OwnerCache = {
         stores: activeStores,
-        orders: dedupeOwnerRecordsByStoreAndId(buckets.pos_orders),
-        expenses: dedupeOwnerRecordsByStoreAndId(buckets.expenses),
-        purchases: dedupeOwnerRecordsByStoreAndId(buckets.purchase_orders),
-        inventory: dedupeOwnerRecordsByStoreAndId(buckets.inventory_items),
-        menuItems: dedupeOwnerRecordsByStoreAndId(buckets.menu_items),
-        expenseCategories: dedupeOwnerRecordsByStoreAndId(buckets.expense_categories),
-        employees: dedupeOwnerRecordsByStoreAndId(buckets.employees),
-        employeeDeletions: dedupeOwnerRecordsByStoreAndId(buckets.employee_deletions),
+        orders: dedupeOwnerRecordsByStoreAndId(rangeBuckets.pos_orders),
+        expenses: dedupeOwnerRecordsByStoreAndId(rangeBuckets.expenses),
+        purchases: dedupeOwnerRecordsByStoreAndId(rangeBuckets.purchase_orders),
+        inventory: dedupeOwnerRecordsByStoreAndId(staticBuckets.inventory_items),
+        fridgeInventory: dedupeOwnerRecordsByStoreAndId(staticBuckets.fridge_inventory),
+        suppliers: dedupeOwnerRecordsByStoreAndId(staticBuckets.suppliers),
+        menuItems: dedupeOwnerRecordsByStoreAndId(staticBuckets.menu_items),
+        expenseCategories: dedupeOwnerRecordsByStoreAndId(staticBuckets.expense_categories),
+        employees: dedupeOwnerRecordsByStoreAndId(staticBuckets.employees),
+        employeeDeletions: dedupeOwnerRecordsByStoreAndId(staticBuckets.employee_deletions),
         syncedAt: syncedAt.toISOString(),
       };
 
+      staticDataRef.current = {
+        inventory: nextCache.inventory,
+        fridgeInventory: nextCache.fridgeInventory,
+        suppliers: nextCache.suppliers,
+        menuItems: nextCache.menuItems,
+        expenseCategories: nextCache.expenseCategories,
+        employees: nextCache.employees,
+        employeeDeletions: nextCache.employeeDeletions,
+      };
+      staticDataLoadedRef.current = true;
+      ownerDashboardMemoryCache = nextCache;
       applyOwnerDashboardCache(nextCache);
 
       try {
         localStorage.setItem(CACHE_KEY, JSON.stringify(nextCache));
       } catch (error) {
-        console.warn('Owner dashboard cache write failed; keeping freshly loaded data visible:', error);
+        const lightweightCache = { ...nextCache, orders: [], expenses: [], purchases: [] };
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(lightweightCache));
+        } catch (compactError) {
+          console.warn('Owner dashboard lightweight cache write failed; keeping in-memory data visible:', compactError);
+        }
       }
     } catch (error) {
       console.error('刷新老板仪表板失败:', error);
@@ -215,38 +309,34 @@ const OwnerDashboard: React.FC = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [rankingRange]);
 
   useEffect(() => {
     refreshOwnerData();
   }, [refreshOwnerData]);
 
-  const rangeStart = useMemo(() => getRangeStart(timeRange), [timeRange]);
   const selectedStore = stores.find(store => store.id === selectedStoreId);
   const selectedStoreName = selectedStoreId === 'all'
     ? '全部分店'
     : selectedStore?.name || selectedStore?.storeName || selectedStoreId;
 
   const rangeOrders = useMemo(() => {
-    return orders.filter(order => {
-      const timestamp = getOrderFinancialTime(order);
-      return timestamp && timestamp >= rangeStart;
-    });
-  }, [orders, rangeStart]);
+    return filterOrdersByRange(orders, rankingRange.startDate, rankingRange.endDateExclusive);
+  }, [orders, rankingRange]);
 
   const rangeExpenses = useMemo(() => {
     return expenses.filter(expense => {
-      const timestamp = getRecordTime(expense);
-      return timestamp && timestamp >= rangeStart;
+      const dateKey = getRecordDateKey(expense);
+      return dateKey >= rankingRange.startDate && dateKey < rankingRange.endDateExclusive;
     });
-  }, [expenses, rangeStart]);
+  }, [expenses, rankingRange]);
 
   const rangePurchases = useMemo(() => {
     return purchases.filter(purchase => {
-      const timestamp = getRecordTime(purchase);
-      return timestamp && timestamp >= rangeStart;
+      const dateKey = getRecordDateKey(purchase);
+      return dateKey >= rankingRange.startDate && dateKey < rankingRange.endDateExclusive;
     });
-  }, [purchases, rangeStart]);
+  }, [purchases, rankingRange]);
 
   const scopedOrders = useMemo(() => {
     const source = selectedStoreId === 'all'
@@ -278,6 +368,14 @@ const OwnerDashboard: React.FC = () => {
       ? inventory
       : inventory.filter(item => item.storeId === selectedStoreId);
   }, [inventory, selectedStoreId]);
+
+  const lowStockRisks = useMemo(() => {
+    const riskStores = selectedStoreId === 'all'
+      ? stores
+      : stores.filter(store => store.id === selectedStoreId);
+    return buildOwnerLowStockRisks(riskStores, inventory, fridgeInventory, suppliers, purchases);
+  }, [fridgeInventory, inventory, purchases, selectedStoreId, stores, suppliers]);
+  const lowStockEstimatedAmount = lowStockRisks.reduce((sum, item) => sum + item.estimatedAmount, 0);
 
   const scopedMenuItems = useMemo(() => {
     return selectedStoreId === 'all'
@@ -374,10 +472,6 @@ const OwnerDashboard: React.FC = () => {
       .map(([date, amount]) => ({ date, amount }));
   }, [scopedOrders]);
 
-  const rankingRange = useMemo(
-    () => normalizeDashboardRange(timeRange, getLocalDateString(), getLocalDateString(), new Date()),
-    [timeRange]
-  );
   const rankingOrders = useMemo(
     () => selectedStoreId === 'all' ? orders : orders.filter(order => order.storeId === selectedStoreId),
     [orders, selectedStoreId]
@@ -516,6 +610,28 @@ const OwnerDashboard: React.FC = () => {
           margin: -2px 0 14px;
           color: ${colors.textSecondary};
           font-size: 13px;
+        }
+        .owner-date-range {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          margin: -4px 0 14px;
+        }
+        .owner-date-field {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          color: ${colors.textSecondary};
+          font-size: 13px;
+          font-weight: 650;
+        }
+        .owner-date-input {
+          border: 1px solid ${colors.border};
+          border-radius: ${radii.md};
+          padding: 8px 10px;
+          background: ${colors.surface};
+          color: ${colors.textPrimary};
+          font: inherit;
         }
         .metric-grid {
           display: grid;
@@ -765,6 +881,29 @@ const OwnerDashboard: React.FC = () => {
           color: ${colors.textSecondary};
           font-size: 13px;
         }
+        .risk-summary {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .risk-summary-box {
+          border: 1px solid ${colors.border};
+          border-radius: ${radii.md};
+          padding: 10px;
+          background: ${colors.surfaceMuted};
+        }
+        .risk-summary-box strong {
+          display: block;
+          margin-top: 4px;
+          color: ${colors.textPrimary};
+          font-size: 17px;
+        }
+        .risk-stock {
+          color: ${colors.danger};
+          font-weight: 760;
+          white-space: nowrap;
+        }
         .error-box {
           padding: 10px 12px;
           border: 1px solid #fecaca;
@@ -870,6 +1009,16 @@ const OwnerDashboard: React.FC = () => {
           .owner-tabs {
             grid-template-columns: 1fr;
           }
+          .owner-date-range {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+          .owner-date-field {
+            justify-content: space-between;
+          }
+          .owner-date-input {
+            min-width: 0;
+          }
           .metric-value {
             font-size: 21px;
           }
@@ -901,25 +1050,51 @@ const OwnerDashboard: React.FC = () => {
                 最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
               </span>
             )}
-            <button className="owner-refresh" onClick={refreshOwnerData} disabled={isRefreshing}>
+            <button className="owner-refresh" onClick={() => refreshOwnerData({ forceStatic: true })} disabled={isRefreshing}>
               {isRefreshing ? '刷新中...' : '刷新云端数据'}
             </button>
           </div>
         </header>
 
         <div className="owner-tabs">
-          {(['today', 'week', 'month'] as const).map(range => (
+          {(['today', 'month', 'custom'] as const).map(range => (
             <button
               key={range}
               className={`owner-tab ${timeRange === range ? 'active' : ''}`}
               onClick={() => setTimeRange(range)}
             >
-              {range === 'today' ? '今天' : range === 'week' ? '近7天' : '近30天'}
+              {range === 'today' ? '今天' : range === 'month' ? '当月' : '日期筛选'}
             </button>
           ))}
         </div>
 
-        <div className="scope-line">当前范围：{selectedStoreName}</div>
+        {timeRange === 'custom' && (
+          <div className="owner-date-range">
+            <label className="owner-date-field">
+              <span>开始日期</span>
+              <input
+                className="owner-date-input"
+                type="date"
+                value={customStartDate}
+                max={customEndDate}
+                onChange={event => setCustomStartDate(event.target.value)}
+              />
+            </label>
+            <label className="owner-date-field">
+              <span>结束日期</span>
+              <input
+                className="owner-date-input"
+                type="date"
+                value={customEndDate}
+                min={customStartDate}
+                max={todayDateKey}
+                onChange={event => setCustomEndDate(event.target.value)}
+              />
+            </label>
+          </div>
+        )}
+
+        <div className="scope-line">当前范围：{selectedStoreName} · {rankingRange.label}</div>
         {loadError && <div className="error-box">{loadError}</div>}
 
         <section className="metric-grid">
@@ -985,7 +1160,7 @@ const OwnerDashboard: React.FC = () => {
                 <div className="empty-box">暂无销售趋势数据。</div>
               ) : (
                 <div className="chart-box">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 260 }}>
                     <LineChart data={salesTrend}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" />
@@ -1137,7 +1312,7 @@ const OwnerDashboard: React.FC = () => {
                 <div className="empty-box">暂无支付数据。</div>
               ) : (
                 <div className="chart-box">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 320, height: 260 }}>
                     <PieChart>
                       <Pie data={paymentChannels} dataKey="value" nameKey="name" innerRadius={48} outerRadius={82}>
                         {paymentChannels.map((_, index) => (
@@ -1194,6 +1369,38 @@ const OwnerDashboard: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+
+            <div className="panel owner-low-stock-panel">
+              <h2 className="panel-title">低库存风险</h2>
+              <div className="risk-summary">
+                <div className="risk-summary-box">
+                  <span className="metric-note">待补货物品</span>
+                  <strong>{number(lowStockRisks.length)} 种</strong>
+                </div>
+                <div className="risk-summary-box">
+                  <span className="metric-note">预计补货金额</span>
+                  <strong>{money(lowStockEstimatedAmount)}</strong>
+                </div>
+              </div>
+              {lowStockRisks.length === 0 ? (
+                <div className="empty-box">当前范围未发现低库存风险。</div>
+              ) : lowStockRisks.slice(0, 8).map(item => (
+                <div key={`${item.storeId}:${item.itemId}`} className="list-row">
+                  <span>
+                    <strong>{item.itemName}</strong>
+                    <span className="evidence-meta">
+                      {selectedStoreId === 'all' ? `${item.storeName} · ` : ''}{item.supplierName}
+                    </span>
+                  </span>
+                  <span className="risk-stock">
+                    {item.currentStock.toLocaleString()} / {item.minStock.toLocaleString()} {item.unit}
+                  </span>
+                </div>
+              ))}
+              {lowStockRisks.length > 8 && (
+                <div className="metric-note">另有 {number(lowStockRisks.length - 8)} 种低库存物品</div>
+              )}
             </div>
 
             <div className="panel">

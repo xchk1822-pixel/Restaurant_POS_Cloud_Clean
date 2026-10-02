@@ -6,13 +6,13 @@ import { dataService } from '../../services/DataService';
 import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
-import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId, smartHasOrderStockRecords } from '../../services/smartSyncService';
+import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 import {
   getOrderSignature,
   getOrdersSignature,
   getPosOrderCardColor,
-  getPosOrderStatusText,
   hasNewerCloudOrders,
   isDisplayablePosOrder,
   isEditableActiveOrder,
@@ -20,14 +20,21 @@ import {
   reconcileTableStatusFromOrders,
 } from '../../utils/posLifecycle';
 import {
+  applyPrinterTarget,
   buildKitchenTicketPayload,
   buildLocalPrintPayload,
   buildThermalReceiptHtml,
   buildThermalReceiptText,
+  getCurrentStorePrinterConfigs,
+  getCurrentStorePrintSettings,
   getCurrentStoreReceiptProfile,
+  getPrintersForRole,
   openBrowserPrintWindow,
   printViaLocalBridge,
+  refreshCurrentStorePrintCache,
+  routeKitchenItemsToPrinters,
 } from '../../utils/receiptPrinter';
+import { createBrowserOrderCreationCoordinator, OrderCreationCoordinator } from '../../utils/orderCreationIntent';
 import tableFoodBackground from '../../assets/pos/table-food-background.jpg';
 import tableSingleModern from '../../assets/pos/table-single-modern.png';
 import tableHorizontalModern from '../../assets/pos/table-horizontal-modern.png';
@@ -68,6 +75,7 @@ interface OrderItem {
   quantity: number;
   price: number;
   subtotal: number;
+  category?: string;
   type?: 'recipe' | 'direct';
   stockItemId?: string;
   ingredients?: Array<{
@@ -130,6 +138,7 @@ interface PointsTransaction {
 
 interface Order {
   id: string;
+  creationIntentId?: string;
   orderNumber?: string;
   tableId: string;
   tableNumber: string;
@@ -169,12 +178,18 @@ interface Order {
   stockDeductionClaimedAt?: number;
   stockDeductionPending?: boolean;
   stockDeductionFailedAt?: number;
-  stockDeductionError?: string;
+  stockDeductionError?: string | null;
   pointsProcessed?: boolean;
   pointsProcessedAt?: Date;
   pointsEarned?: number;
   pointsUsed?: number;
   pointsDiscount?: number;
+  promotionRewardId?: string;
+  promotionRewardLabel?: string;
+  promotionRewardType?: 'fixed' | 'dish' | 'gift' | 'full_order';
+  promotionRewardAmount?: number;
+  promotionOriginalTotalAmount?: number;
+  promotionDiscount?: number;
   lastModified?: number;
 }
 
@@ -248,14 +263,58 @@ const serializeOrderForFirestore = (order: Order): Record<string, any> => {
   });
 };
 
-const getScopedStorageKey = (key: string): string => {
+const getScopedStorageKey = (key: string): string | null => {
   try {
-    const currentUser = localStorage.getItem('current_user');
-    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
-    return storeId ? `store_${storeId}_${key}` : key;
+    return dataService.getStoreKey(key);
   } catch {
-    return key;
+    return null;
   }
+};
+
+const MAX_LOCAL_DEDUCTED_ORDER_IDS = 300;
+const COMPACT_LOCAL_DEDUCTED_ORDER_IDS = 80;
+
+const normalizeLocalDeductedOrderIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .slice(-MAX_LOCAL_DEDUCTED_ORDER_IDS);
+};
+
+const loadLocalDeductedOrderIds = (): Set<string> => {
+  try {
+    const storageKey = getScopedStorageKey('pos_deducted_orders');
+    if (!storageKey) return new Set();
+    const saved = localStorage.getItem(storageKey);
+    return new Set(normalizeLocalDeductedOrderIds(saved ? JSON.parse(saved) : []));
+  } catch (error) {
+    console.warn('Unable to load POS stock deduction cache:', error);
+    return new Set();
+  }
+};
+
+const saveLocalDeductedOrderIds = (ids: Set<string>): Set<string> => {
+  const normalized = normalizeLocalDeductedOrderIds(Array.from(ids));
+  const storageKey = getScopedStorageKey('pos_deducted_orders');
+  if (!storageKey) return new Set(normalized);
+
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(normalized));
+    return new Set(normalized);
+  } catch (error) {
+    console.warn('POS stock deduction cache is full; compacting local cache:', error);
+  }
+
+  const compacted = normalized.slice(-COMPACT_LOCAL_DEDUCTED_ORDER_IDS);
+  try {
+    localStorage.removeItem(storageKey);
+    localStorage.setItem(storageKey, JSON.stringify(compacted));
+  } catch (compactError) {
+    console.warn('Unable to persist compacted POS stock deduction cache:', compactError);
+  }
+
+  return new Set(compacted);
 };
 
 const getCurrentUserRecord = (): any => {
@@ -273,7 +332,9 @@ const getCurrentStoreIdForPrint = (): string => {
 
 const loadPendingOrderSyncIds = (): Set<string> => {
   try {
-    const stored = localStorage.getItem(getScopedStorageKey('pos_pending_order_sync'));
+    const storageKey = getScopedStorageKey('pos_pending_order_sync');
+    if (!storageKey) return new Set();
+    const stored = localStorage.getItem(storageKey);
     return stored ? new Set(JSON.parse(stored)) : new Set();
   } catch {
     return new Set();
@@ -282,7 +343,9 @@ const loadPendingOrderSyncIds = (): Set<string> => {
 
 const savePendingOrderSyncIds = (ids: Set<string>) => {
   try {
-    localStorage.setItem(getScopedStorageKey('pos_pending_order_sync'), JSON.stringify(Array.from(ids)));
+    const storageKey = getScopedStorageKey('pos_pending_order_sync');
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)));
   } catch (error) {
     console.error('POS operation failed:', error);
   }
@@ -490,19 +553,11 @@ const tableCanvasFoodPattern = [
   'linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px)',
 ].join(', ');
 
-const posOrderTypeLabels: Record<'dine_in' | 'takeout' | 'delivery', string> = {
-  dine_in: 'Mesa',
-  takeout: 'Barra',
-  delivery: 'Delivery',
-};
-
 const posOrderTypeIcons: Record<'dine_in' | 'takeout' | 'delivery', string> = {
   dine_in: '🍽️',
   takeout: '🥡',
   delivery: '🚚',
 };
-
-const formatPosOrderType = (type: 'dine_in' | 'takeout' | 'delivery') => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
 
 const posPanelStyle: React.CSSProperties = {
   backgroundColor: colors.surface,
@@ -519,7 +574,18 @@ const posMutedPanelStyle: React.CSSProperties = {
 };
 
 const POS: React.FC = () => {
-  const { deductStock, orders: appOrders, setOrders: setAppOrders } = useAppContext();
+  const { deductStock, setOrders: setAppOrders } = useAppContext();
+
+  useEffect(() => {
+    refreshCurrentStorePrintCache().catch(() => undefined);
+  }, []);
+  const { t } = useI18n();
+  const posOrderTypeLabels: Record<'dine_in' | 'takeout' | 'delivery', string> = {
+    dine_in: t('pos.orderType.dineIn'),
+    takeout: t('pos.orderType.takeout'),
+    delivery: t('pos.orderType.delivery'),
+  };
+  const formatPosOrderType = (type: 'dine_in' | 'takeout' | 'delivery') => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
   const localOrdersSignatureRef = useRef('');
   const publishedOrdersSignatureRef = useRef('');
   const publishedOrderSignaturesRef = useRef<Map<string, string>>(new Map());
@@ -538,6 +604,23 @@ const POS: React.FC = () => {
   const activeOrderTableIdsRef = useRef<Set<string>>(new Set());
   const pointsProcessingOrderIdsRef = useRef<Set<string>>(new Set());
   const stockDeductionRetryIdsRef = useRef<Set<string>>(new Set());
+  const orderCreationCoordinatorRef = useRef<OrderCreationCoordinator | null>(null);
+  if (!orderCreationCoordinatorRef.current) {
+    const storageKey = getScopedStorageKey('pos_order_creation_intent') || 'pos_order_creation_intent';
+    orderCreationCoordinatorRef.current = createBrowserOrderCreationCoordinator(storageKey);
+  }
+
+  const beginNewOrderIntent = () => orderCreationCoordinatorRef.current!.beginNew();
+  const bindExistingOrderIntent = (order: Pick<Order, 'id' | 'orderNumber'>) => (
+    orderCreationCoordinatorRef.current!.bindExisting(order.id, order.orderNumber)
+  );
+  const claimOrderIntent = (order?: Pick<Order, 'id' | 'orderNumber'> | null) => (
+    orderCreationCoordinatorRef.current!.claim(order?.id, order?.orderNumber)
+  );
+  const claimOrderNumber = () => (
+    orderCreationCoordinatorRef.current!.getOrCreateOrderNumber(generateOrderNumber)
+  );
+  const clearOrderIntent = (orderId?: string) => orderCreationCoordinatorRef.current!.clear(orderId);
 
   const publishOrderImmediately = async (order: Order) => {
     pendingOrderSyncIdsRef.current.add(order.id);
@@ -548,7 +631,17 @@ const POS: React.FC = () => {
       if (publishResult?.pending || publishResult?.success === false) {
         return publishResult;
       }
-      publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
+      if (publishResult?.remoteData) {
+        const authoritativeOrder = publishResult.remoteData as Order;
+        setOrders(prevOrders => {
+          const existingIndex = prevOrders.findIndex(existing => existing.id === authoritativeOrder.id);
+          if (existingIndex < 0) return [...prevOrders, authoritativeOrder];
+          return prevOrders.map(existing => existing.id === authoritativeOrder.id ? authoritativeOrder : existing);
+        });
+        publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(authoritativeOrder));
+      } else {
+        publishedOrderSignaturesRef.current.set(order.id, getOrderSignature(order));
+      }
       pendingOrderSyncIdsRef.current.delete(order.id);
       savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
       return publishResult;
@@ -572,41 +665,27 @@ const POS: React.FC = () => {
     };
   }, []);
 
-  const loadFromStorage = <T,>(key: string, defaultValue: T, possibleKeys?: string[]): T => {
+  const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
     try {
-      const currentUser = localStorage.getItem('current_user');
-      const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
-      const storeKey = storeId ? `store_${storeId}_${key}` : null;
-      const keysToTry = [
-        ...(storeKey ? [storeKey] : []),
-        ...(possibleKeys || [key])
-      ];
-
-      for (const k of keysToTry) {
-        const stored = localStorage.getItem(k);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-
-          if (storeKey && k !== storeKey) {
-            localStorage.setItem(storeKey, stored);
-          }
-
-          if (Array.isArray(parsed)) {
-            return parsed.map(item => ({
-              ...item,
-              createdAt: item.createdAt ? new Date(item.createdAt) : undefined,
-              confirmedAt: item.confirmedAt ? new Date(item.confirmedAt) : undefined,
-              completedAt: item.completedAt ? new Date(item.completedAt) : undefined,
-              cancelledAt: item.cancelledAt ? new Date(item.cancelledAt) : undefined,
-              clearedAt: item.clearedAt ? new Date(item.clearedAt) : undefined,
-              preparingAt: item.preparingAt ? new Date(item.preparingAt) : undefined,
-              servedAt: item.servedAt ? new Date(item.servedAt) : undefined,
-              lastPaidAt: item.lastPaidAt ? new Date(item.lastPaidAt) : undefined,
-              lastModified: item.lastModified || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
-            })) as unknown as T;
-          }
-          return parsed;
+      const storeKey = dataService.getStoreKey(key);
+      const stored = localStorage.getItem(storeKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.map(item => ({
+            ...item,
+            createdAt: item.createdAt ? new Date(item.createdAt) : undefined,
+            confirmedAt: item.confirmedAt ? new Date(item.confirmedAt) : undefined,
+            completedAt: item.completedAt ? new Date(item.completedAt) : undefined,
+            cancelledAt: item.cancelledAt ? new Date(item.cancelledAt) : undefined,
+            clearedAt: item.clearedAt ? new Date(item.clearedAt) : undefined,
+            preparingAt: item.preparingAt ? new Date(item.preparingAt) : undefined,
+            servedAt: item.servedAt ? new Date(item.servedAt) : undefined,
+            lastPaidAt: item.lastPaidAt ? new Date(item.lastPaidAt) : undefined,
+            lastModified: item.lastModified || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
+          })) as unknown as T;
         }
+        return parsed;
       }
     } catch (error) {
       console.error('POS operation failed:', error);
@@ -616,9 +695,7 @@ const POS: React.FC = () => {
 
   const saveToStorage = (key: string, data: any) => {
     try {
-      const currentUser = localStorage.getItem('current_user');
-      const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
-      const storageKey = storeId ? `store_${storeId}_${key}` : key;
+      const storageKey = dataService.getStoreKey(key);
       localStorage.setItem(storageKey, JSON.stringify(data));
 
       // 保存本地分店缓存，云端同步由订单增量同步逻辑处理。
@@ -629,10 +706,6 @@ const POS: React.FC = () => {
 
   const filterCachedOrdersForStartup = (cachedOrders: Order[]): Order[] => {
     return cachedOrders;
-  };
-
-  const generateOrderId = () => {
-    return `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   };
 
   const [viewMode, setViewMode] = useState<'overview' | 'order' | 'split-bill'>('overview');
@@ -667,6 +740,8 @@ const POS: React.FC = () => {
 
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const paymentProcessingRef = useRef(false);
+  const [isSendingToKitchen, setIsSendingToKitchen] = useState(false);
+  const sendingToKitchenRef = useRef(false);
   const [clearingOrderId, setClearingOrderId] = useState<string | null>(null);
   const [completingOrderIds, setCompletingOrderIds] = useState<Set<string>>(() => new Set());
   const [finalizingOrderIds, setFinalizingOrderIds] = useState<Set<string>>(() => new Set());
@@ -700,23 +775,13 @@ const POS: React.FC = () => {
     const message = error instanceof Error ? error.message : String(error || '');
     const insufficientStockPrefix = 'insufficient-stock:';
     if (message.includes(insufficientStockPrefix)) {
-      const itemName = message.split(insufficientStockPrefix)[1]?.split('\n')[0]?.trim() || 'producto';
-      return `Inventario insuficiente: ${itemName}. Ajuste inventario y vuelva a intentar.`;
+      const itemName = message.split(insufficientStockPrefix)[1]?.split('\n')[0]?.trim() || t('pos.common.products');
+      return `${t('pos.alert.insufficientStock')}: ${itemName}. ${t('pos.alert.adjustStock')}`;
     }
-    return 'No se pudo sincronizar. Revise la red e intente de nuevo.';
+    return t('pos.alert.network');
   };
 
-  const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem(getScopedStorageKey('pos_deducted_orders'));
-      if (saved) {
-        return new Set(JSON.parse(saved));
-      }
-    } catch (error) {
-      console.error('POS operation failed:', error);
-    }
-    return new Set();
-  });
+  const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => loadLocalDeductedOrderIds());
 
   const [orderTypeFilter, setOrderTypeFilter] = useState<'all' | 'dine_in' | 'takeout' | 'delivery'>('all');
   const [showAddTableModal, setShowAddTableModal] = useState(false);
@@ -736,20 +801,12 @@ const POS: React.FC = () => {
       { id: '4', number: '4', x: 50, y: 150, width: 80, height: 60, status: 'available', capacity: 6 },
       { id: '5', number: '5', x: 150, y: 150, width: 80, height: 60, status: 'available', capacity: 4 },
       { id: '6', number: '6', x: 250, y: 150, width: 80, height: 60, status: 'available', capacity: 2 },
-    ], [
-      'pos_tables',
-      'tables',
-      'restaurant_tables'
     ]);
     return normalizeTables(loadedTables).tables;
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = loadFromStorage<Order[]>('pos_orders', [], [
-      'pos_orders',
-      'restaurant_pos_orders',
-      'orders'
-    ]);
+    const saved = loadFromStorage<Order[]>('pos_orders', []);
 
     const seenIds = new Set();
     const fixedOrders = filterCachedOrdersForStartup(saved);
@@ -867,10 +924,7 @@ const POS: React.FC = () => {
   };
 
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>(() => {
-    return loadFromStorage<HeldOrder[]>('pos_held_orders', [], [
-      'pos_held_orders',
-      'held_orders'
-    ]);
+    return loadFromStorage<HeldOrder[]>('pos_held_orders', []);
   });
   const [showHeldOrders, setShowHeldOrders] = useState(false);
 
@@ -1199,7 +1253,6 @@ const POS: React.FC = () => {
 
       const mergedOrders = mergeOrdersByVersion(cloudReconciledOrders, incomingOrders, pendingOrderSyncIdsRef.current);
       const mergedOrdersSignature = getOrdersSignature(mergedOrders);
-      if (mergedOrdersSignature === localOrdersSignatureRef.current) return prevOrders;
       if (mergedOrdersSignature === getOrdersSignature(prevOrders)) return prevOrders;
 
       localOrdersSignatureRef.current = mergedOrdersSignature;
@@ -1232,11 +1285,6 @@ const POS: React.FC = () => {
       applyIncomingCloudOrders(data as Order[]);
     });
   }, [applyIncomingCloudOrders]);
-
-  React.useEffect(() => {
-    if (!appOrders || appOrders.length === 0) return;
-    applyIncomingCloudOrders(appOrders as Order[]);
-  }, [appOrders, applyIncomingCloudOrders]);
 
   useEffect(() => {
     if (orders.length > 0) return;
@@ -1320,6 +1368,7 @@ const POS: React.FC = () => {
     setSelectedTableId(tableId);
 
     if (existingOrder) {
+      bindExistingOrderIntent(existingOrder);
       setCurrentItems(existingOrder.items.map(item => ({...item})));
       setSelectedOrderId(existingOrder.id);
       if (existingOrder.customerId) {
@@ -1337,8 +1386,7 @@ const POS: React.FC = () => {
       setCardUSD('');
       setViewMode('order');
     } else {
-
-
+      beginNewOrderIntent();
       setCurrentItems([]);
       setSelectedOrderId(null);
       setServiceFeeEnabled(false);
@@ -1361,7 +1409,7 @@ const POS: React.FC = () => {
 
   const handleCreateCustomer = async () => {
     if (!newCustomerName.trim()) {
-      alert('Ingrese el nombre del cliente');
+      alert(t('pos.alert.customerName'));
       return;
     }
 
@@ -1385,7 +1433,7 @@ const POS: React.FC = () => {
     setNewCustomerPhone('');
     setShowNewCustomerForm(false);
     setShowCustomerModal(false);
-      alert('Cliente ' + newCustomer.name + ' creado');
+      alert(`${t('pos.toast.customerCreated')}: ${newCustomer.name}`);
     // After creating the customer, continue to the order screen.
     setViewMode('order');
   };
@@ -1511,6 +1559,7 @@ const POS: React.FC = () => {
         quantity: 1,
         price: item.price,
         subtotal: item.price,
+        category: item.category,
         type: normalizeMenuItemType(item),
         stockItemId: item.stockItemId,
         ingredients: item.ingredients || [],
@@ -1578,12 +1627,12 @@ const POS: React.FC = () => {
 
   const handleHoldOrder = async () => {
     if (currentItems.length === 0) {
-      alert('No hay productos para retener');
+      alert(t('pos.alert.addProducts'));
       return;
     }
 
     if (!selectedTableId) {
-      alert('Seleccione una mesa primero');
+      alert(t('pos.alert.selectTable'));
       return;
     }
 
@@ -1592,9 +1641,11 @@ const POS: React.FC = () => {
 
     let orderId = selectedOrderId;
     if (!orderId) {
+      const intent = claimOrderIntent();
       const newOrder: Order = {
-        id: generateOrderId(),
-        orderNumber: await generateOrderNumber(),
+        id: intent.id,
+        creationIntentId: intent.id,
+        orderNumber: await claimOrderNumber(),
         tableId: selectedTableId!,
         tableNumber: table.number,
         orderType: orderType,
@@ -1611,7 +1662,9 @@ const POS: React.FC = () => {
         paymentStatus: 'unpaid',
         settledAmount: 0
       };
-      setOrders([...orders, newOrder]);
+      setOrders(prevOrders => prevOrders.some(order => order.id === newOrder.id)
+        ? prevOrders
+        : [...prevOrders, newOrder]);
       orderId = newOrder.id;
       setSelectedOrderId(orderId);
     }
@@ -1635,6 +1688,7 @@ const POS: React.FC = () => {
     setCurrentItems([]);
     setSelectedTableId(null);
     setSelectedOrderId(null);
+    clearOrderIntent(orderId || undefined);
     setServiceFeeEnabled(false);
     setTaxEnabled(false);
     setDeliveryFee(0);
@@ -1646,17 +1700,25 @@ const POS: React.FC = () => {
     setCardUSD('');
     setViewMode('overview');
 
-    alert(`Pedido retenido\n\nMesa: ${table.number}\nProductos: ${currentItems.length}\n\nPuede recuperar el pedido desde la lista de pedidos retenidos.`);
+    alert(`${t('pos.toast.orderHeld')}\n\n${t('pos.receipt.table')}: ${table.number}\n${t('pos.common.products')}: ${currentItems.length}`);
   };
 
   const handleRetrieveOrder = (heldOrder: HeldOrder) => {
     if (currentItems.length > 0) {
-    if (!window.confirm('Hay un pedido sin terminar. ¿Desea reemplazarlo?')) {
+    if (!window.confirm(t('pos.alert.replaceOrder'))) {
         return;
       }
     }
 
     setCurrentItems(heldOrder.items);
+    if (heldOrder.orderId) {
+      const existingOrder = orders.find(order => order.id === heldOrder.orderId);
+      bindExistingOrderIntent(existingOrder || { id: heldOrder.orderId });
+      setSelectedOrderId(heldOrder.orderId);
+    } else {
+      beginNewOrderIntent();
+      setSelectedOrderId(null);
+    }
     setSelectedTableId(heldOrder.tableId);
     setOrderType(heldOrder.orderType);
     setDeliveryType(heldOrder.deliveryType || 'self'); // 鎭㈠娲鹃€佺被鍨?
@@ -1673,7 +1735,7 @@ const POS: React.FC = () => {
 
     setViewMode('order');
 
-    alert(`✅ Pedido recuperado\n\nMesa: ${heldOrder.tableNumber}\nProductos: ${heldOrder.items.length}`);
+    alert(`✅ ${t('pos.toast.orderRetrieved')}\n\n${t('pos.receipt.table')}: ${heldOrder.tableNumber}\n${t('pos.common.products')}: ${heldOrder.items.length}`);
   };
 
   const createDeliveryExpense = async (order: Order, deliveryFeeAmount: number) => {
@@ -1736,14 +1798,14 @@ const POS: React.FC = () => {
       }
 
       if (tableActionData.tableId) {
-        showPosToast('Mesa liberada. Lista para nuevo cliente.', 'success');
+        showPosToast(t('pos.toast.tableCleared'), 'success');
       } else {
-        showPosToast('Pedido completado. Inventario descontado.', 'success');
+        showPosToast(t('pos.toast.orderCompleted'), 'success');
       }
     } else {
       const existingOrder = orders.find(o => o.id === tableActionData.orderId);
       if (existingOrder) {
-
+        bindExistingOrderIntent(existingOrder);
         setSelectedTableId(tableActionData.tableId);
         setCurrentItems(existingOrder.items.map(item => ({...item})));
         setSelectedOrderId(existingOrder.id);
@@ -1766,6 +1828,7 @@ const POS: React.FC = () => {
     setTableActionData(null);
   };
 
+  const existingOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
   const subtotal = currentItems.reduce((sum, item) => sum + item.subtotal, 0);
   const serviceFee = subtotal * 0.1;
   const tax = subtotal * 0.15;
@@ -1780,7 +1843,12 @@ const POS: React.FC = () => {
     Math.min(pointsToUse / pointsExchangeRate, subtotal - discountAmount)
     : 0;
 
-  const finalTotal = subtotal + (serviceFeeEnabled ? serviceFee : 0) + (taxEnabled ? tax : 0) + deliveryFee - discountAmount - pointsRedemptionAmount;
+  const promotionRedemptionAmount = Math.min(
+    Number(existingOrder?.promotionDiscount || 0),
+    Math.max(0, subtotal - discountAmount - pointsRedemptionAmount)
+  );
+
+  const finalTotal = subtotal + (serviceFeeEnabled ? serviceFee : 0) + (taxEnabled ? tax : 0) + deliveryFee - discountAmount - pointsRedemptionAmount - promotionRedemptionAmount;
   const calculateTotalForItems = (items: OrderItem[]): number => {
     const nextSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
     return nextSubtotal +
@@ -1788,10 +1856,10 @@ const POS: React.FC = () => {
       (taxEnabled ? nextSubtotal * 0.15 : 0) +
       deliveryFee -
       discountAmount -
-      pointsRedemptionAmount;
+      pointsRedemptionAmount -
+      promotionRedemptionAmount;
   };
 
-  const existingOrder = selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null;
   const settledAmount = existingOrder?.settledAmount || 0;
   const remainingAmount = Math.max(0, finalTotal - settledAmount);
   const getSentQuantity = (item: Partial<OrderItem>) => Number(item.sentQuantity) || 0;
@@ -1831,6 +1899,7 @@ const POS: React.FC = () => {
   };
 
   const resetOrderEntryState = () => {
+    clearOrderIntent();
     setViewMode('overview');
     setCurrentItems([]);
     setSelectedOrderId(null);
@@ -1877,18 +1946,24 @@ const POS: React.FC = () => {
 
   const handleSendToKitchen = async () => {
     if (currentItems.length === 0) {
-      alert('\u8bf7\u5148\u6dfb\u52a0\u5546\u54c1');
+      alert(t('pos.alert.addProducts'));
       return;
     }
 
     const selectedEditableOrder = selectedOrderId
       ? orders.find(o => o.id === selectedOrderId && isEditableActiveOrder(o)) || null
       : null;
+
+    if (selectedOrderId && !selectedEditableOrder) {
+      alert(t('pos.alert.currentOrderMissing'));
+      return;
+    }
+
     const activeOrder = selectedEditableOrder;
     const activeOrderType = activeOrder?.orderType || orderType;
 
     if (activeOrderType === 'dine_in' && !selectedTableId) {
-      alert('\u8bf7\u5148\u9009\u62e9\u684c\u53f0');
+      alert(t('pos.alert.selectTable'));
       return;
     }
 
@@ -1905,154 +1980,194 @@ const POS: React.FC = () => {
       : '';
 
     if (unsentItems.length === 0) {
-      alert('\u6ca1\u6709\u9700\u8981\u53d1\u9001\u7684\u65b0\u589e\u5546\u54c1');
+      alert(t('pos.alert.noNewItems'));
       return;
     }
 
-    const updatedItems = currentItems.map(item => {
-      if (item.quantity > getSentQuantity(item)) {
-        return {
-          ...item,
-          sentToKitchen: true,
-          sentQuantity: item.quantity
-        };
-      }
-      return item;
-    });
+    if (sendingToKitchenRef.current || isSendingToKitchen) {
+      console.warn('confirm order is already processing');
+      return;
+    }
 
-    setCurrentItems(updatedItems);
+    sendingToKitchenRef.current = true;
+    setIsSendingToKitchen(true);
 
-    if (!selectedEditableOrder) {
-      const existingActiveOrder = orders.find(o =>
-        orderType === 'dine_in' &&
-        o.tableId === selectedTableId &&
-        isEditableActiveOrder(o)
-      );
-
-      if (existingActiveOrder) {
-        alert(`\u8be5\u684c\u53f0\u5df2\u6709\u672a\u5b8c\u6210\u8ba2\u5355\uff08${existingActiveOrder.orderNumber || existingActiveOrder.id}\uff09\n\n\u8bf7\u5148\u6253\u5f00\u539f\u8ba2\u5355\u5904\u7406`);
-        return;
-      }
-
-      const now = new Date();
-      const newOrder: Order = {
-        id: generateOrderId(),
-        orderNumber: await generateOrderNumber(),
-        tableId: orderType === 'dine_in' ? selectedTableId! : '',
-        tableNumber: orderType === 'dine_in' ? (tables.find(t => t.id === selectedTableId)?.number || '') : '',
-        orderType,
-        deliveryType: orderType === 'delivery' ? deliveryType : undefined,
-        customerId: selectedCustomer?.id,
-        customerName: selectedCustomer?.name,
-        items: updatedItems,
-        status: 'confirmed',
-        createdAt: now,
-        preparingAt: now,
-        totalAmount: finalTotal,
-        pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
-        pointsDiscount: pointsRedemptionAmount,
-        paidAmount: 0,
-        paymentStatus: 'unpaid',
-        settledAmount: 0,
-        lastModified: Date.now()
-      };
-
-      const newOrderWithCancelRecords = mergeOrderCancelRecords(newOrder);
-      kitchenPrintOrderNumber = newOrderWithCancelRecords.orderNumber || newOrderWithCancelRecords.id;
-      kitchenPrintTableNumber = newOrderWithCancelRecords.tableNumber || kitchenPrintTableNumber;
-
-      setOrders(prevOrders => {
-        if (prevOrders.some(order => order.id === newOrderWithCancelRecords.id)) {
-          return prevOrders;
-        }
-        return [...prevOrders, newOrderWithCancelRecords];
-      });
-      pendingOrderSyncIdsRef.current.add(newOrderWithCancelRecords.id);
-      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-      publishOrderImmediately(newOrderWithCancelRecords).catch(error => {
-        console.error('confirm order immediate publish failed:', newOrderWithCancelRecords.id, error);
-      });
-      setSelectedOrderId(newOrderWithCancelRecords.id);
-
-      setTables(prevTables => prevTables.map(t =>
-        orderType === 'dine_in' && t.id === selectedTableId
-          ? { ...t, status: 'occupied' as const, currentOrderId: newOrderWithCancelRecords.id, lastModified: Date.now() }
-          : t
-      ));
-    } else {
-      const editableOrderId = selectedEditableOrder.id;
-      let updatedOrderForPublish: Order | null = null;
-      setOrders(prevOrders => prevOrders.map(o =>
-        o.id === editableOrderId ? (() => {
-          const nextSettledAmount = Number(o.settledAmount || o.paidAmount || 0);
-          const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
-            nextSettledAmount >= finalTotal - 0.001
-              ? 'paid'
-              : nextSettledAmount > 0
-                ? 'partial'
-                : 'unpaid';
-
-          updatedOrderForPublish = {
-            ...o,
-            items: updatedItems,
-            totalAmount: finalTotal,
-            pointsUsed: pointsRedemptionEnabled ? pointsToUse : (o.pointsUsed || 0),
-            pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (o.pointsDiscount || 0),
-            paymentStatus: nextPaymentStatus,
-            updatedAt: new Date(),
-            lastModified: Date.now()
+    try {
+      const updatedItems = currentItems.map(item => {
+        if (item.quantity > getSentQuantity(item)) {
+          return {
+            ...item,
+            sentToKitchen: true,
+            sentQuantity: item.quantity
           };
-          updatedOrderForPublish = mergeOrderCancelRecords(updatedOrderForPublish, editableOrderId);
-          return updatedOrderForPublish;
-        })() : o
-      ));
-      pendingOrderSyncIdsRef.current.add(editableOrderId);
-      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-      if (updatedOrderForPublish) {
-        publishOrderImmediately(updatedOrderForPublish).catch(error => {
-          console.error('confirm updated order immediate publish failed:', editableOrderId, error);
+        }
+        return item;
+      });
+
+      setCurrentItems(updatedItems);
+
+      if (!selectedEditableOrder) {
+        const existingActiveOrder = orders.find(o =>
+          orderType === 'dine_in' &&
+          o.tableId === selectedTableId &&
+          isEditableActiveOrder(o)
+        );
+
+        if (existingActiveOrder) {
+          alert(`${t('pos.alert.activeOrder')} (${existingActiveOrder.orderNumber || existingActiveOrder.id})`);
+          return;
+        }
+
+        const now = new Date();
+        const intent = claimOrderIntent();
+        const newOrder: Order = {
+          id: intent.id,
+          creationIntentId: intent.id,
+          orderNumber: await claimOrderNumber(),
+          tableId: orderType === 'dine_in' ? selectedTableId! : '',
+          tableNumber: orderType === 'dine_in' ? (tables.find(t => t.id === selectedTableId)?.number || '') : '',
+          orderType,
+          deliveryType: orderType === 'delivery' ? deliveryType : undefined,
+          customerId: selectedCustomer?.id,
+          customerName: selectedCustomer?.name,
+          items: updatedItems,
+          status: 'confirmed',
+          createdAt: now,
+          preparingAt: now,
+          totalAmount: finalTotal,
+          pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
+          pointsDiscount: pointsRedemptionAmount,
+          paidAmount: 0,
+          paymentStatus: 'unpaid',
+          settledAmount: 0,
+          lastModified: Date.now()
+        };
+
+        const newOrderWithCancelRecords = mergeOrderCancelRecords(newOrder);
+        kitchenPrintOrderNumber = newOrderWithCancelRecords.orderNumber || newOrderWithCancelRecords.id;
+        kitchenPrintTableNumber = newOrderWithCancelRecords.tableNumber || kitchenPrintTableNumber;
+
+        setOrders(prevOrders => {
+          if (prevOrders.some(order => order.id === newOrderWithCancelRecords.id)) {
+            return prevOrders;
+          }
+          return [...prevOrders, newOrderWithCancelRecords];
         });
+        pendingOrderSyncIdsRef.current.add(newOrderWithCancelRecords.id);
+        savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+        publishOrderImmediately(newOrderWithCancelRecords).catch(error => {
+          console.error('confirm order immediate publish failed:', newOrderWithCancelRecords.id, error);
+        });
+        setSelectedOrderId(newOrderWithCancelRecords.id);
+
+        setTables(prevTables => prevTables.map(t =>
+          orderType === 'dine_in' && t.id === selectedTableId
+            ? { ...t, status: 'occupied' as const, currentOrderId: newOrderWithCancelRecords.id, lastModified: Date.now() }
+            : t
+        ));
+      } else {
+        bindExistingOrderIntent(selectedEditableOrder);
+        const editableOrderId = selectedEditableOrder.id;
+        let updatedOrderForPublish: Order | null = null;
+        setOrders(prevOrders => prevOrders.map(o =>
+          o.id === editableOrderId ? (() => {
+            const nextSettledAmount = Number(o.settledAmount || o.paidAmount || 0);
+            const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
+              nextSettledAmount >= finalTotal - 0.001
+                ? 'paid'
+                : nextSettledAmount > 0
+                  ? 'partial'
+                  : 'unpaid';
+
+            updatedOrderForPublish = {
+              ...o,
+              items: updatedItems,
+              totalAmount: finalTotal,
+              pointsUsed: pointsRedemptionEnabled ? pointsToUse : (o.pointsUsed || 0),
+              pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (o.pointsDiscount || 0),
+              paymentStatus: nextPaymentStatus,
+              updatedAt: new Date(),
+              lastModified: Date.now()
+            };
+            updatedOrderForPublish = mergeOrderCancelRecords(updatedOrderForPublish, editableOrderId);
+            return updatedOrderForPublish;
+          })() : o
+        ));
+        pendingOrderSyncIdsRef.current.add(editableOrderId);
+        savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+        if (updatedOrderForPublish) {
+          publishOrderImmediately(updatedOrderForPublish).catch(error => {
+            console.error('confirm updated order immediate publish failed:', editableOrderId, error);
+          });
+        }
       }
-    }
 
-    const dishMessage = dishesToSend.map(item => {
-      const sentQuantity = getSentQuantity(item);
-      const newQty = item.quantity - sentQuantity;
-      return `- ${item.name} x${newQty}${sentQuantity > 0 ? ` (${item.quantity})` : ''}`;
-    }).join('\n');
+      const dishMessage = dishesToSend.map(item => {
+        const sentQuantity = getSentQuantity(item);
+        const newQty = item.quantity - sentQuantity;
+        return `- ${item.name} x${newQty}${sentQuantity > 0 ? ` (${item.quantity})` : ''}`;
+      }).join('\n');
 
-    const beverageMessage = beveragesToLock.map(item => {
-      const sentQuantity = getSentQuantity(item);
-      const newQty = item.quantity - sentQuantity;
-      return `- ${item.name} x${newQty}${sentQuantity > 0 ? ` (${item.quantity})` : ''}`;
-    }).join('\n');
+      const beverageMessage = beveragesToLock.map(item => {
+        const sentQuantity = getSentQuantity(item);
+        const newQty = item.quantity - sentQuantity;
+        return `- ${item.name} x${newQty}${sentQuantity > 0 ? ` (${item.quantity})` : ''}`;
+      }).join('\n');
 
-    let alertMessage = '';
-    if (dishesToSend.length > 0) {
-      alertMessage += `\u2705 \u5df2\u53d1\u9001 ${dishesToSend.length} \u9053\u83dc\u54c1\u5230\u53a8\u623f\n\n${dishMessage}`;
-    }
-    if (beveragesToLock.length > 0) {
-      if (alertMessage) alertMessage += '\n\n';
-      alertMessage += `\u2705 \u5df2\u786e\u8ba4 ${beveragesToLock.length} \u4e2a\u9152\u6c34/\u996e\u6599\n\n${beverageMessage}`;
-    }
+      let alertMessage = '';
+      if (dishesToSend.length > 0) {
+        alertMessage += `✅ ${dishesToSend.length} ${t('pos.toast.sentToKitchen')}\n\n${dishMessage}`;
+      }
+      if (beveragesToLock.length > 0) {
+        if (alertMessage) alertMessage += '\n\n';
+        alertMessage += `✅ ${beveragesToLock.length} ${t('pos.toast.beveragesConfirmed')}\n\n${beverageMessage}`;
+      }
 
-    if (dishesToSend.length > 0) {
-      const kitchenPayload = buildKitchenTicketPayload({
-        storeId: getCurrentStoreIdForPrint(),
-        orderNumber: kitchenPrintOrderNumber,
-        orderTypeText: posOrderTypeLabels[activeOrderType],
-        tableNumber: kitchenPrintTableNumber,
-        createdAt: new Date(),
-        items: dishesToSend.map(item => ({
+      if (dishesToSend.length > 0 || beveragesToLock.length > 0) {
+        const printSettings = getCurrentStorePrintSettings();
+        if (!printSettings.kitchenEnabled) {
+          alert(alertMessage);
+          return;
+        }
+        const printerConfigs = getCurrentStorePrinterConfigs();
+        const kitchenItems = dishesToSend.map(item => ({
           name: item.name,
           quantity: item.quantity - getSentQuantity(item),
           notes: (item as any).notes,
-        })),
-      });
-      printViaLocalBridge(kitchenPayload, { timeoutMs: 900 }).then(() => undefined);
-    }
+          category: item.category,
+        }));
+        const barItems = beveragesToLock.map(item => ({
+          name: item.name,
+          quantity: item.quantity - getSentQuantity(item),
+          notes: (item as any).notes,
+          category: item.category,
+        }));
+        const barPrinters = getPrintersForRole(printerConfigs, 'bar');
+        const printJobs = [
+          ...routeKitchenItemsToPrinters(kitchenItems, printerConfigs),
+          ...(barPrinters.length > 0 ? routeKitchenItemsToPrinters(barItems, barPrinters) : []),
+        ];
+        printJobs.forEach(job => {
+          const kitchenPayload = applyPrinterTarget(buildKitchenTicketPayload({
+            storeId: getCurrentStoreIdForPrint(),
+            orderNumber: kitchenPrintOrderNumber,
+            orderTypeText: posOrderTypeLabels[activeOrderType],
+            tableNumber: kitchenPrintTableNumber,
+            createdAt: new Date(),
+            items: job.items,
+            widthMm: job.printer?.widthMm || printSettings.receiptWidthMm,
+            cut: job.printer?.cut ?? printSettings.kitchenCut,
+            feedLines: job.printer?.feedLines || printSettings.kitchenFeedLines,
+          }), job.printer);
+          printViaLocalBridge(kitchenPayload, { timeoutMs: 1800 }).then(() => undefined);
+        });
+      }
 
-    alert(alertMessage);
+      alert(alertMessage);
+    } finally {
+      sendingToKitchenRef.current = false;
+      setIsSendingToKitchen(false);
+    }
   };
 
   const paidAmount = (
@@ -2074,27 +2189,21 @@ const POS: React.FC = () => {
     return deductedItems;
   };
 
-  const markOrderStockDeducted = (order: Order): Order => ({
-    ...order,
-    stockDeducted: true,
-    stockDeductedAt: order.stockDeductedAt || new Date(),
-    stockDeductedItems: order.stockDeductedItems || getStockDeductedItemsFromOrder(order),
-    stockDeductionOperationId: order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id),
-    stockDeductionInProgress: false,
-    stockDeductionPending: false,
-    stockDeductionError: undefined,
-    lastModified: Date.now()
-  });
-
   const publishStockDeductionMarker = async (order: Order) => {
     await smartUpdateDocument('pos_orders', order.id, stripUndefinedValues({
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      paidAmount: order.paidAmount,
+      settledAmount: order.settledAmount,
+      completedAt: order.completedAt ? serializeDateForFirestore(order.completedAt) : undefined,
+      clearedAt: order.clearedAt ? serializeDateForFirestore(order.clearedAt) : undefined,
       stockDeducted: true,
       stockDeductedAt: serializeDateForFirestore(order.stockDeductedAt || new Date()),
       stockDeductedItems: order.stockDeductedItems || getStockDeductedItemsFromOrder(order),
       stockDeductionOperationId: order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id),
       stockDeductionInProgress: false,
       stockDeductionPending: false,
-      stockDeductionError: undefined,
+      stockDeductionError: null,
       lastModified: order.lastModified || Date.now()
     }));
   };
@@ -2133,13 +2242,6 @@ const POS: React.FC = () => {
       return order;
     }
 
-    const hasExistingStockRows = await smartHasOrderStockRecords(order.id, order.orderNumber);
-    if (hasExistingStockRows) {
-      const markedOrder = markOrderStockDeducted(order);
-      await publishStockDeductionMarker(markedOrder);
-      return markedOrder;
-    }
-
     const operationId = order.stockDeductionOperationId || getStableStockDeductionOperationId(order.id);
     const claimResult: any = await smartClaimOrderStockDeduction('pos_orders', order.id, {
       stockDeductionOperationId: operationId,
@@ -2169,7 +2271,7 @@ const POS: React.FC = () => {
         orderId: order.id,
         orderNumber: order.orderNumber,
         orderType: order.orderType,
-        completedAt: new Date()
+        completedAt: order.completedAt || new Date()
       });
     } catch (error) {
       await smartUpdateDocument('pos_orders', order.id, {
@@ -2194,8 +2296,7 @@ const POS: React.FC = () => {
 
     const nextDeductedOrderIds = new Set(deductedOrderIds);
     nextDeductedOrderIds.add(order.id);
-    setDeductedOrderIds(nextDeductedOrderIds);
-        localStorage.setItem(getScopedStorageKey('pos_deducted_orders'), JSON.stringify(Array.from(nextDeductedOrderIds)));
+    setDeductedOrderIds(saveLocalDeductedOrderIds(nextDeductedOrderIds));
 
     const stockDeductedOrder = {
       ...order,
@@ -2223,12 +2324,11 @@ const POS: React.FC = () => {
       return false;
     }
 
-    if (!order.stockDeductionInProgress) {
-      return true;
-    }
-
     const claimedAt = toTimestampMillis(order.stockDeductionClaimedAt);
-    return !claimedAt || Date.now() - claimedAt > STOCK_DEDUCTION_STALE_LOCK_MS;
+    const pendingSince = claimedAt
+      || toTimestampMillis(order.completedAt)
+      || Number(order.lastModified || 0);
+    return !pendingSince || Date.now() - pendingSince > STOCK_DEDUCTION_STALE_LOCK_MS;
   };
 
   useEffect(() => {
@@ -2413,17 +2513,17 @@ const POS: React.FC = () => {
     }
 
     if (paidAmount < remainingAmount) {
-      alert('\u652f\u4ed8\u91d1\u989d\u4e0d\u8db3');
+      alert(t('pos.alert.paymentInsufficient'));
       return;
     }
 
     if (currentItems.length === 0) {
-      alert('\u5f53\u524d\u6ca1\u6709\u5546\u54c1\uff0c\u65e0\u6cd5\u652f\u4ed8');
+      alert(t('pos.alert.emptyPayment'));
       return;
     }
 
     if (orderType === 'dine_in' && !selectedTableId && !selectedOrderId) {
-      alert('\u8bf7\u5148\u9009\u62e9\u684c\u53f0');
+      alert(t('pos.alert.selectTable'));
       return;
     }
 
@@ -2452,9 +2552,10 @@ const POS: React.FC = () => {
       if (selectedOrderId) {
         const existingOrder = orders.find(o => o.id === selectedOrderId);
         if (!existingOrder) {
-          alert('\u672a\u627e\u5230\u5f53\u524d\u8ba2\u5355\uff0c\u8bf7\u8fd4\u56de\u91cd\u65b0\u6253\u5f00\u8ba2\u5355');
+          alert(t('pos.alert.currentOrderMissing'));
           return;
         }
+        bindExistingOrderIntent(existingOrder);
 
         const nextCashAmount = (existingOrder.cashAmount || 0) + settledCashAmount;
         const nextCardAmount = (existingOrder.cardAmount || 0) + settledCardAmount;
@@ -2493,13 +2594,15 @@ const POS: React.FC = () => {
         ) : null;
 
         if (existingActiveOrder) {
-          alert('\u8be5\u684c\u53f0\u5df2\u6709\u672a\u5b8c\u6210\u8ba2\u5355\uff0c\u8bf7\u5148\u6253\u5f00\u539f\u8ba2\u5355\u5904\u7406');
+          alert(t('pos.alert.activeOrder'));
           return;
         }
 
+        const intent = claimOrderIntent();
         const newOrder: Order = {
-          id: generateOrderId(),
-          orderNumber: await generateOrderNumber(),
+          id: intent.id,
+          creationIntentId: intent.id,
+          orderNumber: await claimOrderNumber(),
           tableId: selectedTableId || '',
           tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
           orderType,
@@ -2527,7 +2630,9 @@ const POS: React.FC = () => {
         paidOrderForSideEffects = newOrder;
         paidOrderForSideEffects = mergeOrderCancelRecords(paidOrderForSideEffects);
         finalOrderId = paidOrderForSideEffects.id;
-        setOrders(prevOrders => [...prevOrders, paidOrderForSideEffects!]);
+        setOrders(prevOrders => prevOrders.some(order => order.id === paidOrderForSideEffects!.id)
+          ? prevOrders.map(order => order.id === paidOrderForSideEffects!.id ? paidOrderForSideEffects! : order)
+          : [...prevOrders, paidOrderForSideEffects!]);
         pendingOrderSyncIdsRef.current.add(paidOrderForSideEffects.id);
         publishOrderImmediately(paidOrderForSideEffects).catch(error => {
           console.error('payment new order immediate publish failed:', paidOrderForSideEffects!.id, error);
@@ -2547,19 +2652,19 @@ const POS: React.FC = () => {
         await createDeliveryExpense(paidOrderForSideEffects, deliveryFee);
       }
 
-      let successMessage = `\u2705 \u652f\u4ed8\u6210\u529f\uff01
+      let successMessage = `✅ ${t('pos.toast.paymentSuccess')}
 
-\u672c\u6b21\u652f\u4ed8: C$${paidAmount.toFixed(2)}
-\u5df2\u7ed3\u7b97\u603b\u989d: C$${newSettledAmount.toFixed(2)}
-\u8ba2\u5355\u603b\u989d: C$${finalTotal.toFixed(2)}
-\u627e\u96f6: C$${Math.max(0, change).toFixed(2)}`;
+${t('pos.toast.currentPayment')}: C$${paidAmount.toFixed(2)}
+${t('pos.toast.totalPaid')}: C$${newSettledAmount.toFixed(2)}
+${t('pos.toast.orderTotal')}: C$${finalTotal.toFixed(2)}
+${t('pos.toast.change')}: C$${Math.max(0, change).toFixed(2)}`;
       if (isFullyPaid) {
         successMessage += `
 
-\u8ba2\u5355\u5df2\u652f\u4ed8\uff0c\u5802\u98df\u684c\u53f0\u5df2\u8f6c\u4e3a\u5f85\u6e05\u53f0`;
+${t('pos.toast.fullyPaid')}`;
       } else {
         successMessage += `
-\u8fd8\u9700\u652f\u4ed8: C$${(finalTotal - newSettledAmount).toFixed(2)}`;
+${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(2)}`;
       }
 
       alert(successMessage);
@@ -2567,6 +2672,7 @@ const POS: React.FC = () => {
       setViewMode('overview');
       setCurrentItems([]);
       setSelectedOrderId(null);
+      clearOrderIntent(finalOrderId || undefined);
       setSelectedTableId(null);
       setServiceFeeEnabled(false);
       setTaxEnabled(false);
@@ -2583,7 +2689,7 @@ const POS: React.FC = () => {
       }
     } catch (error) {
       console.error('payment failed:', error);
-      alert('\u652f\u4ed8\u5904\u7406\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u63a7\u5236\u53f0\u9519\u8bef\u540e\u91cd\u8bd5');
+      alert(t('pos.alert.network'));
     } finally {
       paymentProcessingRef.current = false;
       setIsProcessingPayment(false);
@@ -2592,12 +2698,12 @@ const POS: React.FC = () => {
 
   const confirmCancelOrder = async () => {
     if (!managerAuthorizationPasswords.includes(cancelPassword.trim())) {
-      alert('Clave incorrecta. Ingrese clave autorizada.');
+      alert(t('pos.cancel.incorrectPassword'));
       return;
     }
 
     if (!cancelReason.trim()) {
-      alert('\u8bf7\u8f93\u5165\u53d6\u6d88\u539f\u56e0');
+      alert(t('pos.cancel.reasonRequired'));
       return;
     }
 
@@ -2630,7 +2736,7 @@ const POS: React.FC = () => {
           setCurrentItems(nextCurrentItems);
           persistItemCancellationForExistingOrder(nextCurrentItems, cancelRecord);
 
-        alert(`✅ Se redujo 1 ${item.name}`);
+        alert(`✅ ${t('pos.toast.itemReduced')} ${item.name}`);
         } else if (cancelAction === 'add') {
           const newQuantity = item.quantity + 1;
 
@@ -2656,7 +2762,7 @@ const POS: React.FC = () => {
           );
           setCurrentItems(nextCurrentItems);
 
-      alert(`✅ Se agregó 1 ${item.name}. Avise a cocina.`);
+      alert(`✅ ${t('pos.toast.itemAdded')} ${item.name}`);
         } else {
           const cancelRecord: CancelRecord = {
             id: `cancel-${Date.now()}`,
@@ -2676,7 +2782,7 @@ const POS: React.FC = () => {
           setCurrentItems(nextCurrentItems);
           persistItemCancellationForExistingOrder(nextCurrentItems, cancelRecord);
 
-      alert('✅ Producto cancelado. Avise a cocina.');
+      alert(`✅ ${t('pos.toast.itemCancelled')}`);
         }
       }
 
@@ -2692,7 +2798,7 @@ const POS: React.FC = () => {
         const order = orders.find(o => o.id === selectedOrderId);
 
         if (!order) {
-      alert('No se encontró el pedido. Actualice e intente de nuevo.');
+      alert(t('pos.alert.orderNotFound'));
           return;
         }
 
@@ -2705,19 +2811,15 @@ const POS: React.FC = () => {
           lastModified: Date.now()
         };
 
-        try {
-          await publishOrderImmediately(cancelledOrder);
-        } catch (error) {
-          console.error('cancel order sync failed:', cancelledOrder.id, error);
-      alert('No se pudo sincronizar la cancelación. Revise la red e intente de nuevo.');
-          return;
-        }
-
         tableIdToRelease = cancelledOrder.tableId || selectedTableId;
 
         setOrders(prevOrders => prevOrders.map(o =>
           o.id === selectedOrderId ? cancelledOrder : o
         ));
+
+        publishOrderImmediately(cancelledOrder).catch(error => {
+          console.error('cancel order sync failed:', cancelledOrder.id, error);
+        });
 
         if (order) {
           const orderCancelRecords: CancelRecord[] = order.items.map(item => ({
@@ -2753,8 +2855,9 @@ const POS: React.FC = () => {
       setCurrentItems([]);
       setSelectedOrderId(null);
       setSelectedTableId(null);
+      clearOrderIntent();
 
-    alert('✅ Pedido cancelado');
+    alert(`✅ ${t('pos.toast.orderCancelled')}`);
     }
   };
 
@@ -2770,6 +2873,8 @@ const POS: React.FC = () => {
     }
 
     if (selectedOrderId) {
+      const existingOrder = orders.find(order => order.id === selectedOrderId);
+      if (existingOrder) bindExistingOrderIntent(existingOrder);
       setOrders(orders.map(order =>
         order.id === selectedOrderId
           ? {
@@ -2782,9 +2887,11 @@ const POS: React.FC = () => {
           : order
       ));
     } else {
+      const intent = claimOrderIntent();
       const newOrder: Order = {
-        id: generateOrderId(),
-        orderNumber: await generateOrderNumber(),
+        id: intent.id,
+        creationIntentId: intent.id,
+        orderNumber: await claimOrderNumber(),
         tableId: selectedTableId!,
         tableNumber: tables.find(t => t.id === selectedTableId)?.number || '',
         orderType: orderType,
@@ -2801,7 +2908,9 @@ const POS: React.FC = () => {
         settledAmount: 0
       };
 
-      setOrders([...orders, newOrder]);
+      setOrders(prevOrders => prevOrders.some(order => order.id === newOrder.id)
+        ? prevOrders.map(order => order.id === newOrder.id ? newOrder : order)
+        : [...prevOrders, newOrder]);
       setSelectedOrderId(newOrder.id);
 
       setTables(tables.map(t =>
@@ -2809,9 +2918,9 @@ const POS: React.FC = () => {
       ));
     }
 
-    alert(`✅ Cuenta dividida en ${splitBills.length}\n` +
-      splitBills.map(bill => `${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? 'Pagado' : 'Pendiente'})`).join('\n') +
-      `\n\nTotal: C$${totalAmount.toFixed(2)}`);
+    alert(`✅ ${t('pos.toast.splitCompleted')} ${splitBills.length}\n` +
+      splitBills.map(bill => `${bill.customerName}: C$${bill.subtotal.toFixed(2)} (${bill.paymentStatus === 'paid' ? t('pos.status.paid') : t('pos.status.pending')})`).join('\n') +
+      `\n\n${t('pos.common.total')}: C$${totalAmount.toFixed(2)}`);
   };
   
   // 打印小票功能
@@ -2832,10 +2941,11 @@ const POS: React.FC = () => {
       !cashPaid && !cardPaid && currentOrder?.cashAmount ? `Efectivo C$${Number(currentOrder.cashAmount).toFixed(2)}` : '',
       !cashPaid && !cardPaid && currentOrder?.cardAmount ? `Tarjeta C$${Number(currentOrder.cardAmount).toFixed(2)}` : '',
     ].filter(Boolean);
-    const totalDiscount = discountAmount + pointsRedemptionAmount;
+    const totalDiscount = discountAmount + pointsRedemptionAmount + promotionRedemptionAmount;
     const orderNumber = currentOrder?.orderNumber || selectedOrderId || '';
 
     const storeProfile = getCurrentStoreReceiptProfile();
+    const printSettings = getCurrentStorePrintSettings();
     const receiptItems = currentItems.map(item => ({
       name: item.name,
       quantity: item.quantity,
@@ -2870,7 +2980,7 @@ const POS: React.FC = () => {
       totals: receiptTotals,
       paymentLines,
       cashierName: receiptCashierName,
-      widthMm: 80,
+      widthMm: printSettings.receiptWidthMm,
     });
     const receiptText = buildThermalReceiptText({
       storeProfile,
@@ -2885,19 +2995,34 @@ const POS: React.FC = () => {
       totals: receiptTotals,
       paymentLines,
       cashierName: receiptCashierName,
-      widthMm: 80,
+      widthMm: printSettings.receiptWidthMm,
     });
 
-    const bridgeResult = await printViaLocalBridge(buildLocalPrintPayload({
-      role: 'cashier',
-      storeId: getCurrentStoreIdForPrint(),
-      orderNumber,
-      html: receiptHtml,
-      text: receiptText,
-      widthMm: 80,
-    }), { timeoutMs: 900 });
+    if (!printSettings.cashierEnabled) {
+      openBrowserPrintWindow(receiptHtml);
+      return;
+    }
 
-    if (!bridgeResult.success) {
+    const configuredPrinters = getCurrentStorePrinterConfigs();
+    const configuredCashierPrinters = configuredPrinters.filter(printer => printer.role === 'cashier');
+    const cashierPrinters = getPrintersForRole(configuredPrinters, 'cashier');
+    if (configuredCashierPrinters.length > 0 && cashierPrinters.length === 0) {
+      openBrowserPrintWindow(receiptHtml);
+      return;
+    }
+    const printTargets = cashierPrinters.length > 0 ? cashierPrinters : [undefined];
+    const bridgeResults = await Promise.all(printTargets.map(printer => printViaLocalBridge(applyPrinterTarget(buildLocalPrintPayload({
+        role: 'cashier',
+        storeId: getCurrentStoreIdForPrint(),
+        orderNumber,
+        html: receiptHtml,
+        text: receiptText,
+        widthMm: printer?.widthMm || printSettings.receiptWidthMm,
+        cut: printer?.cut ?? printSettings.cashierCut,
+        feedLines: printer?.feedLines || printSettings.cashierFeedLines,
+      }), printer), { timeoutMs: 1800 })));
+
+    if (bridgeResults.every(result => !result.success)) {
       openBrowserPrintWindow(receiptHtml);
     }
   };
@@ -2982,7 +3107,7 @@ const POS: React.FC = () => {
   };
 
   const handleDeleteTable = async (tableId: string) => {
-    if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u4e2a\u684c\u5b50\u5417?')) {
+    if (window.confirm(t('pos.confirm.deleteTable'))) {
       markTableUserEdit(tableId);
       deletedTableIdsRef.current.add(tableId);
       setSelectedTables(prev => prev.filter(id => id !== tableId));
@@ -2995,12 +3120,13 @@ const POS: React.FC = () => {
         await smartDeleteDocument('pos_tables', tableId);
       } catch (error) {
         console.error('POS operation failed:', error);
-        alert('\u5220\u9664\u4e91\u7aef\u684c\u53f0\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+        alert(t('pos.alert.network'));
       }
     }
   };
 
   const handleOrderClick = (order: any) => {
+    bindExistingOrderIntent(order);
     if (order.status === 'cancelled' || (order.status === 'completed' && order.clearedAt)) {
       const table = tables.find(t => t.number === order.tableNumber);
       setSelectedTableId(table ? table.id : null);
@@ -3176,7 +3302,7 @@ const POS: React.FC = () => {
 
   const handleMergeTables = () => {
     if (selectedTables.length < 2) {
-      alert('\u8bf7\u81f3\u5c11\u9009\u62e9 2 \u5f20\u684c\u5b50');
+      alert(t('pos.alert.minimumMergeTables'));
       return;
     }
 
@@ -3233,7 +3359,7 @@ const POS: React.FC = () => {
   const handleSplitTable = (tableId: string) => {
     const table = tables.find(t => t.id === tableId);
     if (!table || !table.number.includes('+')) {
-      alert('\u53ea\u80fd\u62c6\u5206\u5408\u5e76\u8fc7\u7684\u684c\u5b50');
+      alert(t('pos.alert.onlyMergedTable'));
       return;
     }
 
@@ -3284,7 +3410,19 @@ const POS: React.FC = () => {
   };
 
   const getStatusText = (status: string, paymentStatus?: string, clearedAt?: Date) => {
-    return getPosOrderStatusText(status, paymentStatus, clearedAt);
+    if (paymentStatus === 'paid' && status !== 'completed' && status !== 'cancelled' && !clearedAt) {
+      return t('pos.status.paid');
+    }
+
+    switch (status) {
+      case 'draft': return t('pos.status.draft');
+      case 'confirmed': return t('pos.status.confirmed');
+      case 'preparing': return t('pos.status.preparing');
+      case 'served': return paymentStatus === 'paid' ? t('pos.status.paid') : t('pos.status.served');
+      case 'completed': return t('pos.status.completed');
+      case 'cancelled': return t('pos.status.cancelled');
+      default: return status || '';
+    }
   };
 
 
@@ -3384,31 +3522,31 @@ const POS: React.FC = () => {
           alignItems: 'center',
           gap: '0.5rem'
         }}>
-          {itemToDelete ? '⚠️ Autorizar cancelación de producto' : '⚠️ Autorizar cancelación de pedido'}
+          ⚠️ {itemToDelete ? t('pos.cancel.itemTitle') : t('pos.cancel.orderTitle')}
         </h3>
 
         <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#fef2f2', borderRadius: '0.5rem', border: '1px solid #fecaca' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', color: '#991b1b' }}>
-            <strong>Atención: </strong>
+            <strong>{t('pos.cancel.attention')} </strong>
             {itemToDelete
-              ? 'Este producto ya fue enviado a cocina. Se requiere autorización.'
-              : 'Cancelar el pedido requiere autorización. Esta acción no se puede deshacer.'}
+              ? t('pos.cancel.itemWarning')
+              : t('pos.cancel.orderWarning')}
           </p>
         </div>
 
         <div style={{ marginBottom: '1rem' }}>
           <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-            Clave de autorización
+            {t('pos.cancel.password')}
           </label>
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-            Clave del jefe o gerente
+            {t('pos.cancel.passwordHelp')}
           </div>
           <input
             type="password"
             value={cancelPassword}
             onChange={(e) => setCancelPassword(e.target.value)}
             onClick={(e) => e.stopPropagation()}
-            placeholder="Ingrese la clave"
+            placeholder={t('pos.cancel.passwordPlaceholder')}
             style={{
               width: '100%',
               padding: '0.75rem',
@@ -3429,12 +3567,12 @@ const POS: React.FC = () => {
 
         <div style={{ marginBottom: '1.5rem' }}>
           <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-            📝 Motivo de cancelación
+            📝 {t('pos.cancel.reason')}
           </label>
           <textarea
             value={cancelReason}
             onChange={(e) => setCancelReason(e.target.value)}
-            placeholder="Escriba el motivo..."
+            placeholder={t('pos.cancel.reasonPlaceholder')}
             rows={3}
             style={{
               width: '100%',
@@ -3467,7 +3605,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            Cerrar
+            {t('pos.common.close')}
           </button>
           <button
             onClick={confirmCancelOrder}
@@ -3483,7 +3621,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            Autorizar
+            {t('pos.cancel.authorize')}
           </button>
         </div>
       </div>
@@ -3517,10 +3655,10 @@ const POS: React.FC = () => {
         boxShadow: '0 10px 25px rgba(0,0,0,0.2)'
       }}>
         <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', color: '#374151' }}>
-          {isDineIn ? `Mesa ${tableActionData?.tableNumber}` : `${tableActionData?.tableNumber}`} - Acción
+          {isDineIn ? `${t('pos.receipt.table')} ${tableActionData?.tableNumber}` : `${tableActionData?.tableNumber}`} - {t('pos.action.title')}
         </h3>
         <p style={{ margin: '0 0 1.5rem 0', color: '#6b7280', fontSize: '0.95rem' }}>
-          {isDineIn ? 'Este pedido ya está pagado. Puede agregar productos o liberar la mesa.' : 'Este pedido ya está pagado. Elija la siguiente acción.'}
+          {isDineIn ? t('pos.action.paidDineInHelp') : t('pos.action.paidOtherHelp')}
         </p>
 
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
@@ -3539,7 +3677,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            Agregar
+            {t('pos.common.add')}
           </button>
           <button
             onClick={() => {
@@ -3557,7 +3695,7 @@ const POS: React.FC = () => {
               fontSize: '0.95rem'
             }}
           >
-            {clearingOrderId ? 'Procesando...' : (isDineIn ? '🧹 Liberar mesa' : '✅ Completar')}
+            {clearingOrderId ? t('pos.common.processing') : (isDineIn ? `🧹 ${t('pos.action.clearTable')}` : `✅ ${t('pos.action.complete')}`)}
           </button>
         </div>
       </div>
@@ -3573,7 +3711,7 @@ const POS: React.FC = () => {
         <div style={{ height: 'calc(100vh - 8rem)', display: 'flex', flexDirection: 'column', padding: '1rem', gap: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
             <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#1f2937' }}>
-              Dividir cuenta - Mesa {selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : ''}
+              {t('pos.split.title')} - {t('pos.receipt.table')} {selectedTableId ? tables.find(t => t.id === selectedTableId)?.number : ''}
             </h2>
             <button
               onClick={() => setViewMode('order')}
@@ -3587,7 +3725,7 @@ const POS: React.FC = () => {
                 fontWeight: '600'
               }}
             >
-              ← Volver a pedido
+              ← {t('pos.split.backToOrder')}
             </button>
           </div>
 
@@ -3652,7 +3790,7 @@ const POS: React.FC = () => {
                     {/* Receipt Header */}
                 <div style={{ textAlign: 'center', borderBottom: '2px dashed #d1d5db', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
                   <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937', margin: '0 0 0.5rem 0' }}>
-                    Restaurante Chino
+                    {t('pos.receipt.restaurant')}
                   </h3>
 
                   <div style={{ fontSize: '0.8rem', color: '#4b5563', lineHeight: '1.6' }}>
@@ -3664,7 +3802,7 @@ const POS: React.FC = () => {
                       return (
                         <>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                            <span>Tipo:</span>
+                            <span>{t('pos.receipt.type')}:</span>
                             <span style={{ fontWeight: '600' }}>
                               {formatPosOrderType(displayOrderType)}
                             </span>
@@ -3672,14 +3810,14 @@ const POS: React.FC = () => {
 
                           {displayOrderNumber && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                              <span>Pedido:</span>
+                              <span>{t('pos.receipt.order')}:</span>
                               <span style={{ fontWeight: '600', fontSize: '0.75rem' }}>{displayOrderNumber}</span>
                             </div>
                           )}
 
                           {selectedTableId && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                              <span>Mesa:</span>
+                              <span>{t('pos.receipt.table')}:</span>
                               <span style={{ fontWeight: '600' }}>{tables.find(t => t.id === selectedTableId)?.number}</span>
                             </div>
                           )}
@@ -3687,18 +3825,18 @@ const POS: React.FC = () => {
                           {selectedCustomer && (
                             <>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                                <span>Cliente:</span>
+                                <span>{t('pos.receipt.customer')}:</span>
                                 <span style={{ fontWeight: '600' }}>{selectedCustomer.name}</span>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                                <span>电话：</span>
+                                <span>{t('pos.receipt.phone')}:</span>
                                 <span style={{ fontWeight: '600' }}>{selectedCustomer.phone}</span>
                               </div>
                             </>
                           )}
 
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                                <span>Hora:</span>
+                                <span>{t('pos.receipt.time')}:</span>
                             <span style={{ fontWeight: '600' }}>{formatNicaraguaTime(new Date())}</span>
                           </div>
                         </>
@@ -3720,11 +3858,11 @@ const POS: React.FC = () => {
                         fontSize: '0.75rem'
                       }}>
                         <div style={{ fontWeight: '600', color: '#92400e', marginBottom: '0.25rem' }}>
-                    🔀 Dividido en {currentOrder.splitBills.length}
+                    🔀 {t('pos.receipt.splitInto')} {currentOrder.splitBills.length}
                         </div>
                         {currentOrder.splitBills.map(bill => (
                           <div key={bill.id} style={{ color: '#78350f' }}>
-                      {bill.customerName}: C${bill.subtotal.toFixed(2)} ({bill.paymentStatus === 'paid' ? 'Pagado' : 'Pendiente'})
+                      {bill.customerName}: C${bill.subtotal.toFixed(2)} ({bill.paymentStatus === 'paid' ? t('pos.status.paid') : t('pos.status.pending')})
                           </div>
                         ))}
                       </div>
@@ -3773,7 +3911,7 @@ const POS: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'center'
                           }}
-                          title="澧炲姞鏁伴噺"
+                          title={t('pos.receipt.increaseQuantity')}
                         >
                           +
                         </button>
@@ -3808,7 +3946,7 @@ const POS: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'center'
                           }}
-                    title={item.quantity > 1 ? "Reducir cantidad" : "Eliminar producto"}
+                          title={item.quantity > 1 ? t('pos.receipt.reduceQuantity') : t('pos.receipt.removeItem')}
                         >
                           {item.quantity > 1 ? '−' : '×'}
                         </button>
@@ -3827,7 +3965,7 @@ const POS: React.FC = () => {
                     if (displayDeliveryFee > 0) {
                       return (
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                  <span style={{ color: '#6b7280' }}>🚚 Envío</span>
+                  <span style={{ color: '#6b7280' }}>🚚 {t('pos.receipt.deliveryFee')}</span>
                           <span style={{ color: '#374151', fontWeight: '600' }}>C${displayDeliveryFee.toFixed(2)}</span>
                         </div>
                       );
@@ -3836,19 +3974,19 @@ const POS: React.FC = () => {
                   })()}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span style={{ color: '#6b7280' }}>IVA (15%)</span>
+                    <span style={{ color: '#6b7280' }}>{t('pos.receipt.tax')} (15%)</span>
                     <span style={{ color: '#374151', fontWeight: '600' }}>C${(taxEnabled ? tax : 0).toFixed(2)}</span>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
-                    <span style={{ color: '#6b7280' }}>Servicio (10%)</span>
+                    <span style={{ color: '#6b7280' }}>{t('pos.receipt.service')} (10%)</span>
                     <span style={{ color: '#374151', fontWeight: '600' }}>C${(serviceFeeEnabled ? serviceFee : 0).toFixed(2)}</span>
                   </div>
 
                   {discountEnabled && discountAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
                       <span style={{ color: '#ef4444' }}>
-                  🎫 Descuento {discountType === 'percentage' ? `(${discountValue}%)` : ''}
+                  🎫 {t('pos.receipt.discount')} {discountType === 'percentage' ? `(${discountValue}%)` : ''}
                         {discountReason && <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}> - {discountReason}</span>}
                       </span>
                       <span style={{ color: '#ef4444', fontWeight: '600' }}>-C${discountAmount.toFixed(2)}</span>
@@ -3857,7 +3995,7 @@ const POS: React.FC = () => {
 
                   {pointsRedemptionEnabled && pointsRedemptionAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
-                  <span style={{ color: '#f59e0b' }}>⭐ Canje de puntos ({pointsToUse})</span>
+                  <span style={{ color: '#f59e0b' }}>⭐ {t('pos.receipt.pointsRedeemed')} ({pointsToUse})</span>
                       <span style={{ color: '#f59e0b', fontWeight: '600' }}>-C${pointsRedemptionAmount.toFixed(2)}</span>
                     </div>
                   )}
@@ -3870,14 +4008,14 @@ const POS: React.FC = () => {
                     fontSize: '1.1rem',
                     fontWeight: 'bold'
                   }}>
-                  <span style={{ color: '#374151' }}>Total</span>
+                  <span style={{ color: '#374151' }}>{t('pos.common.total')}</span>
                     <span style={{ color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                 </div>
 
                 {/* Receipt Footer */}
                 <div style={{ textAlign: 'center', marginTop: '0.5rem', paddingTop: '0.3rem', borderTop: '1px dashed #d1d5db', fontSize: '0.65rem', color: '#9ca3af' }}>
-                  <div>谢谢惠顾!</div>
+                  <div>{t('pos.receipt.thanks')}</div>
                   <div>{formatNicaraguaDateTime(new Date())}</div>
                 </div>
                   </div>
@@ -3897,7 +4035,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                  🖨️ Imprimir recibo
+                  🖨️ {t('pos.receipt.print')}
                   </button>
 
                   {isReadOnly && (
@@ -3915,7 +4053,7 @@ const POS: React.FC = () => {
                         fontSize: '0.8rem'
                       }}
                     >
-                      ← Inicio
+                      ← {t('pos.order.home')}
                     </button>
                   )}
 
@@ -3923,22 +4061,22 @@ const POS: React.FC = () => {
                     <>
                       <button
                         onClick={handleSendToKitchen}
-                        disabled={!hasUnsentItems}
+                        disabled={!hasUnsentItems || isSendingToKitchen}
                         style={{
                           flex: 1,
                           padding: '0.6rem',
-                          backgroundColor: hasUnsentItems ? '#10b981' : '#d1d5db',
+                          backgroundColor: hasUnsentItems && !isSendingToKitchen ? '#10b981' : '#d1d5db',
                           color: 'white',
                           border: 'none',
                           borderRadius: '0.25rem',
                           fontWeight: '600',
-                          cursor: hasUnsentItems ? 'pointer' : 'not-allowed',
+                          cursor: hasUnsentItems && !isSendingToKitchen ? 'pointer' : 'not-allowed',
                           fontSize: '0.8rem',
-                          opacity: hasUnsentItems ? 1 : 0.6
+                          opacity: hasUnsentItems && !isSendingToKitchen ? 1 : 0.6
                         }}
-                        title={hasUnsentItems ? 'Confirmar pedido y enviar a cocina' : 'Todo confirmado'}
+                        title={isSendingToKitchen ? t('pos.order.processing') : (hasUnsentItems ? t('pos.order.confirmAndSend') : t('pos.order.allConfirmed'))}
                       >
-                        ✅ Confirmar pedido
+                        ✅ {t('pos.order.confirm')}
                       </button>
                       {currentItems.length > 0 && (
                         <button
@@ -3955,7 +4093,7 @@ const POS: React.FC = () => {
                             fontSize: '0.8rem'
                           }}
                         >
-                          ⏸️ Retener
+                          ⏸️ {t('pos.order.hold')}
                         </button>
                       )}
                     </>
@@ -3979,7 +4117,7 @@ const POS: React.FC = () => {
                         fontWeight: '600'
                       }}
                     >
-                      🔀 Dividir cuenta
+                      🔀 {t('pos.order.split')}
                     </button>
                     <button
                       onClick={(e) => {
@@ -4000,7 +4138,7 @@ const POS: React.FC = () => {
                         fontWeight: '600'
                       }}
                     >
-                      ❌ Cancelar pedido
+                      ❌ {t('pos.order.cancel')}
                     </button>
                   </div>
                 )}
@@ -4019,7 +4157,7 @@ const POS: React.FC = () => {
                 fontSize: '0.875rem',
                 color: '#9ca3af'
               }}>
-                <div style={{ fontWeight: 700, color: '#6b7280' }}>Sin pedido</div>
+                <div style={{ fontWeight: 700, color: '#6b7280' }}>{t('pos.order.empty')}</div>
                 <button
                   onClick={returnToOverviewFromOrder}
                   style={{
@@ -4033,7 +4171,7 @@ const POS: React.FC = () => {
                     boxShadow: '0 8px 18px rgba(245, 158, 11, 0.22)'
                   }}
                 >
-                  ← Volver
+                  ← {t('pos.common.back')}
                 </button>
                 {/* empty-order-state-end */}
               </div>
@@ -4043,7 +4181,7 @@ const POS: React.FC = () => {
           {/* Right: Payment Interface - 鍙妯″紡闅愯棌 */}
           {!isReadOnly && (
             <div style={{ ...posPanelStyle, flex: 3, padding: '1rem', display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: colors.textPrimary, margin: 0, marginBottom: '0.75rem' }}>💳 Pago</h3>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: colors.textPrimary, margin: 0, marginBottom: '0.75rem' }}>💳 {t('pos.payment.title')}</h3>
 
             {selectedOrderId && settledAmount > 0 && (
               <div style={{
@@ -4054,18 +4192,18 @@ const POS: React.FC = () => {
                 border: '1px solid #10b981'
               }}>
                 <div style={{ fontSize: '0.75rem', color: '#065f46', fontWeight: '600', marginBottom: '0.2rem' }}>
-                  ✅ Pagado
+                  ✅ {t('pos.payment.paid')}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
-                  <span style={{ color: '#047857' }}>之前：</span>
+                  <span style={{ color: '#047857' }}>{t('pos.payment.previous')}：</span>
                   <span style={{ fontWeight: '600', color: '#059669' }}>C${settledAmount.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
-                  <span style={{ color: '#047857' }}>总额：</span>
+                  <span style={{ color: '#047857' }}>{t('pos.payment.amountDue')}：</span>
                   <span style={{ fontWeight: '600', color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.2rem', borderTop: '1px dashed #10b981', fontSize: '0.8rem' }}>
-                  <span style={{ color: '#065f46', fontWeight: '600' }}>Falta:</span>
+                  <span style={{ color: '#065f46', fontWeight: '600' }}>{t('pos.payment.remaining')}:</span>
                   <span style={{ fontWeight: 'bold', color: '#dc2626', fontSize: '1rem' }}>C${remainingAmount.toFixed(2)}</span>
                 </div>
               </div>
@@ -4077,7 +4215,7 @@ const POS: React.FC = () => {
                   <div style={{ padding: '0.4rem', backgroundColor: '#f9fafb', borderRadius: '0.25rem', border: '1px solid #e5e7eb' }}>
                     {/* 娲鹃€佺被鍨嬮€夋嫨 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.4rem' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>🚚 Tipo de entrega:</label>
+                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>🚚 {t('pos.payment.deliveryType')}:</label>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
                           <input
@@ -4088,7 +4226,7 @@ const POS: React.FC = () => {
                             onChange={(e) => setDeliveryType(e.target.value as 'self' | 'outsourced')}
                             style={{ cursor: 'pointer' }}
                           />
-                          Propio
+                          {t('pos.payment.selfDelivery')}
                         </label>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
                           <input
@@ -4099,14 +4237,14 @@ const POS: React.FC = () => {
                             onChange={(e) => setDeliveryType(e.target.value as 'self' | 'outsourced')}
                             style={{ cursor: 'pointer' }}
                           />
-                          Tercero
+                          {t('pos.payment.thirdParty')}
                         </label>
                       </div>
                     </div>
 
                     {/* Delivery fee input */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>💰 Costo de envío:</label>
+                      <label style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', whiteSpace: 'nowrap' }}>💰 {t('pos.payment.deliveryCost')}:</label>
                       <input
                         type="number"
                         value={deliveryFee || ''}
@@ -4121,7 +4259,7 @@ const POS: React.FC = () => {
                     {/* 鎻愮ず鏂囧瓧 */}
                     {deliveryType === 'outsourced' && deliveryFee > 0 && (
                       <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>
-                        ⚠️ El envío de tercero se registrará como gasto del día
+                        ⚠️ {t('pos.payment.thirdPartyExpense')}
                       </div>
                     )}
                   </div>
@@ -4135,11 +4273,11 @@ const POS: React.FC = () => {
                       checked={discountEnabled}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          const password = prompt('🔑 Ingrese clave de gerente/jefe para aplicar descuento:');
+                          const password = prompt(`🔑 ${t('pos.auth.discountPrompt')}`);
                           if (password && managerAuthorizationPasswords.includes(password.trim())) {
                             setDiscountEnabled(true);
                           } else {
-                            alert('❌ Clave incorrecta. Requiere autorización.');
+                            alert(`❌ ${t('pos.auth.incorrectPassword')}`);
                           }
                         } else {
                           setDiscountEnabled(false);
@@ -4149,7 +4287,7 @@ const POS: React.FC = () => {
                       style={{ width: '14px', height: '14px', cursor: 'pointer' }}
                     />
                     <label htmlFor="discount-checkbox" style={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>
-                      🎫 Descuento
+                      🎫 {t('pos.receipt.discount')}
                     </label>
                   </div>
 
@@ -4161,8 +4299,8 @@ const POS: React.FC = () => {
                           onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
                           style={{ flex: 1, padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.8rem' }}
                         >
-                          <option value="percentage">Porcentaje(%)</option>
-                          <option value="fixed">Monto fijo(C$)</option>
+                          <option value="percentage">{t('pos.payment.percentage')}</option>
+                          <option value="fixed">{t('pos.payment.fixedAmount')}</option>
                         </select>
                         <input
                           type="number"
@@ -4179,7 +4317,7 @@ const POS: React.FC = () => {
                         type="text"
                         value={discountReason}
                         onChange={(e) => setDiscountReason(e.target.value)}
-                        placeholder="Motivo del descuento"
+                        placeholder={t('pos.payment.discountReason')}
                         style={{ width: '100%', padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.8rem' }}
                       />
                       {discountAmount > 0 && (
@@ -4220,10 +4358,10 @@ const POS: React.FC = () => {
                         cursor: selectedCustomer.points > 0 ? 'pointer' : 'not-allowed',
                         flex: 1
                       }}>
-                        ⭐ Puntos({selectedCustomer.points})
+                        ⭐ {t('pos.payment.points')}({selectedCustomer.points})
                         {selectedCustomer.points === 0 && (
                           <span style={{ fontSize: '0.7rem', color: '#ef4444', marginLeft: '0.3rem' }}>
-                            (sin puntos)
+                            ({t('pos.payment.noPoints')})
                           </span>
                         )}
                       </label>
@@ -4233,7 +4371,7 @@ const POS: React.FC = () => {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <label style={{ fontSize: '0.75rem', color: '#92400e', whiteSpace: 'nowrap' }}>
-                            Cambio({pointsExchangeRate} pts = C$1):
+                            {t('pos.payment.exchange')}({pointsExchangeRate} pts = C$1):
                           </label>
                           <input
                             type="number"
@@ -4242,7 +4380,7 @@ const POS: React.FC = () => {
                               const value = Math.min(parseInt(e.target.value) || 0, selectedCustomer.points);
                               setPointsToUse(value);
                             }}
-                            placeholder="Puntos"
+                            placeholder={t('pos.payment.points')}
                             min="0"
                             max={selectedCustomer.points}
                             step="1"
@@ -4258,7 +4396,7 @@ const POS: React.FC = () => {
                 )}
 
                 <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💵 Efectivo</h4>
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💵 {t('pos.payment.cash')}</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
@@ -4275,7 +4413,7 @@ const POS: React.FC = () => {
                 </div>
 
                 <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💳 Tarjeta</h4>
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💳 {t('pos.payment.card')}</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
@@ -4293,11 +4431,11 @@ const POS: React.FC = () => {
 
                 <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '0.6rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
-                    <span>Total</span>
+                    <span>{t('pos.common.total')}</span>
                     <span style={{ color: '#2563eb', fontSize: '1.3rem' }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-                    <span style={{ color: '#6b7280' }}>Pago actual</span>
+                    <span style={{ color: '#6b7280' }}>{t('pos.payment.current')}</span>
                     <span style={{ color: '#10b981', fontWeight: '600' }}>C${paidAmount.toFixed(2)}</span>
                   </div>
 
@@ -4310,7 +4448,7 @@ const POS: React.FC = () => {
                       textAlign: 'center',
                       border: '1px solid #10b981'
                     }}>
-                      <div style={{ fontSize: '0.8rem', color: '#065f46', marginBottom: '0.15rem', fontWeight: '600' }}>Cambio</div>
+                      <div style={{ fontSize: '0.8rem', color: '#065f46', marginBottom: '0.15rem', fontWeight: '600' }}>{t('pos.payment.change')}</div>
                       <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46' }}>C${change.toFixed(2)}</div>
                     </div>
                   )}
@@ -4325,7 +4463,7 @@ const POS: React.FC = () => {
                       color: '#991b1b',
                       border: '1px solid #ef4444'
                     }}>
-                      Falta pagar: C${Math.abs(change).toFixed(2)}
+                      {t('pos.payment.remainingToPay')}: C${Math.abs(change).toFixed(2)}
                     </div>
                   )}
 
@@ -4344,7 +4482,7 @@ const POS: React.FC = () => {
                         fontSize: '0.95rem'
                       }}
                     >
-                      ← Volver
+                      ← {t('pos.common.back')}
                     </button>
 
                     <button
@@ -4362,7 +4500,7 @@ const POS: React.FC = () => {
                         fontSize: '0.95rem'
                       }}
                     >
-                      {isProcessingPayment ? 'Procesando...' : '✓ Completar pago'}
+                      {isProcessingPayment ? t('pos.common.processing') : `✓ ${t('pos.payment.complete')}`}
                     </button>
                   </div>
 
@@ -4375,7 +4513,7 @@ const POS: React.FC = () => {
                           onChange={(e) => setServiceFeeEnabled(e.target.checked)}
                           style={{ marginRight: '0.2rem', width: '12px', height: '12px' }}
                         />
-                        <span>Servicio</span>
+                        <span>{t('pos.receipt.service')}</span>
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '0.75rem', flex: 1 }}>
                         <input
@@ -4384,7 +4522,7 @@ const POS: React.FC = () => {
                           onChange={(e) => setTaxEnabled(e.target.checked)}
                           style={{ marginRight: '0.2rem', width: '12px', height: '12px' }}
                         />
-                        <span>IVA</span>
+                        <span>{t('pos.receipt.tax')}</span>
                       </label>
                     </div>
                   </div>
@@ -4409,7 +4547,7 @@ const POS: React.FC = () => {
           {/* Left: Table Layout */}
           <div style={{ minWidth: 0, backgroundColor: 'white', borderRadius: '0.75rem', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ffffff' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0 }}>🪑 Mesas</h3>
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', margin: 0 }}>🪑 {t('pos.tables.title')}</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
                   onClick={() => setShowHeldOrders(!showHeldOrders)}
@@ -4425,7 +4563,7 @@ const POS: React.FC = () => {
                     position: 'relative'
                   }}
                 >
-                  ⏸️ Retenidos
+                ⏸️ {t('pos.tables.held')}
                   {heldOrders.length > 0 && (
                     <span style={{
                       position: 'absolute',
@@ -4461,7 +4599,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                    🔗 Unir mesas
+                  🔗 {t('pos.tables.merge')}
                   </button>
                 )}
                 <button
@@ -4480,7 +4618,7 @@ const POS: React.FC = () => {
                     fontSize: '0.8rem'
                   }}
                 >
-                    {isEditMode ? 'Terminar edición' : 'Editar mesas'}
+                  {isEditMode ? t('pos.tables.finishEdit') : t('pos.tables.edit')}
                 </button>
                 {isEditMode && (
                   <button
@@ -4496,7 +4634,7 @@ const POS: React.FC = () => {
                       fontSize: '0.8rem'
                     }}
                   >
-                    ➕ Agregar mesa
+                  ➕ {t('pos.tables.add')}
                   </button>
                 )}
               </div>
@@ -4637,7 +4775,7 @@ const POS: React.FC = () => {
                         whiteSpace: 'nowrap'
                       }}
                     >
-                      ✂️ Separar
+                            ✂️ {t('pos.tables.split')}
                     </button>
                   )}
                   {isEditMode && (
@@ -4671,7 +4809,7 @@ const POS: React.FC = () => {
                           cursor: 'pointer'
                         }}
                       >
-                        Editar
+                            {t('pos.tables.editOne')}
                       </button>
                       <button
                         onClick={(e) => {
@@ -4689,7 +4827,7 @@ const POS: React.FC = () => {
                           cursor: 'pointer'
                         }}
                       >
-                        Eliminar
+                            {t('pos.tables.delete')}
                       </button>
                     </div>
                   )}
@@ -4721,7 +4859,7 @@ const POS: React.FC = () => {
                   justifyContent: 'space-between',
                   alignItems: 'center'
                 }}>
-                  <h4 style={{ margin: 0, fontSize: '1rem', color: '#92400e' }}>⏸️ Pedidos retenidos</h4>
+                    <h4 style={{ margin: 0, fontSize: '1rem', color: '#92400e' }}>⏸️ {t('pos.held.title')}</h4>
                   <button
                     onClick={() => setShowHeldOrders(false)}
                     style={{
@@ -4741,7 +4879,7 @@ const POS: React.FC = () => {
                 <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
                   {heldOrders.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                      Sin pedidos retenidos
+                      {t('pos.held.empty')}
                     </div>
                   ) : (
                     heldOrders.map(heldOrder => (
@@ -4757,7 +4895,7 @@ const POS: React.FC = () => {
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                           <div style={{ fontWeight: 'bold', color: '#374151' }}>
-                            Mesa {heldOrder.tableNumber}
+                            {t('pos.receipt.table')} {heldOrder.tableNumber}
                           </div>
                           <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                             {formatOrderTime(heldOrder.createdAt)}
@@ -4772,7 +4910,7 @@ const POS: React.FC = () => {
                           )}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-                          Productos: {heldOrder.items.length}
+                            {t('pos.common.products')}: {heldOrder.items.length}
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                           <button
@@ -4789,11 +4927,11 @@ const POS: React.FC = () => {
                               fontSize: '0.8rem'
                             }}
                           >
-                            ✅ Recuperar
+                            ✅ {t('pos.held.retrieve')}
                           </button>
                           <button
                             onClick={() => {
-                              if (window.confirm(`¿Eliminar el pedido retenido de mesa ${heldOrder.tableNumber}?`)) {
+                              if (window.confirm(`${t('pos.confirm.removeHeldOrder')} ${t('pos.receipt.table')} ${heldOrder.tableNumber}?`)) {
                                 setHeldOrders(heldOrders.filter(o => o.id !== heldOrder.id));
                               }
                             }}
@@ -4823,7 +4961,7 @@ const POS: React.FC = () => {
           <div style={{ ...posPanelStyle, width: '430px', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${colors.border}`, flexShrink: 0, backgroundColor: colors.surface }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: colors.textPrimary, margin: 0 }}>Pedidos</h3>
+                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: colors.textPrimary, margin: 0 }}>{t('pos.orders.title')}</h3>
                 <button
                   onClick={() => setOrderTypeFilter('all')}
                   style={{
@@ -4838,7 +4976,7 @@ const POS: React.FC = () => {
                     boxShadow: orderTypeFilter === 'all' ? '0 6px 14px rgba(37,99,235,0.22)' : 'none'
                   }}
                 >
-                  Todos
+                  {t('pos.common.all')}
                 </button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.45rem' }}>
@@ -4894,23 +5032,23 @@ const POS: React.FC = () => {
 
               <div style={{ ...posMutedPanelStyle, marginTop: '0.85rem', padding: '0.85rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total pedidos:</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.orders.totalCount')}:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#374151' }}>{filteredOrders.length}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Borrador:</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.status.draft')}:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#f59e0b' }}>
                     {filteredOrders.filter(o => o.status === 'draft').length}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>En cocina:</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.orders.inKitchen')}:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#3b82f6' }}>
                     {filteredOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Total:</span>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.common.total')}:</span>
                   <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#2563eb' }}>
                     C${filteredOrders.reduce((sum, o) => sum + getPosOrderSummaryAmount(o), 0).toFixed(2)}
                   </span>
@@ -4920,6 +5058,7 @@ const POS: React.FC = () => {
               <button
                 onClick={() => {
                   const newOrderType = orderTypeFilter === 'all' ? 'dine_in' : orderTypeFilter;
+                  beginNewOrderIntent();
                   setOrderType(newOrderType as 'dine_in' | 'takeout' | 'delivery');
                   setCurrentItems([]);
                   setSelectedOrderId(null);
@@ -4953,14 +5092,14 @@ const POS: React.FC = () => {
                   boxShadow: '0 8px 18px rgba(37, 99, 235, 0.22)'
                 }}
               >
-                ➕ Nuevo {orderTypeFilter === 'all' ? 'pedido' : posOrderTypeLabels[orderTypeFilter]}
+                ➕ {orderTypeFilter === 'all' ? t('pos.orders.newOrder') : `${t('pos.orders.new')} ${posOrderTypeLabels[orderTypeFilter]}`}
               </button>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.85rem', backgroundColor: colors.surfaceMuted }}>
               {filteredOrders.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                  Sin pedidos
+                  {t('pos.orders.empty')}
                 </div>
               ) : (
                 filteredOrders.map(order => (
@@ -4982,7 +5121,7 @@ const POS: React.FC = () => {
                       <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         #{order.orderNumber || 'N/A'}
                         {pendingOrderSyncIdsRef.current.has(order.id) && (
-                          <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>Sincronizando</span>
+                          <span style={{ fontSize: '0.68rem', color: '#92400e', backgroundColor: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '999px', padding: '0.12rem 0.42rem', fontWeight: '800' }}>{t('pos.orders.syncing')}</span>
                         )}
                         {order.paymentStatus === 'paid' && order.status !== 'completed' && (
                           <span style={{ fontSize: '1rem', color: '#10b981' }}>$</span>
@@ -5005,7 +5144,7 @@ const POS: React.FC = () => {
                     <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.25rem' }}>
                       {order.orderType === 'dine_in' ? (
                         // Dine-in: show the table number.
-                        <>Mesa {order.tableNumber}</>
+                        <>{t('pos.receipt.table')} {order.tableNumber}</>
                       ) : order.orderType === 'takeout' ? (
                         // Takeout shows only takeout status.
                         <>{formatPosOrderType('takeout')}</>
@@ -5023,7 +5162,7 @@ const POS: React.FC = () => {
                         fontSize: '0.78rem',
                         fontWeight: 700
                       }}>
-                        Completando...
+                        {t('pos.orders.completing')}
                       </div>
                     )}
                     {order.customerName && (
@@ -5039,12 +5178,12 @@ const POS: React.FC = () => {
                           const canComplete = order.paymentStatus === 'paid' || order.status === 'served';
 
                           if (!canComplete) {
-                            alert('Primero complete el pago. Luego finalice el pedido para descontar inventario.');
+                            alert(t('pos.alert.payBeforeComplete'));
                             handleOrderClick(order);
                             return;
                           }
 
-                          if (window.confirm(`¿Confirmar ${order.orderType === 'takeout' ? 'retiro en barra' : 'delivery completado'}?\n\nAl confirmar se completa el pedido y se descuenta inventario.`)) {
+                          if (window.confirm(`${order.orderType === 'takeout' ? t('pos.orders.completeTakeout') : t('pos.orders.completeDelivery')}\n\n${t('pos.confirm.completeOrder')}`)) {
                             setCompletingOrderIds(prev => {
                               const next = new Set(prev);
                               next.add(order.id);
@@ -5054,7 +5193,7 @@ const POS: React.FC = () => {
                             try {
                               await waitForNextPaint();
                               await completeOrderWithStockDeduction(order);
-                              showPosToast('Pedido completado. Inventario descontado.', 'success');
+                              showPosToast(t('pos.toast.orderCompleted'), 'success');
                             } catch (error) {
                               console.error('complete order sync failed:', order.id, error);
                               showPosToast(getCompletionErrorMessage(error), 'error');
@@ -5085,11 +5224,11 @@ const POS: React.FC = () => {
                           boxShadow: completingOrderIds.has(order.id) || finalizingOrderIds.has(order.id) ? 'none' : '0 8px 18px rgba(22, 163, 74, 0.22)'
                         }}
                       >
-                        {finalizingOrderIds.has(order.id) ? 'Completando...' :
-                          completingOrderIds.has(order.id) ? 'Procesando...' :
+                        {finalizingOrderIds.has(order.id) ? t('pos.orders.completing') :
+                          completingOrderIds.has(order.id) ? t('pos.common.processing') :
                           order.paymentStatus === 'paid' || order.status === 'served'
-                          ? (order.orderType === 'takeout' ? '✅ Retirado en barra' : '✅ Delivery completado')
-                          : '💳 Pagar antes de completar'}
+                          ? (order.orderType === 'takeout' ? `✅ ${t('pos.orders.completeTakeout')}` : `✅ ${t('pos.orders.completeDelivery')}`)
+                          : `💳 ${t('pos.orders.payBeforeComplete')}`}
                       </button>
                     )}
 
@@ -5103,7 +5242,7 @@ const POS: React.FC = () => {
                       fontSize: '0.85rem'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Pedido</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>{t('pos.orders.orderedAt')}</span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
@@ -5115,7 +5254,7 @@ const POS: React.FC = () => {
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Entrega</span>
+                        <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>{t('pos.orders.servedAt')}</span>
                         <span style={{
                           fontWeight: 'bold',
                           fontFamily: 'monospace',
@@ -5128,7 +5267,7 @@ const POS: React.FC = () => {
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
                         <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                          {order.status === 'cancelled' ? 'Cancelado' : 'Final'}
+                          {order.status === 'cancelled' ? t('pos.orders.cancelledAt') : t('pos.orders.finalAt')}
                         </span>
                         <span style={{
                           fontWeight: 'bold',
@@ -5150,10 +5289,10 @@ const POS: React.FC = () => {
                         fontSize: '0.8rem',
                         color: '#991b1b'
                       }}>
-                        Cancelado: cobrado C${Number(order.paidAmount || 0).toFixed(2)}
+                        {t('pos.orders.cancelledCharged')} C${Number(order.paidAmount || 0).toFixed(2)}
                         {Number(order.totalAmount || 0) > Number(order.paidAmount || 0) && (
                           <span style={{ fontWeight: '600', marginLeft: '0.5rem' }}>
-                            {' '}/ anulado C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}
+                            {' '}/ {t('pos.status.cancelled')} C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}
                           </span>
                         )}
                       </div>
@@ -5169,7 +5308,7 @@ const POS: React.FC = () => {
                         color: '#4b5563',
                         fontWeight: 600
                       }}>
-                        Pedido anulado
+                        {t('pos.orders.voided')}
                       </div>
                     )}
 
@@ -5181,16 +5320,16 @@ const POS: React.FC = () => {
                         marginBottom: '0.5rem',
                         fontSize: '0.8rem'
                       }}>
-                        Pagado: C${order.paidAmount.toFixed(2)} / C${order.totalAmount.toFixed(2)}
+                        {t('pos.orders.paidAmount')}: C${order.paidAmount.toFixed(2)} / C${order.totalAmount.toFixed(2)}
                         <span style={{ color: '#f59e0b', fontWeight: '600', marginLeft: '0.5rem' }}>
-                          (falta C${(order.totalAmount - order.paidAmount).toFixed(2)})
+                          ({t('pos.orders.shortAmount')} C${(order.totalAmount - order.paidAmount).toFixed(2)})
                         </span>
                       </div>
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontSize: '0.85rem', color: '#374151' }}>
-                        {order.items?.length || 0} productos
+                        {order.items?.length || 0} {t('pos.common.products')}
                       </div>
                       <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#2563eb' }}>
                         C${order.totalAmount?.toFixed(2) || '0.00'}
@@ -5223,13 +5362,13 @@ const POS: React.FC = () => {
               width: '400px'
             }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-                {editingTable ? 'Editar mesa' : 'Agregar mesa'}
+                {editingTable ? t('pos.tables.editOne') : t('pos.tables.add')}
               </h3>
               <input
                 type="text"
                 value={newTableName}
                 onChange={(e) => setNewTableName(e.target.value)}
-                placeholder="Nombre de mesa"
+                placeholder={t('pos.tables.name')}
                 style={{
                   width: '100%',
                   padding: '0.5rem',
@@ -5255,7 +5394,7 @@ const POS: React.FC = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  Cerrar
+                  {t('pos.common.close')}
                 </button>
                 <button
                   onClick={handleAddTable}
@@ -5268,7 +5407,7 @@ const POS: React.FC = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  {editingTable ? 'Guardar' : 'Agregar'}
+                  {editingTable ? t('pos.common.save') : t('pos.common.add')}
                 </button>
               </div>
             </div>
@@ -5303,14 +5442,14 @@ const POS: React.FC = () => {
             overflowY: 'auto'
           }}>
             <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', fontWeight: 'bold' }}>
-              👤 Seleccionar cliente
+              👤 {t('pos.customer.select')}
             </h3>
 
             {!showNewCustomerForm ? (
               <>
                 <input
                   type="text"
-                  placeholder="Buscar nombre o teléfono..."
+                  placeholder={t('pos.customer.search')}
                   value={customerSearch}
                   onChange={(e) => setCustomerSearch(e.target.value)}
                   style={{
@@ -5344,11 +5483,11 @@ const POS: React.FC = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
                             <div style={{ fontWeight: '600' }}>{customer.name}</div>
-                            <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>{customer.phone || 'Sin teléfono'}</div>
+                            <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>{customer.phone || t('pos.customer.noPhone')}</div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>⭐ {customer.points} puntos</div>
-                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{customer.visitCount} visitas</div>
+                            <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>⭐ {customer.points} {t('pos.customer.points')}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{customer.visitCount} {t('pos.customer.visits')}</div>
                           </div>
                         </div>
                       </div>
@@ -5356,7 +5495,7 @@ const POS: React.FC = () => {
 
                   {customers.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                      Sin clientes. Cree uno nuevo.
+                      {t('pos.customer.empty')}
                     </div>
                   )}
                 </div>
@@ -5375,7 +5514,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ➕ Nuevo cliente
+                    ➕ {t('pos.customer.new')}
                   </button>
                   <button
                     onClick={handleSkipCustomer}
@@ -5390,19 +5529,19 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ⏭️ Omitir
+                    ⏭️ {t('pos.customer.skip')}
                   </button>
                 </div>
               </>
             ) : (
               <>
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>Nombre *</label>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('pos.customer.name')} *</label>
                   <input
                     type="text"
                     value={newCustomerName}
                     onChange={(e) => setNewCustomerName(e.target.value)}
-                    placeholder="Ingrese nombre del cliente"
+                    placeholder={t('pos.customer.namePlaceholder')}
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -5413,12 +5552,12 @@ const POS: React.FC = () => {
                     }}
                   />
 
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>Teléfono</label>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('pos.customer.phone')}</label>
                   <input
                     type="tel"
                     value={newCustomerPhone}
                     onChange={(e) => setNewCustomerPhone(e.target.value)}
-                    placeholder="Ingrese teléfono (opcional)"
+                    placeholder={t('pos.customer.phonePlaceholder')}
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -5443,7 +5582,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ✅ Crear
+                    ✅ {t('pos.customer.create')}
                   </button>
                   <button
                     onClick={() => {
@@ -5462,7 +5601,7 @@ const POS: React.FC = () => {
                       cursor: 'pointer'
                     }}
                   >
-                    ↩️ Volver
+                    ↩️ {t('pos.common.back')}
                   </button>
                 </div>
               </>

@@ -17,6 +17,8 @@ import ExpenseRecordsPage from './pages/Manager/ExpenseRecordsPage';
 import OrderHistoryPage from './pages/Manager/OrderHistoryPage';
 import FinancialReportsPage from './pages/Manager/FinancialReportsPage';
 import CustomersModule from './pages/Customers/CustomersModule';
+import CustomerPromotionWheel from './pages/Customers/CustomerPromotionWheel';
+import CustomerPromotionSettingsPage from './pages/Customers/CustomerPromotionSettingsPage';
 import Stores from './pages/Manager/Stores';
 import ExchangeRateSettings from './pages/Manager/ExchangeRateSettings';
 import PermissionsModule from './pages/Settings/PermissionsModule';
@@ -25,6 +27,7 @@ import MainLayout from './components/Layout/MainLayout';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AppProvider } from './contexts/AppContext';
 import { canAccessPermission, getDefaultPathForRole } from './utils/permissions';
+import { I18nProvider } from './i18n/I18nContext';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; permissionId?: string }> = ({ children, permissionId }) => {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -69,9 +72,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; permissionId?: strin
 
 function App() {
   return (
-    <AuthProvider>
-      <AppProvider>
-        <BrowserRouter>
+    <I18nProvider>
+      <AuthProvider>
+        <AppProvider>
+          <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
             {/* 🔥 老板全局仪表板 - 使用真实 Firestore 数据 */}
@@ -81,11 +85,13 @@ function App() {
             <Route path="/waiter" element={<ProtectedRoute permissionId="waiter"><WaiterInterface /></ProtectedRoute>} />
             <Route path="/inventory" element={<ProtectedRoute permissionId="inventory:items"><Inventory /></ProtectedRoute>} />
             <Route path="/inventory/menu" element={<ProtectedRoute permissionId="inventory:menu"><MenuManagement /></ProtectedRoute>} />
+            <Route path="/inventory/purchase" element={<ProtectedRoute permissionId="inventory:purchase"><Inventory defaultTab="purchase" /></ProtectedRoute>} />
             <Route path="/inventory/fridge" element={<ProtectedRoute permissionId="inventory:fridge"><FridgeStocktake /></ProtectedRoute>} />
             <Route path="/inventory/warehouse" element={<ProtectedRoute permissionId="inventory:warehouse"><WarehouseStocktake /></ProtectedRoute>} />
             <Route path="/suppliers" element={<ProtectedRoute permissionId="suppliers:manage"><SupplierWorkbench /></ProtectedRoute>} />
             <Route path="/employees" element={<ProtectedRoute permissionId="employees:profile"><Employees /></ProtectedRoute>} />
             <Route path="/employees/attendance" element={<ProtectedRoute permissionId="employees:attendance"><Employees /></ProtectedRoute>} />
+            <Route path="/employees/attendance-records" element={<ProtectedRoute permissionId="employees:attendance-records"><Employees /></ProtectedRoute>} />
             <Route path="/employees/loans" element={<ProtectedRoute permissionId="employees:loans"><Employees /></ProtectedRoute>} />
             <Route path="/employees/salary" element={<ProtectedRoute permissionId="employees:salary"><Employees /></ProtectedRoute>} />
             <Route path="/manager" element={<ProtectedRoute permissionId="manager:overview"><ManagerOverview /></ProtectedRoute>} />
@@ -97,6 +103,8 @@ function App() {
             <Route path="/manager/reports" element={<Navigate to="/manager/financial-reports" replace />} />
             <Route path="/manager/overview" element={<Navigate to="/manager" replace />} />
             <Route path="/customers" element={<ProtectedRoute permissionId="customers:manage"><CustomersModule /></ProtectedRoute>} />
+            <Route path="/customers/promotion" element={<ProtectedRoute permissionId="customers:promotion"><CustomerPromotionWheel /></ProtectedRoute>} />
+            <Route path="/customers/promotion/settings" element={<ProtectedRoute permissionId="customers:promotion-settings"><CustomerPromotionSettingsPage /></ProtectedRoute>} />
             {/* 系统设置 */}
             <Route path="/settings/stores" element={<ProtectedRoute permissionId="settings:stores"><Stores /></ProtectedRoute>} />
             <Route path="/settings/exchange-rate" element={<ProtectedRoute permissionId="settings:exchange"><ExchangeRateSettings /></ProtectedRoute>} />
@@ -104,9 +112,10 @@ function App() {
             <Route path="/settings/backup" element={<ProtectedRoute permissionId="settings:backup"><DataBackup /></ProtectedRoute>} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
-        </BrowserRouter>
-      </AppProvider>
-    </AuthProvider>
+          </BrowserRouter>
+        </AppProvider>
+      </AuthProvider>
+    </I18nProvider>
   );
 }
 

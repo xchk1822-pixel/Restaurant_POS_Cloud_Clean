@@ -1,23 +1,27 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument, smartTransferFridgeStock } from '../../services/smartSyncService';
+import { smartAddDocument, smartGetDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument, smartTransferFridgeStock } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import {
   buildFridgeStocktakeHistoryRecords,
+  buildFridgeStocktakeSubmissionId,
+  buildFridgeStocktakeViewItems,
   formatStocktakeRecordDateTime,
   getStocktakeRecordDateKey,
   normalizeFridgeInventoryForRefresh,
   normalizeFridgesForRefresh,
   normalizeInventoryItemsForRefresh,
   normalizeStocktakeHistoryForRefresh,
+  saveFridgeItemOrderCache,
   saveFridgeRefreshCache,
   saveInventoryRefreshCache,
   printStocktakeHistory,
   sortStocktakeHistoryRecords,
 } from '../../utils/stocktakeRefresh';
 import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface FridgeItem {
   fridgeId: string;
@@ -33,6 +37,7 @@ const getFridgeQuantityKey = (fridgeId: string, itemId: string) => `${fridgeId}:
 
 const FridgeStocktake: React.FC = () => {
   const { fridges, setFridges, fridgeInventory, setFridgeInventory, inventoryItems, setInventoryItems } = useAppContext();
+  const { t } = useI18n();
   
   // 状态管理
   const [selectedFridge, setSelectedFridge] = useState<string>(fridges[0]?.id || '');
@@ -114,23 +119,18 @@ const FridgeStocktake: React.FC = () => {
 
   // 获取当前冰箱的商品列表
   const getFridgeItems = useCallback((): FridgeItem[] => {
-    return fridgeInventory
-      .filter(inv => inv.fridgeId === selectedFridge)
-      .map(inv => {
-        const item = inventoryItems.find(i => i.id === inv.itemId);
-        return {
-          ...inv,
-          itemName: item?.name || '未知商品',
-          unit: item?.unit || '',
-          barcode: item?.barcode || ''
-        };
-      })
+    return buildFridgeStocktakeViewItems(
+      fridgeInventory,
+      inventoryItems,
+      selectedFridge,
+      t('fridge.unknownItem')
+    )
       .filter(item => 
         !searchTerm || 
         item.itemName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.barcode?.includes(searchTerm)
       );
-  }, [fridgeInventory, inventoryItems, selectedFridge, searchTerm]);
+  }, [fridgeInventory, inventoryItems, selectedFridge, searchTerm, t]);
 
   const fridgeItems = useMemo(() => getFridgeItems(), [getFridgeItems]);
   const fridgeItemOrderSignature = fridgeItems
@@ -139,7 +139,11 @@ const FridgeStocktake: React.FC = () => {
   const cacheStocktakeHistory = (records: any[]) => {
     const sortedHistory = sortStocktakeHistoryRecords(records).slice(0, 50);
     setStocktakeHistory(sortedHistory);
-    localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(sortedHistory));
+    try {
+      localStorage.setItem(stocktakeHistoryStorageKey, JSON.stringify(sortedHistory));
+    } catch (error) {
+      console.warn('冰箱盘点历史本地缓存写入失败，保留当前页面和云端结果:', error);
+    }
     return sortedHistory;
   };
 
@@ -207,7 +211,7 @@ const FridgeStocktake: React.FC = () => {
       return sortedRecords;
     } catch (error) {
       console.error('刷新调拨记录失败:', error);
-      alert('刷新调拨记录失败，请检查网络后重试');
+      alert(t('fridge.alert.refreshTransferFailed'));
       return transferRecords;
     } finally {
       setIsTransferHistoryLoading(false);
@@ -235,11 +239,10 @@ const FridgeStocktake: React.FC = () => {
   const refreshFridgeData = async (showFailureAlert = true) => {
     setIsRefreshing(true);
     try {
-      const [cloudFridges, cloudFridgeInventory, cloudItems, cloudHistory] = await Promise.all([
+      const [cloudFridges, cloudFridgeInventory, cloudItems] = await Promise.all([
         smartGetDocuments('fridges', true),
         smartGetDocuments('fridge_inventory', true),
-        smartGetDocuments('inventory_items', true),
-        smartGetDocuments('fridge_stocktake_history', true)
+        smartGetDocuments('inventory_items', true)
       ]);
 
       const storeId = dataService.getCurrentStoreId();
@@ -257,13 +260,14 @@ const FridgeStocktake: React.FC = () => {
       saveFridgeRefreshCache(storeId, normalizedFridges, normalizedFridgeInventory);
       saveInventoryRefreshCache(storeId, normalizedCloudItems);
 
+      const cloudHistory = await smartGetDocuments('fridge_stocktake_history', true);
       mergeAndCacheStocktakeHistory(cloudHistory);
 
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新冰箱盘点数据失败:', error);
       if (showFailureAlert) {
-        alert('刷新冰箱盘点数据失败，请检查网络后重试');
+        alert(t('fridge.alert.refreshFailed'));
       }
     } finally {
       setIsRefreshing(false);
@@ -304,13 +308,13 @@ const FridgeStocktake: React.FC = () => {
           
           // 如果有变化，保存更新后的顺序
           if (newItems.length > 0) {
-            localStorage.setItem(orderStorageKey, JSON.stringify(mergedOrder));
+            saveFridgeItemOrderCache(localStorage, orderStorageKey, mergedOrder);
           }
         } else {
           // 没有保存的顺序，使用默认顺序
           const resolvedOrder = resolveFridgeItemOrder(fridgeItems, currentItemIds);
           setItemOrder(resolvedOrder);
-          localStorage.setItem(orderStorageKey, JSON.stringify(resolvedOrder));
+          saveFridgeItemOrderCache(localStorage, orderStorageKey, resolvedOrder);
         }
       } catch (error) {
         console.error('加载排序失败:', error);
@@ -325,7 +329,11 @@ const FridgeStocktake: React.FC = () => {
   // 自动保存排序
   useEffect(() => {
     if (itemOrder.length > 0 && selectedFridge) {
-      localStorage.setItem(getFridgeItemOrderStorageKey(selectedFridge), JSON.stringify(itemOrder));
+      saveFridgeItemOrderCache(
+        localStorage,
+        getFridgeItemOrderStorageKey(selectedFridge),
+        itemOrder
+      );
     }
   }, [itemOrder, selectedFridge]);
 
@@ -344,7 +352,7 @@ const FridgeStocktake: React.FC = () => {
   // 添加冰箱
   const handleAddFridge = async () => {
     if (!newFridgeName.trim()) {
-      alert('请输入冰箱名称');
+      alert(t('fridge.alert.nameRequired'));
       return;
     }
     
@@ -358,7 +366,7 @@ const FridgeStocktake: React.FC = () => {
     
     await smartSetDocument('fridges', newFridge.id, newFridge).catch(error => {
       console.error('保存新增冰箱失败:', error);
-      alert('保存新增冰箱失败，请检查网络后重试');
+      alert(t('fridge.alert.addFridgeFailed'));
       throw error;
     });
     setFridges([...fridges, newFridge]);
@@ -381,7 +389,7 @@ const FridgeStocktake: React.FC = () => {
 
     await smartSetDocument('fridges', editingFridge.id, updatedFridge).catch(error => {
       console.error('保存编辑冰箱失败:', error);
-      alert('保存编辑冰箱失败，请检查网络后重试');
+      alert(t('fridge.alert.editFridgeFailed'));
       throw error;
     });
 
@@ -399,14 +407,14 @@ const FridgeStocktake: React.FC = () => {
 
   // 删除冰箱
   const handleDeleteFridge = async (fridge: any) => {
-    if (!window.confirm(`确定要删除冰箱“${fridge.name}”吗？该冰箱的所有库存记录也将被删除。`)) {
+    if (!window.confirm(`${t('fridge.confirm.deletePrefix')}${fridge.name}${t('fridge.confirm.deleteSuffix')}`)) {
       return;
     }
     
     const recordsToDelete = fridgeInventory.filter(inv => inv.fridgeId === fridge.id);
     await smartDeleteDocument('fridges', fridge.id).catch(error => {
       console.error('\u5220\u9664\u51b0\u7bb1\u5931\u8d25:', error);
-      alert('\u5220\u9664\u51b0\u7bb1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('fridge.alert.deleteFridgeFailed'));
       throw error;
     });
 
@@ -415,7 +423,7 @@ const FridgeStocktake: React.FC = () => {
       return smartDeleteDocument('fridge_inventory', recordId);
     })).catch(error => {
       console.error('\u5220\u9664\u51b0\u7bb1\u5e93\u5b58\u8bb0\u5f55\u5931\u8d25:', error);
-      alert('\u5220\u9664\u51b0\u7bb1\u5e93\u5b58\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('fridge.alert.deleteInventoryFailed'));
       throw error;
     });
 
@@ -435,12 +443,12 @@ const FridgeStocktake: React.FC = () => {
 
     const item = inventoryItems.find(i => i.id === transferModal.itemId);
     if (!item) {
-      alert('\u5546\u54c1\u4e0d\u5b58\u5728');
+      alert(t('fridge.alert.itemMissing'));
       return;
     }
 
     if (transferQuantity <= 0) {
-      alert('\u8bf7\u8f93\u5165\u6709\u6548\u7684\u6570\u91cf\uff08\u5fc5\u987b\u5927\u4e8e0\uff09');
+      alert(t('fridge.alert.quantityInvalid'));
       return;
     }
 
@@ -458,12 +466,12 @@ const FridgeStocktake: React.FC = () => {
     const fridgeName = fridges.find(f => f.id === selectedFridge)?.name || '';
 
     if (direction === 'warehouse_to_fridge' && item.currentStock < transferQuantity) {
-      alert(`\u4ed3\u5e93\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${item.currentStock} ${item.unit}`);
+      alert(`${t('fridge.alert.warehouseInsufficient')}: ${item.currentStock} ${item.unit}`);
       return;
     }
 
     if (direction === 'fridge_to_warehouse' && (!existingFridgeRecord || existingFridgeRecord.quantity < transferQuantity)) {
-      alert(`\u51b0\u7bb1\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${existingFridgeRecord?.quantity || 0} ${item.unit}`);
+      alert(`${t('fridge.alert.fridgeInsufficient')}: ${existingFridgeRecord?.quantity || 0} ${item.unit}`);
       return;
     }
 
@@ -485,17 +493,17 @@ const FridgeStocktake: React.FC = () => {
       if (!transferResult.success) {
         const transferError = (transferResult as any).error;
         if (transferError === 'firestore-disabled') {
-          alert('\u4e91\u7aef\u5e93\u5b58\u670d\u52a1\u672a\u542f\u7528\uff0c\u8bf7\u5148\u68c0\u67e5\u7cfb\u7edf\u914d\u7f6e');
+          alert(t('fridge.alert.cloudDisabled'));
         } else if (transferError === 'permission-denied') {
-          alert('\u4e91\u7aef\u6743\u9650\u672a\u5f00\u653e\u51b0\u7bb1\u8c03\u62e8\u8bb0\u5f55\uff0c\u8bf7\u90e8\u7f72\u6700\u65b0 Firestore \u89c4\u5219\u540e\u91cd\u8bd5');
+          alert(t('fridge.alert.permissionDenied'));
         } else if (transferError === 'insufficient-warehouse-stock') {
-          alert('\u4ed3\u5e93\u5e93\u5b58\u4e0d\u8db3\uff0c\u8bf7\u5237\u65b0\u540e\u6838\u5bf9\u5e93\u5b58');
+          alert(t('fridge.alert.verifyWarehouse'));
         } else if (transferError === 'insufficient-fridge-stock') {
-          alert('\u51b0\u7bb1\u5e93\u5b58\u4e0d\u8db3\uff0c\u8bf7\u5237\u65b0\u540e\u6838\u5bf9\u5e93\u5b58');
+          alert(t('fridge.alert.verifyFridge'));
         } else if (transferError === 'fridge-transfer-unconfirmed' || transferError === 'weak-network-transfer-timeout') {
-          alert('\u4e91\u7aef\u786e\u8ba4\u8d85\u65f6\uff0c\u7cfb\u7edf\u65e0\u6cd5\u786e\u8ba4\u8c03\u62e8\u662f\u5426\u5df2\u7ecf\u5165\u8d26\u3002\u8bf7\u5148\u70b9\u51fb\u5237\u65b0\u6838\u5bf9\u5e93\u5b58\u548c\u8c03\u62e8\u8bb0\u5f55\uff0c\u518d\u51b3\u5b9a\u662f\u5426\u91cd\u65b0\u64cd\u4f5c\u3002');
+          alert(t('fridge.alert.transferTimeout'));
         } else {
-          alert('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u5237\u65b0\u6838\u5bf9\u540e\u91cd\u8bd5');
+          alert(t('fridge.alert.transferFailed'));
         }
         return;
       }
@@ -534,12 +542,12 @@ const FridgeStocktake: React.FC = () => {
         }];
       });
 
-      alert(`${isPendingTransfer ? '\u5df2\u672c\u5730\u8bb0\u5f55\uff0c\u5f85\u4e91\u7aef\u540c\u6b65' : (direction === 'warehouse_to_fridge' ? '\u8c03\u62e8\u6210\u529f' : '\u9000\u56de\u6210\u529f')}\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${transferQuantity} ${item.unit}\n${direction === 'warehouse_to_fridge' ? '\u4ed3\u5e93 -> \u51b0\u7bb1' : '\u51b0\u7bb1 -> \u4ed3\u5e93'}\n${isPendingTransfer ? '\u7f51\u7edc\u6062\u590d\u540e\u4f1a\u81ea\u52a8\u5c1d\u8bd5\u540c\u6b65\uff0c\u8bf7\u540e\u7eed\u5237\u65b0\u6838\u5bf9\u8c03\u62e8\u8bb0\u5f55' : '\u5df2\u8bb0\u5f55\u8c03\u62e8\u6d41\u6c34'}`);
+      alert(`${isPendingTransfer ? t('fridge.alert.localPending') : (direction === 'warehouse_to_fridge' ? t('fridge.alert.transferSuccess') : t('fridge.alert.returnSuccess'))}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${transferQuantity} ${item.unit}\n${direction === 'warehouse_to_fridge' ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}\n${isPendingTransfer ? t('fridge.alert.pendingHint') : t('fridge.alert.auditSaved')}`);
       setTransferModal({ show: false, itemId: '', type: 'add' });
       setTransferQuantity(1);
     } catch (error) {
       console.error('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25:', error);
-      alert('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u5237\u65b0\u6838\u5bf9\u540e\u91cd\u8bd5');
+      alert(t('fridge.alert.transferFailed'));
     } finally {
       isTransferSubmittingRef.current = false;
       setIsTransferSubmitting(false);
@@ -547,22 +555,22 @@ const FridgeStocktake: React.FC = () => {
   };
   const handleAddNewItem = async () => {
     if (!newItemData.itemId) {
-      alert('\u8bf7\u9009\u62e9\u5546\u54c1');
+      alert(t('fridge.alert.selectItem'));
       return;
     }
     if (newItemData.quantity <= 0) {
-      alert('\u8bf7\u8f93\u5165\u6709\u6548\u7684\u6570\u91cf\uff08\u5fc5\u987b\u5927\u4e8e0\uff09');
+      alert(t('fridge.alert.quantityInvalid'));
       return;
     }
 
     const item = inventoryItems.find(i => i.id === newItemData.itemId);
     if (!item) {
-      alert('\u5546\u54c1\u4e0d\u5b58\u5728');
+      alert(t('fridge.alert.itemMissing'));
       return;
     }
 
     if (item.currentStock < newItemData.quantity) {
-      alert(`\u4ed3\u5e93\u5e93\u5b58\u4e0d\u8db3\uff01\u5f53\u524d\u5e93\u5b58\uff1a${item.currentStock} ${item.unit}`);
+      alert(`${t('fridge.alert.warehouseInsufficient')}: ${item.currentStock} ${item.unit}`);
       return;
     }
 
@@ -570,7 +578,7 @@ const FridgeStocktake: React.FC = () => {
       inv => inv.fridgeId === selectedFridge && inv.itemId === item.id
     );
     if (existingInCurrentFridge) {
-      alert('\u8be5\u5546\u54c1\u5df2\u5b58\u5728\u5f53\u524d\u51b0\u7bb1\u4e2d');
+      alert(t('fridge.alert.alreadyCurrent'));
       return;
     }
 
@@ -579,7 +587,7 @@ const FridgeStocktake: React.FC = () => {
     );
     if (existingInOtherFridge) {
       const otherFridge = fridges.find(f => f.id === existingInOtherFridge.fridgeId);
-      alert(`\u8be5\u5546\u54c1\u5df2\u5b58\u5728\u4e8e\u201c${otherFridge?.name || '\u5176\u4ed6\u51b0\u7bb1'}\u201d\u4e2d\uff0c\u65e0\u6cd5\u6dfb\u52a0\u5230\u5f53\u524d\u51b0\u7bb1`);
+      alert(`${t('fridge.alert.alreadyOtherPrefix')}${otherFridge?.name || t('fridge.alert.otherFridge')}${t('fridge.alert.alreadyOtherSuffix')}`);
       return;
     }
 
@@ -602,7 +610,7 @@ const FridgeStocktake: React.FC = () => {
       });
     } catch (error) {
       console.error('\u6dfb\u52a0\u51b0\u7bb1\u5546\u54c1\u4fdd\u5b58\u5931\u8d25:', error);
-      alert('\u6dfb\u52a0\u51b0\u7bb1\u5546\u54c1\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('fridge.alert.addItemFailed'));
       return;
     }
 
@@ -619,7 +627,7 @@ const FridgeStocktake: React.FC = () => {
     }]);
     setItemOrder(prev => [...prev.filter(id => id !== item.id), item.id]);
 
-    alert(`\u6dfb\u52a0\u6210\u529f\uff01\n\n\u5546\u54c1\uff1a${item.name}\n\u6570\u91cf\uff1a${newItemData.quantity} ${item.unit}\n\u5df2\u6dfb\u52a0\u5230\uff1a${fridges.find(f => f.id === selectedFridge)?.name}`);
+    alert(`${t('fridge.alert.addSuccess')}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${newItemData.quantity} ${item.unit}\n${t('fridge.alert.addedTo')}: ${fridges.find(f => f.id === selectedFridge)?.name}`);
     setShowAddItemModal(false);
     setNewItemData({ itemId: '', quantity: 1 });
     setAddSearchTerm('');
@@ -633,9 +641,9 @@ const FridgeStocktake: React.FC = () => {
       const fridge = fridges.find(f => f.id === inv.fridgeId);
       return {
         ...inv,
-        itemName: item?.name || (inv as any).itemName || '未知商品',
+        itemName: item?.name || (inv as any).itemName || t('fridge.unknownItem'),
         unit: item?.unit || (inv as any).unit || '',
-        fridgeName: fridge?.name || '未知冰箱',
+        fridgeName: fridge?.name || t('fridge.unknownFridge'),
       };
     });
     const uncountedItems = stocktakeFridgeItems.filter(item =>
@@ -643,7 +651,7 @@ const FridgeStocktake: React.FC = () => {
     );
     
     if (uncountedItems.length > 0) {
-      alert(`⚠️ 还有 ${uncountedItems.length} 个商品未清点：\n${uncountedItems.map(item => '• ' + item.itemName).join('\n')}\n\n请完成所有商品的清点后再确认`);
+      alert(`⚠️ ${t('fridge.alert.uncountedPrefix')} ${uncountedItems.length} ${t('fridge.alert.uncountedSuffix')}:\n${uncountedItems.map(item => '• ' + item.itemName).join('\n')}\n\n${t('fridge.alert.finishAll')}`);
       return;
     }
     
@@ -665,11 +673,11 @@ const FridgeStocktake: React.FC = () => {
     });
 
     if (!hasDifference) {
-      if (!window.confirm('盘点数据与系统库存完全一致，确认完成盘点吗？')) {
+      if (!window.confirm(t('fridge.confirm.same'))) {
         return;
       }
     } else {
-      const confirmMsg = `发现 ${discrepancies.length} 个商品存在差异，确认完成盘点并更新库存吗？`;
+      const confirmMsg = `${t('fridge.confirm.diffPrefix')} ${discrepancies.length} ${t('fridge.confirm.diffSuffix')}`;
       if (!window.confirm(confirmMsg)) {
         return;
       }
@@ -682,8 +690,29 @@ const FridgeStocktake: React.FC = () => {
     isStocktakeSubmittingRef.current = true;
     setIsStocktakeSubmitting(true);
 
+    let submittedRecord: any = null;
+    let nextInventoryAfterStocktake: any[] = [];
+    let historyBeforeStocktake: any[] = [];
+
+    const finishAcceptedStocktake = (pendingCloudSync: boolean) => {
+      setFridgeInventory(nextInventoryAfterStocktake);
+      cacheStocktakeHistory([
+        submittedRecord,
+        ...historyBeforeStocktake.filter(record => record?.id !== submittedRecord?.id),
+      ]);
+      setActualQuantities(prev => {
+        const next = { ...prev };
+        stocktakeFridgeItems.forEach(item => {
+          delete next[getFridgeQuantityKey(item.fridgeId, item.itemId)];
+        });
+        return next;
+      });
+      alert(t(pendingCloudSync ? 'fridge.alert.pendingSync' : 'fridge.alert.completed'));
+    };
+
     try {
       const now = Date.now();
+      const stocktakeDate = getLocalDateString();
 
       // 更新冰箱库存
       const newInventory = fridgeInventory.map(inv => {
@@ -697,17 +726,18 @@ const FridgeStocktake: React.FC = () => {
         }
         return inv;
       });
+      nextInventoryAfterStocktake = newInventory;
 
       const updatedFridgeRecords = newInventory.filter(inv =>
         inv.fridgeId === selectedFridge && actualQuantities[getFridgeQuantityKey(inv.fridgeId, inv.itemId)] !== undefined
       );
-      await Promise.all(
+      const inventoryWriteResults = await Promise.all(
         updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))
       );
 
       // 保存盘点历史
-      const saved = localStorage.getItem(stocktakeHistoryStorageKey);
-      const history = saved ? JSON.parse(saved) : [];
+      const history = stocktakeHistory;
+      historyBeforeStocktake = history;
       const stocktakeActualQuantities = stocktakeFridgeItems.reduce<Record<string, number>>((acc, item) => {
         acc[item.itemId] = actualQuantities[getFridgeQuantityKey(item.fridgeId, item.itemId)] ?? 0;
         return acc;
@@ -718,13 +748,13 @@ const FridgeStocktake: React.FC = () => {
         inventoryItems,
         actualQuantities: stocktakeActualQuantities,
         now,
-        date: getLocalDateString(),
+        date: stocktakeDate,
       });
       const stocktakeRecord = stocktakeRecords[0] || {
         id: `stocktake-${Date.now()}`,
         fridgeId: selectedFridge,
         fridgeName: fridges.find(fridge => fridge.id === selectedFridge)?.name || selectedFridge,
-        date: getLocalDateString(), // 🔥 使用本地时间
+        date: stocktakeDate,
         createdAt: new Date(),
         lastModified: now,
         items: fridgeItems.map(item => {
@@ -746,11 +776,20 @@ const FridgeStocktake: React.FC = () => {
         }),
         totalDiscrepancies: discrepancies.length
       };
-      const recordsToSave = stocktakeRecords.length > 0 ? stocktakeRecords : [stocktakeRecord];
-      await Promise.all(
+      const initialRecords = stocktakeRecords.length > 0 ? stocktakeRecords : [stocktakeRecord];
+      const recordsToSave = initialRecords.map(record => {
+        const id = buildFridgeStocktakeSubmissionId({
+          date: stocktakeDate,
+          fridgeId: record.fridgeId,
+          items: record.items,
+        });
+        return { ...record, id, submissionId: id };
+      });
+      submittedRecord = recordsToSave[0];
+      const historyWriteResults = await Promise.all(
         recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))
       );
-      await Promise.all(
+      const stockRecordWriteResults = await Promise.all(
         recordsToSave.flatMap(historyRecord =>
           historyRecord.items
             .filter((item: any) => item.difference !== 0)
@@ -782,20 +821,28 @@ const FridgeStocktake: React.FC = () => {
         )
       );
 
-      setFridgeInventory(newInventory);
-      cacheStocktakeHistory([...recordsToSave, ...history]);
-      setActualQuantities(prev => {
-        const next = { ...prev };
-        stocktakeFridgeItems.forEach(item => {
-          delete next[getFridgeQuantityKey(item.fridgeId, item.itemId)];
-        });
-        return next;
-      });
+      const writeResults = [
+        ...inventoryWriteResults,
+        ...historyWriteResults,
+        ...stockRecordWriteResults,
+      ];
+      const rejectedWrite = writeResults.find(result => !result?.success && !result?.pending);
+      if (rejectedWrite) {
+        throw new Error(`fridge-stocktake-write-rejected:${String(rejectedWrite.error || 'unknown')}`);
+      }
 
-      alert('盘点完成！');
+      finishAcceptedStocktake(writeResults.some(result => result?.pending));
     } catch (error) {
       console.error('保存盘点历史失败:', error);
-      alert('\u4fdd\u5b58\u76d8\u70b9\u7ed3\u679c\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      const confirmedRecord = submittedRecord?.id
+        ? await smartGetDocument('fridge_stocktake_history', submittedRecord.id, true)
+        : null;
+      if (confirmedRecord) {
+        submittedRecord = confirmedRecord;
+          finishAcceptedStocktake(true);
+      } else {
+        alert(t('fridge.alert.saveFailed'));
+      }
     } finally {
       isStocktakeSubmittingRef.current = false;
       setIsStocktakeSubmitting(false);
@@ -835,12 +882,16 @@ const FridgeStocktake: React.FC = () => {
       );
     } catch (error) {
       console.error('保存冰箱排序失败:', error);
-      alert('保存冰箱排序失败，请检查网络后重试');
+      alert(t('fridge.alert.sortFailed'));
       return;
     }
 
     setItemOrder(newOrder);
-    localStorage.setItem(getFridgeItemOrderStorageKey(selectedFridge), JSON.stringify(newOrder));
+    saveFridgeItemOrderCache(
+      localStorage,
+      getFridgeItemOrderStorageKey(selectedFridge),
+      newOrder
+    );
     setFridgeInventory(inv => inv.map(record => {
       const updatedRecord = orderUpdates.find(update =>
         update.fridgeId === record.fridgeId && update.itemId === record.itemId
@@ -857,16 +908,16 @@ const FridgeStocktake: React.FC = () => {
     });
 
     if (filteredHistory.length === 0) {
-      alert('所选日期无盘点记录');
+      alert(t('fridge.alert.noRecords'));
       return;
     }
 
     let csv = '\uFEFF';
-    csv += '冰箱名称,盘点时间,商品名称,单位,总库存,仓库值,冰箱值,盘点值,差异\n';
+    csv += `${t('fridge.csv.headers')}\n`;
     
     filteredHistory.forEach(record => {
       const fridge = fridges.find(f => f.id === record.fridgeId);
-      const fridgeName = fridge?.name || record.fridgeName || '未知冰箱';
+      const fridgeName = fridge?.name || record.fridgeName || t('fridge.unknownFridge');
       const date = formatStocktakeRecordDateTime(record);
       
       record.items.forEach((item: any) => {
@@ -877,7 +928,7 @@ const FridgeStocktake: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `盘点记录_${selectedHistoryDate}.csv`;
+    link.download = `${t('fridge.csv.filePrefix')}_${selectedHistoryDate}.csv`;
     link.click();
   };
 
@@ -895,11 +946,11 @@ const FridgeStocktake: React.FC = () => {
     }}>
       {/* 标题栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>🧊 冰箱盘点</h2>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>🧊 {t('fridge.title')}</h2>
         <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {lastSyncedAt && (
             <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              {t('fridge.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
           <button
@@ -916,7 +967,7 @@ const FridgeStocktake: React.FC = () => {
               fontSize: '0.78rem'
             }}
           >
-            {isRefreshing ? '同步中...' : '刷新冰箱'}
+            {isRefreshing ? t('fridge.syncing') : t('fridge.refresh')}
           </button>
           <button
             onClick={() => setShowAddFridgeModal(true)}
@@ -931,7 +982,7 @@ const FridgeStocktake: React.FC = () => {
               fontSize: '0.78rem'
             }}
           >
-            ➕ 冰箱管理
+            ➕ {t('fridge.manage')}
           </button>
           <button
             onClick={openTransferHistoryModal}
@@ -946,7 +997,7 @@ const FridgeStocktake: React.FC = () => {
               fontSize: '0.78rem'
             }}
           >
-            调拨记录
+            {t('fridge.transferHistory')}
           </button>
           <button
             onClick={openHistoryModal}
@@ -961,7 +1012,7 @@ const FridgeStocktake: React.FC = () => {
               fontSize: '0.78rem'
             }}
           >
-            📋 盘点历史
+            📋 {t('fridge.history')}
           </button>
         </div>
       </div>
@@ -1017,7 +1068,7 @@ const FridgeStocktake: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) auto auto', gap: '0.45rem', alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="搜索商品名称或扫描条形码..."
+          placeholder={t('fridge.searchPlaceholder')}
           value={searchTerm}
           onChange={(e) => {
             setSearchTerm(e.target.value);
@@ -1038,7 +1089,7 @@ const FridgeStocktake: React.FC = () => {
           }}
         />
         <div style={{ fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-          📊 {fridgeItems.length} 个商品
+          📊 {fridgeItems.length} {t('fridge.itemCount')}
         </div>
         <button
           onClick={completeStocktake}
@@ -1056,7 +1107,7 @@ const FridgeStocktake: React.FC = () => {
             opacity: isStocktakeSubmitting ? 0.75 : 1
           }}
         >
-          {isStocktakeSubmitting ? '处理中...' : '✅ 完成盘点'}
+          {isStocktakeSubmitting ? t('fridge.processing') : `✅ ${t('fridge.complete')}`}
         </button>
       </div>
 
@@ -1085,10 +1136,10 @@ const FridgeStocktake: React.FC = () => {
             }}
           >
             <span style={{ fontSize: '1.1rem' }}>+</span>
-            添加新商品到冰箱
+            {t('fridge.addItem')}
           </button>
           <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>
-            📊 {fridgeItems.length} 个商品
+            📊 {fridgeItems.length} {t('fridge.itemCount')}
           </div>
         </div>
         
@@ -1096,22 +1147,22 @@ const FridgeStocktake: React.FC = () => {
           {fridgeItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
               <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📦</div>
-              <p>该冰箱暂无商品</p>
-              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>点击上方"添加新商品到冰箱"按钮开始添加</p>
+              <p>{t('fridge.empty')}</p>
+              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>{t('fridge.emptyHint')}</p>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>排序</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>商品名称</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>条形码</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>总库存</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>仓库值</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>冰箱值</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>盘点值</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>差异</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'center', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>操作</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.sort')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.itemName')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.barcode')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.totalStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.warehouseStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.fridgeStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.actualStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.difference')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'center', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('fridge.table.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1127,7 +1178,8 @@ const FridgeStocktake: React.FC = () => {
                   
                   return sortedItems.map((item) => {
                     const warehouseItem = inventoryItems.find(i => i.id === item.itemId);
-                    const warehouseStock = warehouseItem?.currentStock || 0;
+                    const parsedWarehouseStock = Number(warehouseItem?.currentStock);
+                    const warehouseStock = Number.isFinite(parsedWarehouseStock) ? parsedWarehouseStock : 0;
                     const fridgeStock = item.quantity;
                     const totalStock = warehouseStock + fridgeStock;
                     const quantityKey = getFridgeQuantityKey(item.fridgeId, item.itemId);
@@ -1274,7 +1326,7 @@ const FridgeStocktake: React.FC = () => {
                               <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>
                             )
                           ) : (
-                            <span style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: '600' }}>⏳ 待清点</span>
+                            <span style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: '600' }}>⏳ {t('fridge.table.pending')}</span>
                           )}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
@@ -1284,7 +1336,7 @@ const FridgeStocktake: React.FC = () => {
                               onClick={() => {
                                 const warehouseStock = warehouseItem?.currentStock || 0;
                                 if (warehouseStock === 0) {
-                                  alert('⚠️ 仓库库存不足');
+                                  alert(`⚠️ ${t('fridge.alert.warehouseInsufficient')}`);
                                   return;
                                 }
                                 setTransferModal({ show: true, itemId: item.itemId, type: 'add' });
@@ -1301,7 +1353,7 @@ const FridgeStocktake: React.FC = () => {
                                 fontWeight: '700',
                                 lineHeight: '1'
                               }}
-                              title="从仓库调拨到冰箱"
+                              title={t('fridge.action.transferToFridge')}
                             >
                               +
                             </button>
@@ -1310,7 +1362,7 @@ const FridgeStocktake: React.FC = () => {
                             <button
                               onClick={() => {
                                 if (fridgeStock === 0) {
-                                  alert('⚠️ 冰箱库存为0');
+                                  alert(`⚠️ ${t('fridge.alert.fridgeInsufficient')}`);
                                   return;
                                 }
                                 setTransferModal({ show: true, itemId: item.itemId, type: 'remove' });
@@ -1327,7 +1379,7 @@ const FridgeStocktake: React.FC = () => {
                                 fontWeight: '700',
                                 lineHeight: '1'
                               }}
-                              title="从冰箱退回仓库"
+                              title={t('fridge.action.returnToWarehouse')}
                             >
                               -
                             </button>
@@ -1335,7 +1387,7 @@ const FridgeStocktake: React.FC = () => {
                             {/* 删除商品 */}
                             <button
                               onClick={async () => {
-                                if (window.confirm(`\u786e\u5b9a\u8981\u4ece\u51b0\u7bb1\u4e2d\u5220\u9664\u201c${item.itemName}\u201d\u5417\uff1f\n\n\u51b0\u7bb1\u4e2d\u7684 ${fridgeStock} ${warehouseItem?.unit || '\u74f6'} \u5c06\u9000\u56de\u5230\u4ed3\u5e93`)) {
+                                if (window.confirm(`${t('fridge.confirm.removePrefix')}${item.itemName}${t('fridge.confirm.removeMiddle')} ${fridgeStock} ${warehouseItem?.unit || ''} ${t('fridge.confirm.removeSuffix')}`)) {
                                   const now = Date.now();
                                   const fridgeInventoryId = `${selectedFridge}-${item.itemId}`;
 
@@ -1347,7 +1399,7 @@ const FridgeStocktake: React.FC = () => {
                                     await smartDeleteDocument('fridge_inventory', fridgeInventoryId);
                                   } catch (error) {
                                     console.error('\u4ece\u51b0\u7bb1\u79fb\u9664\u5546\u54c1\u5931\u8d25:', error);
-                                    alert('\u4ece\u51b0\u7bb1\u79fb\u9664\u5546\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                                    alert(t('fridge.alert.removeFailed'));
                                     return;
                                   }
 
@@ -1367,7 +1419,7 @@ const FridgeStocktake: React.FC = () => {
                                 cursor: 'pointer',
                                 fontSize: '0.75rem'
                               }}
-                              title="从冰箱移除此商品"
+                              title={t('fridge.action.removeItem')}
                             >
                               🗑️
                             </button>
@@ -1405,11 +1457,11 @@ const FridgeStocktake: React.FC = () => {
             maxHeight: '80vh',
             overflow: 'auto'
           }}>
-            <h3 style={{ margin: '0 0 1.5rem 0' }}>🧊 冰箱管理</h3>
+            <h3 style={{ margin: '0 0 1.5rem 0' }}>🧊 {t('fridge.manage.title')}</h3>
             
             {/* 现有冰箱列表 */}
             <div style={{ marginBottom: '1.5rem' }}>
-              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>现有冰箱</h4>
+              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>{t('fridge.manage.existing')}</h4>
               {fridges.map(fridge => (
                 <div key={fridge.id} style={{
                   display: 'flex',
@@ -1444,7 +1496,7 @@ const FridgeStocktake: React.FC = () => {
                         fontSize: '0.85rem'
                       }}
                     >
-                      编辑
+                      {t('fridge.manage.edit')}
                     </button>
                     <button
                       onClick={() => handleDeleteFridge(fridge)}
@@ -1458,7 +1510,7 @@ const FridgeStocktake: React.FC = () => {
                         fontSize: '0.85rem'
                       }}
                     >
-                      删除
+                      {t('fridge.manage.delete')}
                     </button>
                   </div>
                 </div>
@@ -1467,14 +1519,14 @@ const FridgeStocktake: React.FC = () => {
 
             {/* 添加新冰箱 */}
             <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '1.5rem' }}>
-              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>添加新冰箱</h4>
+              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>{t('fridge.manage.addTitle')}</h4>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>冰箱名称 *</label>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.manage.name')}</label>
                 <input
                   type="text"
                   value={newFridgeName}
                   onChange={(e) => setNewFridgeName(e.target.value)}
-                  placeholder="例如：1号冰箱"
+                  placeholder={t('fridge.manage.namePlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1485,12 +1537,12 @@ const FridgeStocktake: React.FC = () => {
                 />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>位置</label>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.manage.location')}</label>
                 <input
                   type="text"
                   value={newFridgeLocation}
                   onChange={(e) => setNewFridgeLocation(e.target.value)}
-                  placeholder="例如：吧台左侧"
+                  placeholder={t('fridge.manage.locationPlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1516,7 +1568,7 @@ const FridgeStocktake: React.FC = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  取消
+                  {t('fridge.manage.cancel')}
                 </button>
                 <button
                   onClick={handleAddFridge}
@@ -1530,7 +1582,7 @@ const FridgeStocktake: React.FC = () => {
                     fontWeight: '600'
                   }}
                 >
-                  添加冰箱
+                  {t('fridge.manage.add')}
                 </button>
               </div>
             </div>
@@ -1558,9 +1610,9 @@ const FridgeStocktake: React.FC = () => {
             padding: '2rem',
             minWidth: '400px'
           }}>
-            <h3 style={{ margin: '0 0 1.5rem 0' }}>✏️ 编辑冰箱</h3>
+            <h3 style={{ margin: '0 0 1.5rem 0' }}>✏️ {t('fridge.manage.editTitle')}</h3>
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>冰箱名称 *</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.manage.name')}</label>
               <input
                 type="text"
                 value={newFridgeName}
@@ -1575,7 +1627,7 @@ const FridgeStocktake: React.FC = () => {
               />
             </div>
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>位置</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.manage.location')}</label>
               <input
                 type="text"
                 value={newFridgeLocation}
@@ -1606,7 +1658,7 @@ const FridgeStocktake: React.FC = () => {
                   cursor: 'pointer'
                 }}
               >
-                取消
+                {t('fridge.manage.cancel')}
               </button>
               <button
                 onClick={handleEditFridge}
@@ -1620,7 +1672,7 @@ const FridgeStocktake: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                保存修改
+                {t('fridge.manage.save')}
               </button>
             </div>
           </div>
@@ -1649,13 +1701,13 @@ const FridgeStocktake: React.FC = () => {
             maxHeight: '80vh',
             overflow: 'auto'
           }}>
-            <h3 style={{ margin: '0 0 1.5rem 0' }}>➕ 添加新商品到冰箱</h3>
+            <h3 style={{ margin: '0 0 1.5rem 0' }}>➕ {t('fridge.add.title')}</h3>
             
             {/* 搜索框 */}
             <div style={{ marginBottom: '1rem' }}>
               <input
                 type="text"
-                placeholder="搜索商品（Cerveza / Bebida / Jugo）..."
+                placeholder={t('fridge.add.searchPlaceholder')}
                 value={addSearchTerm}
                 onChange={(e) => setAddSearchTerm(e.target.value)}
                 style={{
@@ -1701,7 +1753,7 @@ const FridgeStocktake: React.FC = () => {
                         <div>
                           <div style={{ fontWeight: '600' }}>{item.name}</div>
                           <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
-                            {item.unit} | 仓库库存: {item.currentStock}
+                            {item.unit} | {t('fridge.add.warehouseStock')}: {item.currentStock}
                           </div>
                         </div>
                         {newItemData.itemId === item.id && (
@@ -1718,7 +1770,7 @@ const FridgeStocktake: React.FC = () => {
               const selectedItem = inventoryItems.find(i => i.id === newItemData.itemId);
               return (
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>调拨数量</label>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.add.quantity')}</label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -1753,7 +1805,7 @@ const FridgeStocktake: React.FC = () => {
                         }, 0);
                       }
                     }}
-                    placeholder="请输入数量"
+                    placeholder={t('fridge.add.quantityPlaceholder')}
                     style={{
                       width: '100%',
                       padding: '0.6rem',
@@ -1763,7 +1815,7 @@ const FridgeStocktake: React.FC = () => {
                     }}
                   />
                   <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.3rem' }}>
-                    最多可调拨 {selectedItem?.currentStock || 0} {selectedItem?.unit || ''}
+                    {t('fridge.add.maxTransfer')} {selectedItem?.currentStock || 0} {selectedItem?.unit || ''}
                   </div>
                 </div>
               );
@@ -1785,7 +1837,7 @@ const FridgeStocktake: React.FC = () => {
                   cursor: 'pointer'
                 }}
               >
-                取消
+                {t('fridge.add.cancel')}
               </button>
               <button
                 onClick={handleAddNewItem}
@@ -1799,7 +1851,7 @@ const FridgeStocktake: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                确认添加
+                {t('fridge.add.confirm')}
               </button>
             </div>
           </div>
@@ -1838,28 +1890,28 @@ const FridgeStocktake: React.FC = () => {
               overflow: 'auto'
             }}>
               <h3 style={{ margin: '0 0 1.5rem 0' }}>
-                {isAdd ? '📦 从仓库调拨到冰箱' : '🔄 从冰箱退回仓库'}
+                {isAdd ? `📦 ${t('fridge.transfer.addTitle')}` : `🔄 ${t('fridge.transfer.removeTitle')}`}
               </h3>
               
               <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>商品：{item.name}</div>
+                <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>{t('fridge.transfer.item')}: {item.name}</div>
                 <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
                   {isAdd ? (
                     <>
-                      <div>当前冰箱库存：{fridgeStock} {item.unit}</div>
-                      <div>仓库库存：{warehouseStock} {item.unit}</div>
+                      <div>{t('fridge.transfer.currentFridgeStock')}: {fridgeStock} {item.unit}</div>
+                      <div>{t('fridge.transfer.warehouseStock')}: {warehouseStock} {item.unit}</div>
                     </>
                   ) : (
                     <>
-                      <div>当前冰箱库存：{fridgeStock} {item.unit}</div>
-                      <div>退回后仓库库存：{warehouseStock + transferQuantity} {item.unit}</div>
+                      <div>{t('fridge.transfer.currentFridgeStock')}: {fridgeStock} {item.unit}</div>
+                      <div>{t('fridge.transfer.warehouseAfter')}: {warehouseStock + transferQuantity} {item.unit}</div>
                     </>
                   )}
                 </div>
               </div>
 
               <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>数量</label>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600' }}>{t('fridge.transfer.quantity')}</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -1894,7 +1946,7 @@ const FridgeStocktake: React.FC = () => {
                       }, 0);
                     }
                   }}
-                  placeholder="请输入数量"
+                  placeholder={t('fridge.transfer.quantityPlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1905,7 +1957,7 @@ const FridgeStocktake: React.FC = () => {
                   }}
                 />
                 <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.3rem' }}>
-                  {isAdd ? `最多可调拨 ${warehouseStock} ${item.unit}` : `最多可退回 ${fridgeStock} ${item.unit}`}
+                  {isAdd ? `${t('fridge.transfer.maxTransfer')} ${warehouseStock} ${item.unit}` : `${t('fridge.transfer.maxReturn')} ${fridgeStock} ${item.unit}`}
                 </div>
               </div>
 
@@ -1927,7 +1979,7 @@ const FridgeStocktake: React.FC = () => {
                     opacity: isTransferSubmitting ? 0.65 : 1
                   }}
                 >
-                  取消
+                  {t('fridge.transfer.cancel')}
                 </button>
                 <button
                   onClick={handleSimpleTransfer}
@@ -1942,7 +1994,7 @@ const FridgeStocktake: React.FC = () => {
                     fontWeight: '600'
                   }}
                 >
-                  {isTransferSubmitting ? '处理中...' : (isAdd ? '确认调拨' : '确认退回')}
+                  {isTransferSubmitting ? t('fridge.processing') : (isAdd ? t('fridge.transfer.confirmAdd') : t('fridge.transfer.confirmReturn'))}
                 </button>
               </div>
             </div>
@@ -1977,9 +2029,9 @@ const FridgeStocktake: React.FC = () => {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>调拨记录</h3>
+                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{t('fridge.transferHistory.title')}</h3>
                 <div style={{ color: '#6b7280', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                  每条记录包含具体时间、数量、方向、仓库/冰箱调拨前后数值
+                  {t('fridge.transferHistory.subtitle')}
                 </div>
               </div>
               <button
@@ -1993,7 +2045,7 @@ const FridgeStocktake: React.FC = () => {
                   cursor: 'pointer'
                 }}
               >
-                关闭
+                {t('fridge.transferHistory.close')}
               </button>
             </div>
 
@@ -2019,7 +2071,7 @@ const FridgeStocktake: React.FC = () => {
                 type="text"
                 value={transferSearchTerm}
                 onChange={(e) => setTransferSearchTerm(e.target.value)}
-                placeholder="搜索商品、冰箱、操作ID"
+                placeholder={t('fridge.transferHistory.searchPlaceholder')}
                 style={{
                   padding: '0.55rem 0.7rem',
                   border: '1px solid #d1d5db',
@@ -2039,7 +2091,7 @@ const FridgeStocktake: React.FC = () => {
                   fontWeight: 600
                 }}
               >
-                全部日期
+                {t('fridge.transferHistory.allDates')}
               </button>
               <button
                 onClick={refreshTransferHistory}
@@ -2054,33 +2106,33 @@ const FridgeStocktake: React.FC = () => {
                   fontWeight: 600
                 }}
               >
-                {isTransferHistoryLoading ? '刷新中...' : '刷新记录'}
+                {isTransferHistoryLoading ? t('fridge.transferHistory.refreshing') : t('fridge.transferHistory.refresh')}
               </button>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#6b7280', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              <span>当前显示 {filteredTransferRecords.length} 条记录</span>
-              {transferHistoryDate && <span>日期：{transferHistoryDate}</span>}
+              <span>{t('fridge.transferHistory.showing')} {filteredTransferRecords.length} {t('fridge.transferHistory.records')}</span>
+              {transferHistoryDate && <span>{t('fridge.transferHistory.date')}: {transferHistoryDate}</span>}
             </div>
 
             <div style={{ flex: 1, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: '0.5rem' }}>
               {filteredTransferRecords.length === 0 ? (
                 <div style={{ padding: '3rem', textAlign: 'center', color: '#9ca3af' }}>
-                  暂无调拨记录
+                  {t('fridge.transferHistory.empty')}
                 </div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem' }}>
                   <thead style={{ position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }}>
                     <tr>
-                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>时间</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>商品</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>冰箱</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>方向</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>数量</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>仓库前/后</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>冰箱前/后</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>状态</th>
-                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>操作ID</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.time')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.item')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.fridge')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.direction')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.quantity')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.warehouseBeforeAfter')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.fridgeBeforeAfter')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.status')}</th>
+                      <th style={{ padding: '0.7rem', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{t('fridge.transferHistory.operationId')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2100,7 +2152,7 @@ const FridgeStocktake: React.FC = () => {
                             {record.fridgeName || record.fridgeId || '--'}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'center' }}>
-                            {isToFridge ? '仓库→冰箱' : '冰箱→仓库'}
+                            {isToFridge ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'right', fontWeight: 700 }}>
                             {record.quantity || 0}
@@ -2112,7 +2164,7 @@ const FridgeStocktake: React.FC = () => {
                             {record.beforeFridgeStock ?? '--'} / {record.afterFridgeStock ?? '--'}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'center', color: pending ? '#c2410c' : '#15803d', fontWeight: 700 }}>
-                            {pending ? '待同步' : '已入账'}
+                            {pending ? t('fridge.transferHistory.pending') : t('fridge.transferHistory.posted')}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', fontFamily: 'monospace', color: '#6b7280', maxWidth: '170px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {record.operationId || record.id || '--'}
@@ -2156,7 +2208,7 @@ const FridgeStocktake: React.FC = () => {
             overflow: 'hidden'
           }} id="fridge-stocktake-print" className="print-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.65rem', flexWrap: 'wrap' }}>
-              <h3 style={{ margin: 0 }}>📋 今日盘点汇总</h3>
+              <h3 style={{ margin: 0 }}>📋 {t('fridge.historyTitle')}</h3>
               <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <input
                   type="date"
@@ -2181,7 +2233,7 @@ const FridgeStocktake: React.FC = () => {
                     fontSize: '0.85rem'
                   }}
                 >
-                  📥 导出CSV
+                  📥 {t('fridge.exportCsv')}
                 </button>
                 <button
                   onClick={() => printStocktakeHistory('fridge-stocktake-print')}
@@ -2195,7 +2247,7 @@ const FridgeStocktake: React.FC = () => {
                     fontSize: '0.85rem'
                   }}
                 >
-                  🖨️ 打印
+                  🖨️ {t('fridge.print')}
                 </button>
                 <button
                   onClick={() => setShowHistoryModal(false)}
@@ -2209,7 +2261,7 @@ const FridgeStocktake: React.FC = () => {
                     fontSize: '0.85rem'
                   }}
                 >
-                  关闭
+                  {t('fridge.close')}
                 </button>
               </div>
             </div>
@@ -2225,7 +2277,7 @@ const FridgeStocktake: React.FC = () => {
                 return (
                   <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
                     <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📊</div>
-                    <p>{selectedHistoryDate === getLocalDateString() ? '今日暂无盘点记录' : `${selectedHistoryDate} 无盘点记录`}</p>
+                    <p>{selectedHistoryDate === getLocalDateString() ? t('fridge.noRecordsToday') : `${selectedHistoryDate} ${t('fridge.noRecordsSuffix')}`}</p>
                   </div>
                 );
               }
@@ -2251,7 +2303,7 @@ const FridgeStocktake: React.FC = () => {
                         }}>
                           <div>
                             <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>
-                              🧊 {latestRecord.fridgeName || '未知冰箱'}
+                              🧊 {latestRecord.fridgeName || t('fridge.unknownFridge')}
                             </div>
                             <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
                               {formatStocktakeRecordDateTime(latestRecord)}
@@ -2264,7 +2316,7 @@ const FridgeStocktake: React.FC = () => {
                             borderRadius: '0.375rem',
                             fontWeight: '600'
                           }}>
-                            {latestRecord.totalDiscrepancies > 0 ? `⚠️ ${latestRecord.totalDiscrepancies}个差异` : '✓ 无差异'}
+                            {latestRecord.totalDiscrepancies > 0 ? `⚠️ ${latestRecord.totalDiscrepancies} ${t('fridge.discrepancies')}` : `✓ ${t('fridge.noDifference')}`}
                           </div>
                         </div>
 
@@ -2272,12 +2324,12 @@ const FridgeStocktake: React.FC = () => {
                           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                             <thead style={{ backgroundColor: 'white', position: 'sticky', top: 0 }}>
                               <tr>
-                                <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>商品名称</th>
-                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>总库存</th>
-                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>仓库值</th>
-                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>冰箱值</th>
-                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>盘点值</th>
-                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>差异</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.itemName')}</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.totalStock')}</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.warehouseStock')}</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.fridgeStock')}</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.actualStock')}</th>
+                                <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('fridge.table.difference')}</th>
                               </tr>
                             </thead>
                             <tbody>

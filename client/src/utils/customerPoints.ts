@@ -19,13 +19,14 @@ const getCurrentStoreId = (): string | null => {
   }
 };
 
-export const getScopedPointsTransactionsKey = (): string => {
+export const getScopedPointsTransactionsKey = (): string | null => {
   const storeId = getCurrentStoreId();
-  return storeId ? `store_${storeId}_${POINTS_TRANSACTIONS_KEY}` : POINTS_TRANSACTIONS_KEY;
+  return storeId ? `store_${storeId}_${POINTS_TRANSACTIONS_KEY}` : null;
 };
 
 export const loadScopedPointsTransactions = (): ScopedPointsTransaction[] => {
   const scopedKey = getScopedPointsTransactionsKey();
+  if (!scopedKey) return [];
   const saved = localStorage.getItem(scopedKey);
   if (!saved) return [];
 
@@ -39,6 +40,7 @@ export const loadScopedPointsTransactions = (): ScopedPointsTransaction[] => {
 
 export const saveScopedPointsTransactions = (records: ScopedPointsTransaction[]): void => {
   const scopedKey = getScopedPointsTransactionsKey();
+  if (!scopedKey) return;
   localStorage.setItem(scopedKey, JSON.stringify(records));
 
   if (scopedKey !== POINTS_TRANSACTIONS_KEY) {

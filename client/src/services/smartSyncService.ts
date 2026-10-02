@@ -5,6 +5,7 @@ import {
   updateDoc,
   deleteDoc,
   getDoc,
+  getDocFromServer,
   getDocs,
   getDocsFromServer,
   query,
@@ -19,6 +20,21 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dataService } from './DataService';
+import {
+  buildProvisionalOrderNumber,
+  hasTerminalStatusConflict,
+  isProvisionalOrderNumber,
+} from '../utils/posLifecycle';
+import { toLocalDateKey } from '../utils/localTime';
+import { type StockDeductionPlan } from '../utils/stockDeduction';
+import {
+  normalizePurchaseOrderDateFields,
+  normalizePurchaseStockRecordDateFields,
+} from '../utils/purchaseDates';
+import {
+  compactPurchaseExpenseCache,
+  getPendingExpenseIds,
+} from '../utils/purchaseLocalCache';
 
 /**
  */
@@ -49,6 +65,7 @@ const FIRESTORE_ENABLED = true;
 const REALTIME_SYNC_ENABLED = true;
 const GLOBAL_COLLECTIONS = ['users', 'stores', 'system_roles'];
 const WEAK_NETWORK_TIMEOUT_MS = 4500;
+const PURCHASE_IMMEDIATE_SYNC_TIMEOUT_MS = 12000;
 const FRIDGE_TRANSFER_TIMEOUT_MS = 15000;
 const SYNC_CONFLICTS_KEY = 'local_pending_sync_conflicts';
 
@@ -93,13 +110,23 @@ const isExpectedOfflineReadError = (error: any): boolean => {
 
 type SmartWriteResult = {
   success: boolean;
+  id?: string;
+  data?: any;
+  operationId?: string;
+  duplicate?: boolean;
   cloudSynced?: boolean;
   pending?: boolean;
   offline?: boolean;
   localOnly?: boolean;
   weakNetworkFallback?: boolean;
   skipped?: boolean;
+  remoteData?: any;
   error?: any;
+  localFirst?: boolean;
+};
+
+type SmartWriteOptions = {
+  localFirst?: boolean;
 };
 
 const getCurrentStoreId = (): string | null => {
@@ -284,6 +311,7 @@ const getPosPaymentRank = (paymentStatus?: string): number => {
 
 const isPosOrderLifecycleRegression = (current: any, incoming: any): boolean => {
   if (!current || !incoming) return false;
+  if (hasTerminalStatusConflict(current, incoming)) return true;
   if (current.stockDeducted && !incoming.stockDeducted) return true;
   if (current.completedAt && !incoming.completedAt) return true;
   if (current.clearedAt && !incoming.clearedAt) return true;
@@ -339,9 +367,9 @@ const excludeDeletedRecords = (records: any[]): any[] => {
   return records.filter(record => !record?.isDeleted);
 };
 
-const getPendingPosOrderSyncIds = (): Set<string> => {
+const getPendingPosOrderSyncIds = (storeIdOverride?: string): Set<string> => {
   try {
-    const storeId = getCurrentStoreId();
+    const storeId = storeIdOverride || getCurrentStoreId();
     const storageKey = storeId ? `store_${storeId}_pos_pending_order_sync` : 'pos_pending_order_sync';
     const stored = localStorage.getItem(storageKey);
     return stored ? new Set(JSON.parse(stored)) : new Set();
@@ -350,17 +378,35 @@ const getPendingPosOrderSyncIds = (): Set<string> => {
   }
 };
 
-const replaceLocalPosOrdersForDatePrefix = (datePrefix: string, cloudOrders: any[]) => {
-  const localStorageKey = getLocalStorageKey('pos_orders');
+const replaceLocalPosOrdersForDatePrefix = (datePrefix: string, cloudOrders: any[], storeIdOverride?: string) => {
+  const collectionName = storeIdOverride ? `stores/${storeIdOverride}/pos_orders` : 'pos_orders';
+  const localStorageKey = getLocalStorageKey(collectionName);
   if (!localStorageKey) return;
 
-  const pendingOrderIds = getPendingPosOrderSyncIds();
-  const localOrders = getFromLocalStorage('pos_orders');
+  const pendingOrderIds = getPendingPosOrderSyncIds(storeIdOverride);
+  const localOrders = getFromLocalStorage(collectionName);
   const retainedOrders = localOrders.filter(order => {
     if (pendingOrderIds.has(String(order?.id || ''))) return true;
     return !String(order?.orderNumber || '').startsWith(datePrefix);
   });
-  localStorage.setItem(localStorageKey, JSON.stringify([...retainedOrders, ...cloudOrders]));
+  try {
+    localStorage.setItem(localStorageKey, JSON.stringify([...retainedOrders, ...cloudOrders]));
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      const currentDayRecovery = new Map<string, any>();
+      cloudOrders.forEach(order => currentDayRecovery.set(String(order?.id || order?.orderNumber || ''), order));
+      localOrders
+        .filter(order => pendingOrderIds.has(String(order?.id || '')))
+        .forEach(order => currentDayRecovery.set(String(order?.id || order?.orderNumber || ''), order));
+      try {
+        localStorage.setItem(localStorageKey, JSON.stringify(Array.from(currentDayRecovery.values())));
+      } catch (recoveryError) {
+        console.warn('POS current-day recovery cache write failed; cloud data will still be displayed:', recoveryError);
+      }
+      return;
+    }
+    console.warn('POS current-day local cache write failed; cloud data will still be displayed:', error);
+  }
 };
 
 const CLOUD_AUTHORITATIVE_SUBSCRIPTIONS = new Set(['pos_tables']);
@@ -374,6 +420,14 @@ const sanitizeFirestoreValue = (value: any): any => {
 
   if (value instanceof Date) {
     return !isNaN(value.getTime()) ? Timestamp.fromDate(value) : undefined;
+  }
+
+  if (
+    typeof value === 'object' &&
+    typeof value.seconds === 'number' &&
+    typeof value.nanoseconds === 'number'
+  ) {
+    return new Timestamp(value.seconds, value.nanoseconds);
   }
 
   if (Array.isArray(value)) {
@@ -440,9 +494,18 @@ interface PendingChange {
   operation: 'add' | 'update' | 'delete';
   data?: any;
   timestamp: number;
+  storeId?: string | null;
+  status?: 'pending' | 'conflict';
+  lastAttemptAt?: number;
+  error?: string;
 }
 
 const PENDING_CHANGES_KEY = 'pending_firestore_changes';
+
+const getPendingChangesStorageKey = () => {
+  const storeId = getCurrentStoreId();
+  return storeId ? `store_${storeId}_${PENDING_CHANGES_KEY}` : PENDING_CHANGES_KEY;
+};
 
 const coalescePendingChanges = (changes: PendingChange[]): PendingChange[] => {
   const result: PendingChange[] = [];
@@ -466,13 +529,14 @@ const coalescePendingChanges = (changes: PendingChange[]): PendingChange[] => {
 
 const getPendingChanges = (): PendingChange[] => {
   try {
-    const changes = localStorage.getItem(PENDING_CHANGES_KEY);
+    const storageKey = getPendingChangesStorageKey();
+    const changes = localStorage.getItem(storageKey);
     const parsed = changes ? JSON.parse(changes) : [];
     if (!Array.isArray(parsed)) return [];
 
     const coalesced = coalescePendingChanges(parsed);
     if (coalesced.length !== parsed.length) {
-      localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(coalesced));
+      localStorage.setItem(storageKey, JSON.stringify(coalesced));
     }
     return coalesced;
   } catch {
@@ -481,11 +545,16 @@ const getPendingChanges = (): PendingChange[] => {
 };
 
 const savePendingChange = (change: PendingChange) => {
-  const changes = coalescePendingChanges([...getPendingChanges(), change]);
-  localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(changes));
+  const changes = coalescePendingChanges([...getPendingChanges(), {
+    ...change,
+    storeId: change.storeId ?? getCurrentStoreId(),
+    status: change.status || 'pending',
+  }]);
+  localStorage.setItem(getPendingChangesStorageKey(), JSON.stringify(changes));
 };
 
 const clearPendingChanges = () => {
+  localStorage.removeItem(getPendingChangesStorageKey());
   localStorage.removeItem(PENDING_CHANGES_KEY);
 };
 
@@ -494,7 +563,73 @@ const setPendingChanges = (changes: PendingChange[]) => {
     clearPendingChanges();
     return;
   }
-  localStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify(changes));
+  localStorage.setItem(getPendingChangesStorageKey(), JSON.stringify(changes));
+};
+
+export const getPendingSyncStatus = () => {
+  const pendingChanges = getPendingChanges();
+  let conflicts: any[] = [];
+  try {
+    const stored = localStorage.getItem(getSyncConflictsKey());
+    conflicts = stored ? JSON.parse(stored) : [];
+  } catch {
+    conflicts = [];
+  }
+
+  return {
+    pendingCount: pendingChanges.length,
+    conflictCount: Array.isArray(conflicts) ? conflicts.length : 0,
+    pendingChanges,
+    conflicts: Array.isArray(conflicts) ? conflicts : [],
+  };
+};
+
+const LOCAL_COLLECTION_CACHE_LIMITS: Record<string, number> = {
+  inventory_stock_records: 800,
+};
+
+const isQuotaExceededError = (error: any): boolean => (
+  error?.name === 'QuotaExceededError' ||
+  error?.code === 22 ||
+  String(error?.message || '').includes('exceeded the quota')
+);
+
+const compactCollectionForLocalCache = (collectionName: string, rows: any[]) => {
+  const collectionKey = getCollectionKey(collectionName);
+  const limit = LOCAL_COLLECTION_CACHE_LIMITS[collectionKey];
+  if (!limit || rows.length <= limit) return rows;
+
+  return [...rows]
+    .sort((a, b) => getRecordVersion(b) - getRecordVersion(a))
+    .slice(0, limit);
+};
+
+const setCollectionLocalCache = (collectionName: string, rows: any[]) => {
+  const localStorageKey = getLocalStorageKey(collectionName);
+  if (!localStorageKey) return;
+
+  try {
+    localStorage.setItem(localStorageKey, JSON.stringify(rows));
+  } catch (error) {
+    if (!isQuotaExceededError(error)) {
+      console.error('localStorage save failed:', error);
+      return;
+    }
+
+    const compactedRows = compactCollectionForLocalCache(collectionName, rows);
+    if (compactedRows.length === rows.length) {
+      console.warn('Local cache quota exceeded; skipped cache write:', collectionName);
+      return;
+    }
+
+    try {
+      localStorage.setItem(localStorageKey, JSON.stringify(compactedRows));
+      console.warn('Local cache quota exceeded; compacted local cache:', collectionName, `${compactedRows.length}/${rows.length}`);
+    } catch {
+      localStorage.removeItem(localStorageKey);
+      console.warn('Local cache quota exceeded; cleared local cache:', collectionName);
+    }
+  }
 };
 
 let pendingSyncRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -564,10 +699,48 @@ const applyIncrementToLocalStorage = (
     : [...existing, nextRecord];
   const localStorageKey = getLocalStorageKey(collectionName);
   if (!localStorageKey) {
-    return false;
+    return null;
   }
   localStorage.setItem(localStorageKey, JSON.stringify(updated));
-  return true;
+  return nextRecord;
+};
+
+const queueIncrementLocally = (
+  collectionName: string,
+  docId: string,
+  fieldName: string,
+  amount: number,
+  extraData: Record<string, any>,
+  operationId: string
+) => {
+  const existingRecord = getFromLocalStorage(collectionName).find(item => item.id === docId);
+  const appliedOperationIds = Array.isArray(existingRecord?.appliedIncrementOperationIds)
+    ? existingRecord.appliedIncrementOperationIds
+    : [];
+  if (appliedOperationIds.includes(operationId)) {
+    return { success: true, pending: true, localFirst: true, duplicate: true, operationId, data: existingRecord };
+  }
+
+  const localRecord = applyIncrementToLocalStorage(collectionName, docId, fieldName, amount, {
+    ...extraData,
+    appliedIncrementOperationIds: [...appliedOperationIds, operationId],
+  });
+  if (!localRecord) {
+    return { success: false, error: 'missing-store-id' };
+  }
+
+  savePendingChange({
+    id: docId,
+    collection: collectionName,
+    operation: 'update',
+    data: {
+      ...extraData,
+      __increment: { fieldName, amount, operationId },
+    },
+    timestamp: Date.now(),
+  });
+  schedulePendingSyncRetry();
+  return { success: true, pending: true, localFirst: true, operationId, data: localRecord };
 };
 
 const applyIdempotentIncrement = async (
@@ -585,10 +758,18 @@ const applyIdempotentIncrement = async (
     const appliedOperationIds = Array.isArray(currentData.appliedIncrementOperationIds)
       ? currentData.appliedIncrementOperationIds
       : [];
+    const currentRecord = { id: docId, ...currentData };
 
     if (appliedOperationIds.includes(operationId)) {
-      return { success: true, duplicate: true, operationId };
+      return { success: true, duplicate: true, operationId, data: currentRecord };
     }
+
+    const nextRecord = {
+      ...currentRecord,
+      ...extraData,
+      [fieldName]: (Number(currentData[fieldName]) || 0) + amount,
+      appliedIncrementOperationIds: [...appliedOperationIds, operationId],
+    };
 
     transaction.set(docRef, {
       ...toFirestoreData(extraData),
@@ -597,7 +778,7 @@ const applyIdempotentIncrement = async (
       appliedIncrementOperationIds: arrayUnion(operationId),
     }, { merge: true });
 
-    return { success: true, operationId };
+    return { success: true, operationId, data: nextRecord };
   });
 };
 
@@ -611,15 +792,27 @@ const formatOrderNumberDateParts = (date: Date) => {
   };
 };
 
+const getOfflineTerminalId = (storeId: string): string => {
+  const storageKey = `pos_offline_terminal_id_${storeId}`;
+  const existing = localStorage.getItem(storageKey);
+  if (existing) return existing;
+
+  const generated = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  ).replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase();
+  localStorage.setItem(storageKey, generated);
+  return generated;
+};
+
 const generateLocalDailyOrderNumber = (datePrefix: string, dayKey: string) => {
   const storeId = getCurrentStoreId() || 'no_store';
-  const counterKey = `pos_local_order_counter_${storeId}_${dayKey}`;
+  const counterKey = `pos_offline_order_counter_${storeId}_${dayKey}`;
   const rawCurrentSequence = Number(localStorage.getItem(counterKey) || '0');
   const currentSequence = Number.isFinite(rawCurrentSequence) ? rawCurrentSequence : 0;
-  const localMaxSequence = getMaxLocalOrderSequence(datePrefix);
-  const nextSequence = Math.max(currentSequence, localMaxSequence) + 1;
+  const nextSequence = currentSequence + 1;
   localStorage.setItem(counterKey, String(nextSequence));
-  return `${datePrefix}${String(nextSequence).padStart(3, '0')}`;
+  return buildProvisionalOrderNumber(datePrefix, getOfflineTerminalId(storeId), nextSequence);
 };
 
 const getMaxLocalOrderSequence = (datePrefix: string): number => {
@@ -682,10 +875,57 @@ export const smartGenerateDailyOrderNumber = async (date = new Date()) => {
   }
 };
 
+const resolvePosOrderNumberForCloudTransaction = async (
+  transaction: any,
+  localData: any,
+  remoteData: any
+): Promise<any> => {
+  const localOrderNumber = String(localData?.orderNumber || '');
+  if (!isProvisionalOrderNumber(localOrderNumber)) return localData;
+
+  const remoteOrderNumber = String(remoteData?.orderNumber || '');
+  if (remoteOrderNumber && !isProvisionalOrderNumber(remoteOrderNumber)) {
+    return {
+      ...localData,
+      orderNumber: remoteOrderNumber,
+      offlineOrderNumber: localData.offlineOrderNumber || localOrderNumber,
+    };
+  }
+
+  const createdDateKey = getRecordDateKey(localData?.createdAt) || formatLocalDateKey(new Date());
+  const orderDate = new Date(`${createdDateKey}T12:00:00`);
+  const { datePrefix, dayKey } = formatOrderNumberDateParts(orderDate);
+  const counterCollectionPath = getStoreCollectionPath('order_counters');
+  if (!counterCollectionPath) return localData;
+
+  const counterRef = doc(db, counterCollectionPath, dayKey);
+  const counterSnapshot = await transaction.get(counterRef);
+  const counterData = counterSnapshot.exists() ? counterSnapshot.data() : {};
+  const rawCurrentSequence = Number(counterData.sequence || 0);
+  const currentSequence = Number.isFinite(rawCurrentSequence) ? rawCurrentSequence : 0;
+  const nextSequence = Math.max(currentSequence, getMaxLocalOrderSequence(datePrefix)) + 1;
+  const officialOrderNumber = `${datePrefix}${String(nextSequence).padStart(3, '0')}`;
+
+  transaction.set(counterRef, {
+    id: dayKey,
+    date: dayKey,
+    sequence: nextSequence,
+    lastModified: Date.now(),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+
+  return {
+    ...localData,
+    orderNumber: officialOrderNumber,
+    offlineOrderNumber: localOrderNumber,
+    orderNumberAssignedAt: new Date().toISOString(),
+  };
+};
+
 
 /**
  */
-export const smartAddDocument = async (collectionName: string, data: any) => {
+export const smartAddDocument = async (collectionName: string, data: any, options: SmartWriteOptions = {}) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
   const docId = data.id || (storeCollectionPath ? doc(collection(db, storeCollectionPath)).id : `blocked_${Date.now()}`);
   if (!storeCollectionPath) {
@@ -693,37 +933,46 @@ export const smartAddDocument = async (collectionName: string, data: any) => {
   }
   const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
   const normalizedData = withSyncMetadata(collectionName, data, docId, existingLocal, true);
+  const docData = {
+    ...toFirestoreData(normalizedData, true),
+    id: docId,
+  };
+
+  if (options.localFirst) {
+    const queuedResult = fallbackToLocalAdd(collectionName, docData);
+    return { ...queuedResult, success: true, localFirst: true };
+  }
 
   if (!FIRESTORE_ENABLED) {
     saveToLocalStorage(collectionName, normalizedData, docId);
     return { id: docId, success: true };
   }
 
-  const docData = {
-    ...toFirestoreData(normalizedData, true),
-    id: docId,
-  };
-
   if (isOnline) {
     try {
       const docRef = doc(db, storeCollectionPath, docId);
-      await setDoc(docRef, docData, { merge: true });
+      await withWeakNetworkTimeout(
+        () => setDoc(docRef, docData, { merge: true }),
+        `add:${collectionName}/${docId}`
+      );
 
       saveToLocalStorage(collectionName, docData, docId);
 
-      return { id: docId, ...docData };
+      return { id: docId, ...docData, success: true, cloudSynced: true };
     } catch (error) {
-      console.error('Firestore add failed, falling back to local:', error);
-      return fallbackToLocalAdd(collectionName, { ...data, id: docId });
+      if (!isWeakNetworkTimeout(error)) {
+        console.error('Firestore add failed, falling back to local:', error);
+      }
+      return fallbackToLocalAdd(collectionName, docData);
     }
   } else {
-    return fallbackToLocalAdd(collectionName, normalizedData);
+    return fallbackToLocalAdd(collectionName, docData);
   }
 };
 
 /**
  */
-export const smartSetDocument = async (collectionName: string, docId: string, data: any) => {
+export const smartSetDocument = async (collectionName: string, docId: string, data: any, options: SmartWriteOptions = {}) => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
   if (!storeCollectionPath) {
     return { id: docId, success: false, error: 'missing-store-id' };
@@ -735,31 +984,40 @@ export const smartSetDocument = async (collectionName: string, docId: string, da
     id: docId,
   };
 
+  if (options.localFirst) {
+    fallbackToLocalSet(collectionName, docId, docData);
+    return { id: docId, ...docData, success: true, pending: true, localFirst: true };
+  }
+
   if (isOnline) {
     try {
       const docRef = doc(db, storeCollectionPath, docId);
-      const docSnap = await getDoc(docRef);
+      await withWeakNetworkTimeout(async () => {
+        const docSnap = await getDoc(docRef);
 
-      if (docSnap.exists()) {
-        await updateDoc(docRef, docData);
-      } else {
-        await setDoc(docRef, {
-          ...docData,
-          createdAt: Timestamp.now(),
-        });
-      }
+        if (docSnap.exists()) {
+          await updateDoc(docRef, docData);
+        } else {
+          await setDoc(docRef, {
+            ...docData,
+            createdAt: Timestamp.now(),
+          });
+        }
+      }, `set:${collectionName}/${docId}`);
 
       saveToLocalStorage(collectionName, docData, docId);
 
-      return { id: docId, ...docData };
+      return { id: docId, ...docData, success: true, cloudSynced: true };
     } catch (error) {
-      console.error('Firestore update failed, falling back to local:', error);
-      saveToLocalStorage(collectionName, docData, docId);
-      return { id: docId, ...docData };
+      if (!isWeakNetworkTimeout(error)) {
+        console.error('Firestore set failed, falling back to local:', error);
+      }
+      fallbackToLocalSet(collectionName, docId, docData);
+      return { id: docId, ...docData, success: false, pending: true, weakNetworkFallback: isWeakNetworkTimeout(error) };
     }
   } else {
-    saveToLocalStorage(collectionName, docData, docId);
-    return { id: docId, ...docData };
+    fallbackToLocalSet(collectionName, docId, docData);
+    return { id: docId, ...docData, success: true, pending: true, offline: true };
   }
 };
 
@@ -768,7 +1026,8 @@ export const smartSetDocument = async (collectionName: string, docId: string, da
 export const smartUpdateDocument = async (
   collectionName: string,
   docId: string,
-  data: any
+  data: any,
+  options: SmartWriteOptions = {}
 ): Promise<SmartWriteResult> => {
   const existingLocal = getFromLocalStorage(collectionName).find(item => item.id === docId);
   const collectionKey = getCollectionKey(collectionName);
@@ -776,6 +1035,11 @@ export const smartUpdateDocument = async (
     ? existingLocal
     : data;
   const normalizedData = withSyncMetadata(collectionName, dataForWrite, docId, existingLocal);
+
+  if (options.localFirst) {
+    fallbackToLocalUpdate(collectionName, docId, normalizedData);
+    return { success: true, pending: true, localFirst: true };
+  }
 
   if (!FIRESTORE_ENABLED) {
     updateInLocalStorage(collectionName, docId, normalizedData);
@@ -802,19 +1066,27 @@ export const smartUpdateDocument = async (
                 ? normalizeRecordForCollection(collectionName, { id: docId, ...snapshot.data() })
                 : null;
 
+              if (remoteData?.isDeleted) {
+                return { skipped: true, remoteData };
+              }
+
               if (remoteData && isPosOrderLifecycleRegression(remoteData, normalizedData)) {
                 return { skipped: true, remoteData };
               }
 
-              transaction.set(docRef, firestoreUpdateData, { merge: true });
-              return { skipped: false };
+              const resolvedData = await resolvePosOrderNumberForCloudTransaction(transaction, normalizedData, remoteData);
+              transaction.set(docRef, toFirestoreData({ ...resolvedData, id: docId }), { merge: true });
+              return {
+                skipped: false,
+                remoteData: normalizeRecordForCollection(collectionName, { ...resolvedData, id: docId }),
+              };
             }),
             `update:${collectionName}/${docId}`
           );
 
-          if (result?.skipped && result.remoteData) {
+          if (result?.remoteData) {
             updateInLocalStorage(collectionName, docId, normalizeRecordForCollection(collectionName, result.remoteData));
-            return { success: true, cloudSynced: true, skipped: true };
+            return { success: true, cloudSynced: true, skipped: result.skipped, remoteData: result.remoteData };
           }
         } else {
           await withWeakNetworkTimeout(
@@ -859,11 +1131,16 @@ export const smartDeleteDocument = async (collectionName: string, docId: string)
   if (isOnline) {
     try {
       const docRef = doc(db, storeCollectionPath, docId);
-      await deleteDoc(docRef);
+      await withWeakNetworkTimeout(
+        () => deleteDoc(docRef),
+        `delete:${collectionName}/${docId}`
+      );
 
       deleteFromLocalStorage(collectionName, docId);
     } catch (error) {
-      console.error('Firestore delete failed, falling back to local:', error);
+      if (!isWeakNetworkTimeout(error)) {
+        console.error('Firestore delete failed, falling back to local:', error);
+      }
       fallbackToDelete(collectionName, docId);
     }
   } else {
@@ -876,8 +1153,9 @@ export const smartIncrementField = async (
   docId: string,
   fieldName: string,
   amount: number,
-  extraData: Record<string, any> = {}
-) => {
+  extraData: Record<string, any> = {},
+  options: SmartWriteOptions = {}
+): Promise<SmartWriteResult> => {
   const storeCollectionPath = getStoreCollectionPath(collectionName);
   if (!storeCollectionPath) {
     return { success: false, error: 'missing-store-id' };
@@ -885,14 +1163,18 @@ export const smartIncrementField = async (
   const operationId = extraData.syncOperationId || `increment-${collectionName}-${docId}-${fieldName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { syncOperationId, ...incrementExtraData } = extraData;
 
+  if (options.localFirst) {
+    return queueIncrementLocally(collectionName, docId, fieldName, amount, incrementExtraData, operationId);
+  }
+
   if (isOnline && FIRESTORE_ENABLED) {
     try {
-      await withWeakNetworkTimeout(
+      const incrementResult = await withWeakNetworkTimeout(
         () => applyIdempotentIncrement(storeCollectionPath, docId, fieldName, amount, incrementExtraData, operationId),
         `increment:${collectionName}/${docId}.${fieldName}`
       );
-      applyIncrementToLocalStorage(collectionName, docId, fieldName, amount, incrementExtraData);
-      return { success: true, operationId };
+      updateInLocalStorage(collectionName, docId, incrementResult.data);
+      return { success: true, operationId, duplicate: incrementResult.duplicate, data: incrementResult.data };
     } catch (error) {
       if (!isWeakNetworkTimeout(error)) {
         console.error(`Inventory increment failed: ${collectionName}/${docId}.${fieldName}`, error);
@@ -900,21 +1182,241 @@ export const smartIncrementField = async (
     }
   }
 
-  if (!applyIncrementToLocalStorage(collectionName, docId, fieldName, amount, incrementExtraData)) {
+  return queueIncrementLocally(collectionName, docId, fieldName, amount, incrementExtraData, operationId);
+};
+
+interface PurchaseInventoryIncrement {
+  itemId: string;
+  quantity: number;
+  operationId: string;
+  lastModified: number;
+  lastUpdated: any;
+}
+
+interface PurchaseLocalBatchInput {
+  order: any;
+  inventoryIncrements: PurchaseInventoryIncrement[];
+  stockRecords: any[];
+  expense?: any | null;
+  supplierUpdate?: any | null;
+}
+
+const upsertLocalRows = (rows: any[], records: any[]) => {
+  const incomingIds = new Set(records.map(record => record.id));
+  return [...rows.filter(record => !incomingIds.has(record.id)), ...records];
+};
+
+const writeLocalStorageTransaction = (entries: Array<{ key: string; value: string }>) => {
+  const previousValues = new Map(entries.map(entry => [entry.key, localStorage.getItem(entry.key)]));
+  const writtenKeys: string[] = [];
+
+  try {
+    entries.forEach(entry => {
+      localStorage.setItem(entry.key, entry.value);
+      writtenKeys.push(entry.key);
+    });
+  } catch (error) {
+    [...writtenKeys].reverse().forEach(key => {
+      localStorage.removeItem(key);
+      const previousValue = previousValues.get(key);
+      if (previousValue !== null && previousValue !== undefined) {
+        localStorage.setItem(key, previousValue);
+      }
+    });
+    throw error;
+  }
+};
+
+const keepRequiredRecentRows = (rows: any[], requiredIds: Set<string>, limit: number) => {
+  const requiredRows = rows.filter(row => requiredIds.has(row.id));
+  const recentRows = rows
+    .filter(row => !requiredIds.has(row.id))
+    .sort((a, b) => getRecordVersion(b) - getRecordVersion(a))
+    .slice(0, Math.max(0, limit - requiredRows.length));
+  return [...requiredRows, ...recentRows];
+};
+
+/**
+ * Saves one purchase as one idempotent batch. Online submissions commit to
+ * Firestore first; local durability is required only for offline/cloud fallback.
+ */
+export const smartSavePurchaseLocally = async ({
+  order,
+  inventoryIncrements,
+  stockRecords,
+  expense = null,
+  supplierUpdate = null,
+}: PurchaseLocalBatchInput): Promise<SmartWriteResult & { inventoryRecords?: any[] }> => {
+  const storeId = getCurrentStoreId();
+  if (!storeId) return { success: false, error: 'missing-store-id' };
+
+  const operationId = `purchase-batch-${order.id}`;
+  const purchaseKey = getLocalStorageKey('purchase_orders');
+  const inventoryKey = getLocalStorageKey('inventory_items');
+  const stockRecordKey = getLocalStorageKey('inventory_stock_records');
+  const expenseCacheKey = getLocalStorageKey('expenses');
+  const expenseKey = expense ? expenseCacheKey : null;
+  const supplierKey = supplierUpdate ? getLocalStorageKey('suppliers') : null;
+  if (!purchaseKey || !inventoryKey || !stockRecordKey) {
     return { success: false, error: 'missing-store-id' };
   }
 
-  savePendingChange({
-    id: docId,
-    collection: collectionName,
+  const purchaseRows = upsertLocalRows(getFromLocalStorage('purchase_orders'), [order]);
+  let inventoryRows = [...getFromLocalStorage('inventory_items')];
+  const inventoryRecords: any[] = [];
+
+  inventoryIncrements.forEach(change => {
+    const index = inventoryRows.findIndex(record => record.id === change.itemId);
+    const current = index >= 0 ? inventoryRows[index] : { id: change.itemId };
+    const appliedIds = Array.isArray(current.appliedIncrementOperationIds)
+      ? current.appliedIncrementOperationIds
+      : [];
+    const alreadyApplied = appliedIds.includes(change.operationId);
+    const nextRecord = {
+      ...current,
+      currentStock: (Number(current.currentStock) || 0) + (alreadyApplied ? 0 : change.quantity),
+      lastModified: change.lastModified,
+      lastUpdated: change.lastUpdated,
+      appliedIncrementOperationIds: alreadyApplied ? appliedIds : [...appliedIds, change.operationId],
+    };
+    inventoryRows = index >= 0
+      ? inventoryRows.map((record, rowIndex) => rowIndex === index ? nextRecord : record)
+      : [...inventoryRows, nextRecord];
+    inventoryRecords.push(nextRecord);
+  });
+
+  let stockRows = upsertLocalRows(getFromLocalStorage('inventory_stock_records'), stockRecords);
+  let expenseRows = expense
+    ? upsertLocalRows(getFromLocalStorage('expenses'), [expense])
+    : null;
+  const supplierRows = supplierUpdate
+    ? upsertLocalRows(getFromLocalStorage('suppliers'), [supplierUpdate])
+    : null;
+  const pendingChange: PendingChange = {
+    id: operationId,
+    collection: 'purchase_orders',
     operation: 'update',
     data: {
-      ...incrementExtraData,
-      __increment: { fieldName, amount, operationId },
+      __purchaseBatch: {
+        operationId,
+        order,
+        inventoryIncrements,
+        stockRecords,
+        expense,
+        supplierUpdate,
+      },
     },
     timestamp: Date.now(),
-  });
-  return { success: false, weakNetworkFallback: true, operationId };
+    storeId,
+    status: 'pending',
+  };
+  const existingPendingRows = getPendingChanges().filter(change => change.id !== operationId);
+  const pendingRows = coalescePendingChanges([
+    ...existingPendingRows,
+    pendingChange,
+  ]);
+
+  let directCloudError: any = null;
+  const shouldTryCloudFirst = FIRESTORE_ENABLED && navigator.onLine;
+  if (shouldTryCloudFirst) {
+    try {
+      await withWeakNetworkTimeout(
+        () => syncPendingPurchaseBatch(pendingChange),
+        `purchase-batch:${pendingChange.id}`,
+        PURCHASE_IMMEDIATE_SYNC_TIMEOUT_MS
+      );
+      isOnline = true;
+
+      // Cloud is authoritative for an online purchase. A full browser cache
+      // must never turn a confirmed cloud transaction into a submit failure.
+      try {
+        const confirmedExpenseRows = expenseRows
+          ? compactPurchaseExpenseCache(expenseRows, new Set(), 80)
+          : null;
+        writeLocalStorageTransaction([
+          { key: getPendingChangesStorageKey(), value: JSON.stringify(existingPendingRows) },
+          { key: purchaseKey, value: JSON.stringify(keepRequiredRecentRows(purchaseRows, new Set([order.id]), 30)) },
+          { key: inventoryKey, value: JSON.stringify(inventoryRows) },
+          { key: stockRecordKey, value: JSON.stringify(keepRequiredRecentRows(stockRows, new Set(stockRecords.map(record => record.id)), 120)) },
+          ...(expenseKey && confirmedExpenseRows ? [{ key: expenseKey, value: JSON.stringify(confirmedExpenseRows) }] : []),
+          ...(supplierKey && supplierRows ? [{ key: supplierKey, value: JSON.stringify(supplierRows) }] : []),
+        ]);
+      } catch (cacheError) {
+        console.warn('Purchase cloud save succeeded; local cache update skipped:', cacheError);
+      }
+
+      return { success: true, cloudSynced: true, operationId, inventoryRecords };
+    } catch (error) {
+      directCloudError = error;
+    }
+  }
+
+  if (expenseKey && expenseRows) {
+    expenseRows = compactPurchaseExpenseCache(
+      expenseRows,
+      getPendingExpenseIds(pendingRows, expense?.id),
+      80
+    );
+    // Replacing cloud-reloadable receipt payloads with compact rows releases
+    // space before the new purchase transaction writes its pending batch.
+    try {
+      localStorage.setItem(expenseKey, JSON.stringify(expenseRows));
+    } catch (error) {
+      if (!isQuotaExceededError(error)) throw error;
+    }
+  }
+
+  const buildEntries = (nextPurchaseRows: any[], nextStockRows: any[]) => [
+    { key: getPendingChangesStorageKey(), value: JSON.stringify(pendingRows) },
+    { key: purchaseKey, value: JSON.stringify(nextPurchaseRows) },
+    { key: inventoryKey, value: JSON.stringify(inventoryRows) },
+    { key: stockRecordKey, value: JSON.stringify(nextStockRows) },
+    ...(expenseKey && expenseRows ? [{ key: expenseKey, value: JSON.stringify(expenseRows) }] : []),
+    ...(supplierKey && supplierRows ? [{ key: supplierKey, value: JSON.stringify(supplierRows) }] : []),
+  ];
+
+  try {
+    writeLocalStorageTransaction(buildEntries(purchaseRows, stockRows));
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+
+    // Historical rows are cloud-reloadable. Keep the new purchase and recent
+    // records so a full browser cache cannot block current restaurant work.
+    if (expenseCacheKey) {
+      const currentExpenseRows = expenseRows || getFromLocalStorage('expenses');
+      const requiredExpenseIds = getPendingExpenseIds(pendingRows, expense?.id);
+      const compactedExpenseRows = compactPurchaseExpenseCache(
+        currentExpenseRows,
+        requiredExpenseIds,
+        80
+      );
+      localStorage.setItem(expenseCacheKey, JSON.stringify(compactedExpenseRows));
+      if (expenseRows) expenseRows = compactedExpenseRows;
+    }
+
+    const compactPurchases = keepRequiredRecentRows(purchaseRows, new Set([order.id]), 30);
+    stockRows = keepRequiredRecentRows(stockRows, new Set(stockRecords.map(record => record.id)), 120);
+    writeLocalStorageTransaction(buildEntries(compactPurchases, stockRows));
+  }
+
+  if (directCloudError) {
+    schedulePendingSyncRetry(3000);
+    return {
+      success: true,
+      pending: true,
+      weakNetworkFallback: isWeakNetworkTimeout(directCloudError),
+      error: directCloudError,
+      localFirst: true,
+      operationId,
+      inventoryRecords,
+    };
+  }
+
+  const cloudResult = await syncPurchaseBatchImmediately(pendingChange);
+  if (!cloudResult.cloudSynced) {
+    schedulePendingSyncRetry(cloudResult.offline ? 0 : 3000);
+  }
+  return { ...cloudResult, operationId, inventoryRecords };
 };
 
 export const getStableStockDeductionOperationId = (orderId: string) => `stock-${orderId}`;
@@ -1272,6 +1774,51 @@ export const smartTransferFridgeStock = async ({
   }
 };
 
+export const smartPrepareStockDeductionPlan = async (
+  orderId: string,
+  operationId: string,
+  createPlan: () => Promise<StockDeductionPlan>
+): Promise<StockDeductionPlan> => {
+  const collectionPath = getStoreCollectionPath('pos_orders');
+  if (!collectionPath) throw new Error('missing-store-id');
+  const cachedOrder = getFromLocalStorage(collectionPath).find(record => record.id === orderId);
+  const pendingOrder = getPendingChanges().find(change =>
+    change.collection === collectionPath && change.id === orderId && change.data?.stockDeductionPlan
+  );
+  const localPlan = pendingOrder?.data.stockDeductionPlan || cachedOrder?.stockDeductionPlan;
+  const checkPlan = (plan: any) => {
+    if (plan.operationId !== operationId) throw new Error('stock-plan-operation-conflict');
+    return plan as StockDeductionPlan;
+  };
+  let candidate = localPlan;
+  const getCandidate = async () => {
+    if (!candidate) candidate = { ...await createPlan(), operationId };
+    return checkPlan(candidate);
+  };
+  if (isOnline && FIRESTORE_ENABLED) {
+    try {
+      const plan = await withWeakNetworkTimeout(() => runTransaction(db, async transaction => {
+        const orderRef = doc(db, collectionPath, orderId);
+        const snapshot = await transaction.get(orderRef);
+        const order = snapshot.data();
+        if (!order || order.isDeleted) throw new Error('stock-plan-order-missing');
+        if (order.stockDeductionPlan) return checkPlan(order.stockDeductionPlan);
+        const nextPlan = await getCandidate();
+        transaction.set(orderRef, { stockDeductionPlan: nextPlan }, { merge: true });
+        return nextPlan;
+      }), `stock-plan:${orderId}`);
+      try { updateInLocalStorage(collectionPath, orderId, { stockDeductionPlan: plan }); }
+      catch (error) { console.warn('Stock plan cache unavailable; cloud plan retained:', error); }
+      return plan;
+    } catch (error: any) {
+      if (!isWeakNetworkTimeout(error) && error?.code !== 'unavailable') throw error;
+    }
+  }
+  const plan = await getCandidate();
+  fallbackToLocalUpdate(collectionPath, orderId, { stockDeductionPlan: plan, lastModified: Date.now() });
+  return plan;
+};
+
 export const smartClaimOrderStockDeduction = async (
   collectionName: string,
   docId: string,
@@ -1310,11 +1857,8 @@ export const smartClaimOrderStockDeduction = async (
       }
 
       const claimedAt = Number(currentData.stockDeductionClaimedAt || 0);
-      const currentOperationId = currentData.stockDeductionOperationId;
-      const isSameOperation = Boolean(currentOperationId && currentOperationId === operationId);
       const claimIsFresh = Boolean(
         currentData.stockDeductionInProgress &&
-        !isSameOperation &&
         claimedAt &&
         now - claimedAt < 120000
       );
@@ -1363,47 +1907,6 @@ export const smartClaimOrderStockDeduction = async (
   }
 };
 
-export const smartHasOrderStockRecords = async (orderId: string, orderNumber?: string): Promise<boolean> => {
-  const storeCollectionPath = getStoreCollectionPath('inventory_stock_records');
-  if (!storeCollectionPath || (!orderId && !orderNumber)) {
-    return false;
-  }
-
-  const hasLocalStockRows = () => excludeDeletedRecords(getFromLocalStorage('inventory_stock_records')).some(record =>
-    (orderId && record?.orderId === orderId) ||
-    (orderNumber && record?.orderNumber === orderNumber)
-  );
-
-  if (!isOnline || !FIRESTORE_ENABLED) {
-    return hasLocalStockRows();
-  }
-
-  try {
-    if (orderId) {
-      const byOrderId = await withWeakNetworkTimeout(
-        () => getDocs(query(collection(db, storeCollectionPath), where('orderId', '==', orderId), limit(1))),
-        `stock-ledger-order:${orderId}`
-      );
-      if (!byOrderId.empty) return true;
-    }
-
-    if (orderNumber) {
-      const byOrderNumber = await withWeakNetworkTimeout(
-        () => getDocs(query(collection(db, storeCollectionPath), where('orderNumber', '==', orderNumber), limit(1))),
-        `stock-ledger-number:${orderNumber}`
-      );
-      if (!byOrderNumber.empty) return true;
-    }
-  } catch (error) {
-    if (!isExpectedOfflineReadError(error)) {
-      console.error('Smart sync operation failed:', error);
-    }
-    return hasLocalStockRows();
-  }
-
-  return hasLocalStockRows();
-};
-
 /**
  */
 export const smartGetDocuments = async (collectionName: string, forceServer = false) => {
@@ -1428,7 +1931,7 @@ export const smartGetDocuments = async (collectionName: string, forceServer = fa
 
       // localStorage.setItem(collectionName, JSON.stringify(docs));
 
-      return excludeDeletedRecords(docs);
+      return mergeCloudRangeWithPendingLocal(collectionName, docs, () => true);
     } catch (error) {
       if (!isExpectedOfflineReadError(error)) {
         console.error('Firestore read failed, reading local cache:', error);
@@ -1437,6 +1940,38 @@ export const smartGetDocuments = async (collectionName: string, forceServer = fa
     }
   } else {
     return excludeDeletedRecords(getFromLocalStorage(collectionName));
+  }
+};
+
+export const smartGetDocument = async (
+  collectionName: string,
+  docId: string,
+  forceServer = false
+) => {
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath || !docId) return null;
+
+  const localFallback = () => excludeDeletedRecords(getFromLocalStorage(collectionName))
+    .find(record => String(record?.id || '') === String(docId)) || null;
+
+  if (!isOnline) return localFallback();
+
+  try {
+    const documentRef = doc(db, storeCollectionPath, docId);
+    const snapshot = forceServer
+      ? await withWeakNetworkTimeout(() => getDocFromServer(documentRef), `read:${collectionName}:${docId}`)
+      : await getDoc(documentRef);
+    if (!snapshot.exists()) return null;
+
+    return normalizeRecordForCollection(
+      collectionName,
+      convertTimestampsToLocalTime({ id: snapshot.id, ...snapshot.data() })
+    );
+  } catch (error) {
+    if (!isExpectedOfflineReadError(error)) {
+      console.error('Firestore document read failed, reading local cache:', error);
+    }
+    return localFallback();
   }
 };
 
@@ -1476,6 +2011,383 @@ export const smartGetDocumentsWhereEqual = async (
   }
 
   return localFallback();
+};
+
+export const smartRestoreOrderStockFromLedger = async ({
+  orderId,
+  orderNumber,
+  deductionOperationId = getStableStockDeductionOperationId(orderId),
+  restoreOperationId = `deleted-order-restore-${orderId}`,
+}: {
+  orderId: string;
+  orderNumber?: string;
+  deductionOperationId?: string;
+  restoreOperationId?: string;
+}) => {
+  const originalRecords = await smartGetDocumentsWhereEqual(
+    'inventory_stock_records',
+    'sourceId',
+    deductionOperationId,
+    true
+  );
+  const saleRecords = originalRecords.filter(record => (
+    record?.source === 'pos_sale' && Number(record?.signedQuantity) < 0
+  ));
+  if (saleRecords.length === 0) {
+    return { success: false, error: 'missing-stock-deduction-ledger', restoreOperationId };
+  }
+
+  const now = Date.now();
+  const restoredRecords: any[] = [];
+  for (const originalRecord of saleRecords) {
+    const restoreQuantity = Math.abs(Number(originalRecord.signedQuantity) || Number(originalRecord.quantity) || 0);
+    if (restoreQuantity <= 0) continue;
+
+    const isFridge = originalRecord.locationType === 'fridge';
+    const targetCollection = isFridge ? 'fridge_inventory' : 'inventory_items';
+    const targetId = isFridge
+      ? `${originalRecord.fridgeId}-${originalRecord.itemId}`
+      : originalRecord.itemId;
+    const targetField = isFridge ? 'quantity' : 'currentStock';
+    if (!targetId || (isFridge && !originalRecord.fridgeId)) {
+      return { success: false, error: 'invalid-stock-deduction-ledger', restoreOperationId };
+    }
+
+    const incrementResult: any = await smartIncrementField(
+      targetCollection,
+      targetId,
+      targetField,
+      restoreQuantity,
+      {
+        lastModified: now,
+        lastUpdated: new Date(now),
+        syncOperationId: `${restoreOperationId}-${originalRecord.id}`,
+      }
+    );
+    if (incrementResult?.error) {
+      return { success: false, error: incrementResult.error, restoreOperationId };
+    }
+
+    const afterStock = incrementResult?.data
+      ? Number(incrementResult.data[targetField] || 0)
+      : Number(originalRecord.beforeStock || 0);
+    const restoreRecord = {
+      id: `${restoreOperationId}-${originalRecord.id}`,
+      itemId: originalRecord.itemId,
+      itemName: originalRecord.itemName,
+      type: 'in',
+      quantity: restoreQuantity,
+      signedQuantity: restoreQuantity,
+      reason: 'deleted order stock restore',
+      source: 'deleted_order_restore',
+      sourceId: restoreOperationId,
+      restoredSourceId: deductionOperationId,
+      reversalOf: originalRecord.id,
+      orderId,
+      orderNumber: orderNumber || originalRecord.orderNumber,
+      orderType: originalRecord.orderType,
+      locationType: originalRecord.locationType,
+      fridgeId: originalRecord.fridgeId,
+      fridgeName: originalRecord.fridgeName,
+      beforeStock: afterStock - restoreQuantity,
+      afterStock,
+      unit: originalRecord.unit || '',
+      date: new Date(now),
+      createdAt: new Date(now),
+      createdAtMs: now,
+      lastModified: now,
+      operator: getCurrentOperatorName(),
+    };
+    const ledgerResult: any = await smartAddDocument('inventory_stock_records', restoreRecord);
+    if (ledgerResult?.error) {
+      return { success: false, error: ledgerResult.error, restoreOperationId };
+    }
+    restoredRecords.push(restoreRecord);
+  }
+
+  return { success: true, restoreOperationId, restoredRecords };
+};
+
+const isDateKey = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+const formatLocalDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const addDaysToDateKey = (dateKey: string, days: number): string => {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return formatLocalDateKey(date);
+};
+
+const getRecordDateKey = (value: any): string => toLocalDateKey(value);
+
+const normalizeQueryRows = (collectionName: string, snapshot: any): any[] => snapshot.docs.map((snapshotDoc: any) => (
+  normalizeRecordForCollection(
+    collectionName,
+    convertTimestampsToLocalTime({ id: snapshotDoc.id, ...snapshotDoc.data() })
+  )
+));
+
+const mergeUniqueRows = (rows: any[][]): any[] => {
+  const merged = new Map<string, any>();
+  rows.flat().forEach(row => {
+    if (!row?.id) return;
+    const existing = merged.get(String(row.id));
+    if (!existing || shouldReplaceLocalRecord(existing, row)) {
+      merged.set(String(row.id), row);
+    }
+  });
+  return excludeDeletedRecords(Array.from(merged.values()));
+};
+
+const mergeCloudRangeWithPendingLocal = (
+  collectionName: string,
+  cloudRows: any[],
+  localMatches: (record: any) => boolean
+): any[] => {
+  const pendingChanges = getPendingChanges().filter(change => change.collection === collectionName);
+  if (pendingChanges.length === 0) return excludeDeletedRecords(cloudRows);
+
+  const pendingDeletes = new Set(
+    pendingChanges.filter(change => change.operation === 'delete').map(change => String(change.id))
+  );
+  const pendingWriteIds = new Set(
+    pendingChanges.filter(change => change.operation !== 'delete').map(change => String(change.id))
+  );
+  const pendingLocalRows = getFromLocalStorage(collectionName).filter(record => (
+    pendingWriteIds.has(String(record?.id || '')) && localMatches(record)
+  ));
+  return mergeUniqueRows([
+    cloudRows.filter(record => !pendingDeletes.has(String(record?.id || ''))),
+    pendingLocalRows,
+  ]);
+};
+
+export const smartGetDocumentsByDateRange = async (
+  collectionName: string,
+  fieldName: string,
+  startDate: string,
+  endDate: string,
+  forceServer = false,
+  fieldType: 'date-string' | 'timestamp' | 'number-timestamp' = 'date-string'
+) => {
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath || !isDateKey(startDate) || !isDateKey(endDate) || startDate > endDate) {
+    return [];
+  }
+
+  const localFallback = () => excludeDeletedRecords(getFromLocalStorage(collectionName)).filter(record => {
+    const dateKey = getRecordDateKey(record?.[fieldName]);
+    return dateKey >= startDate && dateKey <= endDate;
+  });
+
+  try {
+    const collectionRef = collection(db, storeCollectionPath);
+    const nextDate = addDaysToDateKey(endDate, 1);
+    const rangeQueries = fieldType === 'timestamp'
+      ? [
+          query(
+            collectionRef,
+            where(fieldName, '>=', Timestamp.fromDate(new Date(`${startDate}T00:00:00`))),
+            where(fieldName, '<', Timestamp.fromDate(new Date(`${nextDate}T00:00:00`)))
+          ),
+          query(
+            collectionRef,
+            where(fieldName, '>=', new Date(`${startDate}T00:00:00-06:00`).toISOString()),
+            where(fieldName, '<', new Date(`${nextDate}T00:00:00-06:00`).toISOString())
+          ),
+        ]
+      : [fieldType === 'number-timestamp'
+        ? query(
+            collectionRef,
+            where(fieldName, '>=', new Date(`${startDate}T00:00:00-06:00`).getTime()),
+            where(fieldName, '<', new Date(`${nextDate}T00:00:00-06:00`).getTime())
+          )
+        : query(
+            collectionRef,
+            where(fieldName, '>=', startDate),
+            where(fieldName, '<=', `${endDate}\uf8ff`)
+          )];
+    const snapshotResults = await Promise.allSettled(rangeQueries.map(rangeQuery => (
+      forceServer && isOnline ? getDocsFromServer(rangeQuery) : getDocs(rangeQuery)
+    )));
+    const snapshots = snapshotResults.flatMap(result => (
+      result.status === 'fulfilled' ? [result.value] : []
+    ));
+    if (snapshots.length === 0) {
+      const failedResult = snapshotResults.find(result => result.status === 'rejected');
+      throw failedResult && failedResult.status === 'rejected'
+        ? failedResult.reason
+        : new Error('Firestore date-range read failed');
+    }
+    const cloudRows = mergeUniqueRows(
+      snapshots.map(snapshot => normalizeQueryRows(collectionName, snapshot))
+    );
+    return mergeCloudRangeWithPendingLocal(
+      collectionName,
+      cloudRows,
+      record => {
+        const dateKey = getRecordDateKey(record?.[fieldName]);
+        return dateKey >= startDate && dateKey <= endDate;
+      }
+    );
+  } catch (error) {
+    if (!isExpectedOfflineReadError(error)) {
+      console.error('Firestore date-range read failed, reading local cache:', error);
+    }
+    return localFallback();
+  }
+};
+
+const getOrderCreatedDateKey = (order: any): string => getRecordDateKey(
+  order?.createdAt || order?.date || order?.orderDate
+);
+
+const isOrderCreatedInRange = (order: any, startDate: string, endDate: string): boolean => {
+  const dateKey = getOrderCreatedDateKey(order);
+  if (dateKey) return dateKey >= startDate && dateKey <= endDate;
+  const orderPrefix = String(order?.orderNumber || '').slice(0, 4);
+  return orderPrefix >= startDate.slice(5).replace('-', '') && orderPrefix <= endDate.slice(5).replace('-', '');
+};
+
+const getPosOrdersByOrderNumberRange = async (
+  collectionRef: any,
+  collectionName: string,
+  startDate: string,
+  endDate: string,
+  forceServer: boolean
+): Promise<any[]> => {
+  const sameYear = startDate.slice(0, 4) === endDate.slice(0, 4);
+  if (!sameYear) {
+    const dates: string[] = [];
+    for (let dateKey = startDate; dateKey <= endDate; dateKey = addDaysToDateKey(dateKey, 1)) dates.push(dateKey);
+    const dailyRows = await Promise.all(dates.map(async dateKey => {
+      const prefix = dateKey.slice(5).replace('-', '');
+      const rangeQuery = query(
+        collectionRef,
+        where('orderNumber', '>=', prefix),
+        where('orderNumber', '<=', `${prefix}\uf8ff`)
+      );
+      const snapshot = forceServer
+        ? await getDocsFromServer(rangeQuery)
+        : await getDocs(rangeQuery);
+      return normalizeQueryRows(collectionName, snapshot);
+    }));
+    return mergeUniqueRows(dailyRows).filter(order => isOrderCreatedInRange(order, startDate, endDate));
+  }
+
+  const startPrefix = startDate.slice(5).replace('-', '');
+  const endPrefix = endDate.slice(5).replace('-', '');
+  const rangeQuery = query(
+    collectionRef,
+    where('orderNumber', '>=', startPrefix),
+    where('orderNumber', '<=', `${endPrefix}\uf8ff`)
+  );
+  const snapshot = forceServer
+    ? await getDocsFromServer(rangeQuery)
+    : await getDocs(rangeQuery);
+  return excludeDeletedRecords(normalizeQueryRows(collectionName, snapshot))
+    .filter(order => isOrderCreatedInRange(order, startDate, endDate));
+};
+
+export const smartGetPosOrdersByCreatedDateRange = async (
+  startDate: string,
+  endDate: string,
+  forceServer = false
+) => {
+  const collectionName = 'pos_orders';
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath || !isDateKey(startDate) || !isDateKey(endDate) || startDate > endDate) return [];
+
+  const localFallback = () => excludeDeletedRecords(getFromLocalStorage(collectionName))
+    .filter(order => isOrderCreatedInRange(order, startDate, endDate));
+  try {
+    const cloudRows = await getPosOrdersByOrderNumberRange(
+      collection(db, storeCollectionPath),
+      collectionName,
+      startDate,
+      endDate,
+      forceServer && isOnline
+    );
+    return mergeCloudRangeWithPendingLocal(
+      collectionName,
+      cloudRows,
+      order => isOrderCreatedInRange(order, startDate, endDate)
+    );
+  } catch (error) {
+    if (!isExpectedOfflineReadError(error)) {
+      console.error('Firestore POS order range read failed, reading local cache:', error);
+    }
+    return localFallback();
+  }
+};
+
+export const smartGetPosOrdersByActivityDateRange = async (
+  startDate: string,
+  endDate: string,
+  forceServer = false,
+  storeIdOverride?: string,
+  activityFieldsOverride?: string[],
+  includeCreatedRecords = true
+) => {
+  const collectionName = storeIdOverride ? `stores/${storeIdOverride}/pos_orders` : 'pos_orders';
+  const storeCollectionPath = getStoreCollectionPath(collectionName);
+  if (!storeCollectionPath || !isDateKey(startDate) || !isDateKey(endDate) || startDate > endDate) return [];
+
+  const activityFields = activityFieldsOverride?.length
+    ? activityFieldsOverride
+    : ['lastPaidAt', 'cancelledAt'];
+  const isLocalActivityInRange = (order: any) => {
+    if (includeCreatedRecords && isOrderCreatedInRange(order, startDate, endDate)) return true;
+    return activityFields.some(fieldName => {
+      const dateKey = getRecordDateKey(order?.[fieldName]);
+      return dateKey >= startDate && dateKey <= endDate;
+    });
+  };
+  const localFallback = () => excludeDeletedRecords(getFromLocalStorage(collectionName)).filter(isLocalActivityInRange);
+  try {
+    const collectionRef = collection(db, storeCollectionPath);
+    const createdRowsPromise = includeCreatedRecords
+      ? getPosOrdersByOrderNumberRange(
+          collectionRef,
+          collectionName,
+          startDate,
+          endDate,
+          forceServer && isOnline
+        )
+      : Promise.resolve([] as any[]);
+    const nextDate = addDaysToDateKey(endDate, 1);
+    const timestampStart = Timestamp.fromDate(new Date(`${startDate}T00:00:00`));
+    const timestampEnd = Timestamp.fromDate(new Date(`${nextDate}T00:00:00`));
+    const stringStart = new Date(`${addDaysToDateKey(startDate, -1)}T00:00:00`).toISOString();
+    const stringEnd = new Date(`${addDaysToDateKey(endDate, 2)}T00:00:00`).toISOString();
+    const activityRowsPromises = activityFields.flatMap(fieldName => [
+      query(collectionRef, where(fieldName, '>=', timestampStart), where(fieldName, '<', timestampEnd)),
+      query(collectionRef, where(fieldName, '>=', stringStart), where(fieldName, '<', stringEnd)),
+    ]).map(async rangeQuery => {
+      const snapshot = forceServer && isOnline
+        ? await getDocsFromServer(rangeQuery)
+        : await getDocs(rangeQuery);
+      return normalizeQueryRows(collectionName, snapshot);
+    });
+    const createdRows = await createdRowsPromise;
+    const settledActivityRows = await Promise.allSettled(activityRowsPromises);
+    const activityRows = settledActivityRows.flatMap(result =>
+      result.status === 'fulfilled' ? result.value : []
+    );
+    const rows = mergeUniqueRows([createdRows, ...activityRows])
+      .filter(isLocalActivityInRange);
+    return mergeCloudRangeWithPendingLocal(collectionName, rows, isLocalActivityInRange);
+  } catch (error) {
+    if (!isExpectedOfflineReadError(error)) {
+      console.error('Firestore POS activity range read failed, reading local cache:', error);
+    }
+    return localFallback();
+  }
 };
 
 /**
@@ -1524,10 +2436,7 @@ export const smartSubscribeToCollection = (
 
         if (isCloudAuthoritativeSubscription(collectionName)) {
           const activeData = excludeDeletedRecords(data);
-          const localStorageKey = getLocalStorageKey(collectionName);
-          if (localStorageKey) {
-            localStorage.setItem(localStorageKey, JSON.stringify(activeData));
-          }
+          setCollectionLocalCache(collectionName, activeData);
           callback(activeData);
           return;
         }
@@ -1552,10 +2461,7 @@ export const smartSubscribeToCollection = (
           });
 
           const mergedData = Array.from(merged.values());
-          const localStorageKey = getLocalStorageKey(collectionName);
-          if (localStorageKey) {
-            localStorage.setItem(localStorageKey, JSON.stringify(mergedData));
-          }
+          setCollectionLocalCache(collectionName, mergedData);
           callback(mergedData);
           return;
         } catch (error) {
@@ -1580,29 +2486,52 @@ export const smartSubscribeToCollection = (
   }
 };
 
+type PosOrderSubscriptionCallback = (data: any[]) => void;
+
+interface SharedPosOrderSubscription {
+  callbacks: Set<PosOrderSubscriptionCallback>;
+  latestData: any[] | null;
+  unsubscribe: () => void;
+  active: boolean;
+  fallbackRequested: boolean;
+}
+
+const sharedPosOrderSubscriptions = new Map<string, SharedPosOrderSubscription>();
+
 export const smartSubscribeToPosOrdersByDatePrefix = (
   datePrefix: string,
   callback: (data: any[]) => void
 ) => {
-  let lastSerialized: string | null = null;
-  let fallbackRequested = false;
-
-  const filterLocalOrders = () => {
-    return excludeDeletedRecords(getFromLocalStorage('pos_orders')).filter(order =>
-      String(order?.orderNumber || '').startsWith(datePrefix)
-    );
-  };
-
-  if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED) {
-    callback(filterLocalOrders());
-    return () => {};
-  }
+  const storeId = dataService.getCurrentStoreId();
+  const collectionName = storeId ? `stores/${storeId}/pos_orders` : 'pos_orders';
+  const subscriptionKey = storeId ? `${storeId}:${datePrefix}` : '';
+  const filterLocalOrders = () => excludeDeletedRecords(getFromLocalStorage(collectionName)).filter(order =>
+    String(order?.orderNumber || '').startsWith(datePrefix)
+  );
 
   try {
-    const storeId = dataService.getCurrentStoreId();
+    if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED) {
+      callback(filterLocalOrders());
+      return () => {};
+    }
+
     if (!storeId) {
       callback(filterLocalOrders());
       return () => {};
+    }
+
+    const existingSubscription = sharedPosOrderSubscriptions.get(subscriptionKey);
+    if (existingSubscription) {
+      existingSubscription.callbacks.add(callback);
+      callback(existingSubscription.latestData ?? filterLocalOrders());
+      return () => {
+        existingSubscription.callbacks.delete(callback);
+        if (existingSubscription.callbacks.size === 0) {
+          existingSubscription.active = false;
+          existingSubscription.unsubscribe();
+          sharedPosOrderSubscriptions.delete(subscriptionKey);
+        }
+      };
     }
 
     const collectionRef = collection(db, 'stores', storeId, 'pos_orders');
@@ -1612,10 +2541,23 @@ export const smartSubscribeToPosOrdersByDatePrefix = (
       where('orderNumber', '<=', `${datePrefix}\uf8ff`),
       orderBy('orderNumber', 'asc')
     );
+    const subscription: SharedPosOrderSubscription = {
+      callbacks: new Set([callback]),
+      latestData: null,
+      unsubscribe: () => {},
+      active: true,
+      fallbackRequested: false,
+    };
+    sharedPosOrderSubscriptions.set(subscriptionKey, subscription);
+    const notifySubscribers = (data: any[]) => {
+      if (!subscription.active) return;
+      subscription.latestData = data;
+      subscription.callbacks.forEach(subscriber => subscriber(data));
+    };
 
     const loadRecentPosOrdersFallback = async () => {
-      if (fallbackRequested) return;
-      fallbackRequested = true;
+      if (subscription.fallbackRequested) return;
+      subscription.fallbackRequested = true;
       try {
         const recentQuery = query(collectionRef, orderBy('orderNumber', 'desc'), limit(80));
         const snapshot = await getDocsFromServer(recentQuery);
@@ -1632,16 +2574,16 @@ export const smartSubscribeToPosOrdersByDatePrefix = (
           .reverse();
         if (fallbackData.length === 0) return;
 
-        replaceLocalPosOrdersForDatePrefix(latestPrefix, fallbackData);
-        callback(fallbackData);
+        replaceLocalPosOrdersForDatePrefix(latestPrefix, fallbackData, storeId);
+        notifySubscribers(fallbackData);
       } catch (error) {
         console.warn('POS recent order fallback failed:', error);
       }
     };
 
-    let cancelled = false;
+    let lastSerialized: string | null = null;
     const applyOrderSnapshot = (snapshot: any) => {
-      if (cancelled) return;
+      if (!subscription.active) return;
       const data: any[] = [];
       snapshot.forEach((doc: any) => {
         data.push(normalizeRecordForCollection('pos_orders', convertTimestampsToLocalTime({ id: doc.id, ...doc.data() })));
@@ -1650,43 +2592,80 @@ export const smartSubscribeToPosOrdersByDatePrefix = (
       const activeData = excludeDeletedRecords(data);
       const serialized = JSON.stringify(activeData);
       if (activeData.length > 0) {
-        replaceLocalPosOrdersForDatePrefix(datePrefix, activeData);
+        replaceLocalPosOrdersForDatePrefix(datePrefix, activeData, storeId);
       } else {
         console.warn('POS current-day order snapshot is empty; keeping local orders to avoid clearing an active terminal.');
+        restoreLocalOrders();
         loadRecentPosOrdersFallback();
+        return;
       }
       if (serialized === lastSerialized) {
-        callback(activeData);
         return;
       }
       lastSerialized = serialized;
-      callback(activeData);
+      notifySubscribers(activeData);
     };
 
-    getDocsFromServer(orderQuery)
-      .then(applyOrderSnapshot)
-      .catch(error => {
-        console.warn('POS current-day server refresh failed, keeping realtime/local fallback:', error);
-      });
+    const restoreLocalOrders = () => {
+      const localOrders = filterLocalOrders();
+      if (localOrders.length > 0) {
+        notifySubscribers(localOrders);
+      }
+      return localOrders;
+    };
 
-    const unsubscribe = onSnapshot(
+    const restoredLocalOrders = restoreLocalOrders();
+    let receivedServerSnapshot = false;
+    let bootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const unsubscribeSnapshot = onSnapshot(
       orderQuery,
       (snapshot) => {
         if (snapshot.metadata.fromCache && navigator.onLine) {
           return;
         }
+        receivedServerSnapshot = true;
+        if (bootstrapTimer) {
+          clearTimeout(bootstrapTimer);
+          bootstrapTimer = null;
+        }
         applyOrderSnapshot(snapshot);
       },
       (error) => {
         console.error('POS current-day order subscription failed:', error);
-        callback(filterLocalOrders());
+        restoreLocalOrders();
+        loadRecentPosOrdersFallback();
       }
     );
+    subscription.unsubscribe = () => {
+      if (bootstrapTimer) clearTimeout(bootstrapTimer);
+      unsubscribeSnapshot();
+    };
+    bootstrapTimer = setTimeout(() => {
+      if (!subscription.active || receivedServerSnapshot) return;
+      getDocsFromServer(orderQuery)
+        .then(applyOrderSnapshot)
+        .catch(error => {
+          console.warn('POS current-day server bootstrap failed:', error);
+          restoreLocalOrders();
+          loadRecentPosOrdersFallback();
+        });
+    }, restoredLocalOrders.length > 0 ? 1800 : 1200);
     return () => {
-      cancelled = true;
-      unsubscribe();
+      subscription.callbacks.delete(callback);
+      if (subscription.callbacks.size === 0) {
+        subscription.active = false;
+        subscription.unsubscribe();
+        sharedPosOrderSubscriptions.delete(subscriptionKey);
+      }
     };
   } catch (error) {
+    const failedSubscription = subscriptionKey ? sharedPosOrderSubscriptions.get(subscriptionKey) : null;
+    if (failedSubscription) {
+      failedSubscription.active = false;
+      failedSubscription.unsubscribe();
+      sharedPosOrderSubscriptions.delete(subscriptionKey);
+    }
     console.error('POS current-day order subscription setup failed:', error);
     callback(filterLocalOrders());
     return () => {};
@@ -1703,9 +2682,7 @@ const saveToLocalStorage = (collectionName: string, data: any, id: string) => {
       return;
     }
     const updated = [...existing.filter(item => item.id !== id), incomingItem];
-    const localStorageKey = getLocalStorageKey(collectionName);
-    if (!localStorageKey) return;
-    localStorage.setItem(localStorageKey, JSON.stringify(updated));
+    setCollectionLocalCache(collectionName, updated);
   } catch (error) {
     console.error('localStorage save failed:', error);
   }
@@ -1720,9 +2697,7 @@ const updateInLocalStorage = (collectionName: string, id: string, data: any) => 
       item.id === id && shouldReplaceLocalRecord(item, incomingItem) ? incomingItem : item
     );
     const next = existing.some(item => item.id === id) ? updated : [...updated, incomingItem];
-    const localStorageKey = getLocalStorageKey(collectionName);
-    if (!localStorageKey) return;
-    localStorage.setItem(localStorageKey, JSON.stringify(next));
+    setCollectionLocalCache(collectionName, next);
   } catch (error) {
     console.error('localStorage update failed:', error);
   }
@@ -1732,9 +2707,7 @@ const deleteFromLocalStorage = (collectionName: string, id: string) => {
   try {
     const existing = getFromLocalStorage(collectionName);
     const updated = existing.filter(item => item.id !== id);
-    const localStorageKey = getLocalStorageKey(collectionName);
-    if (!localStorageKey) return;
-    localStorage.setItem(localStorageKey, JSON.stringify(updated));
+    setCollectionLocalCache(collectionName, updated);
   } catch (error) {
     console.error('localStorage write failed:', error);
   }
@@ -1763,7 +2736,21 @@ const fallbackToLocalAdd = (collectionName: string, data: any) => {
     timestamp: Date.now(),
   });
 
-  return { id, ...data };
+  schedulePendingSyncRetry();
+  return { id, ...data, success: false, pending: true, offline: !isOnline };
+};
+
+const fallbackToLocalSet = (collectionName: string, id: string, data: any) => {
+  saveToLocalStorage(collectionName, { ...data, id }, id);
+
+  savePendingChange({
+    id,
+    collection: collectionName,
+    operation: 'update',
+    data,
+    timestamp: Date.now(),
+  });
+  schedulePendingSyncRetry();
 };
 
 const fallbackToLocalUpdate = (collectionName: string, id: string, data: any) => {
@@ -1788,6 +2775,14 @@ const fallbackToDelete = (collectionName: string, id: string) => {
     operation: 'delete',
     timestamp: Date.now(),
   });
+  schedulePendingSyncRetry();
+};
+
+const hasPendingRemoteConflict = (collectionName: string, docId: string, localData: any, remoteData: any): boolean => {
+  if (!remoteData || collectionName === 'pos_orders') return false;
+  const remoteVersion = getRecordVersion(remoteData);
+  const localVersion = getRecordVersion(localData);
+  return remoteVersion > localVersion;
 };
 
 const syncPendingPosOrderUpdate = async (change: PendingChange, collectionPath: string) => {
@@ -1799,12 +2794,37 @@ const syncPendingPosOrderUpdate = async (change: PendingChange, collectionPath: 
     const snapshot = await transaction.get(updateDocRef);
     const remoteData = snapshot.exists() ? snapshot.data() : {};
     const localData = change.data || {};
+
+    if (remoteData?.isDeleted) {
+      return {
+        success: true,
+        skipped: true,
+        reason: 'remote-deleted-order',
+        remoteData: normalizeRecordForCollection(change.collection, { id: change.id, ...remoteData }),
+      };
+    }
+
     const localTerminal = isTerminalPosOrderRecord(localData);
     const remoteTerminal = isTerminalPosOrderRecord(remoteData);
 
+    if (hasTerminalStatusConflict(remoteData, localData)) {
+      skippedBecauseRemoteIsTerminal = true;
+      return {
+        success: true,
+        skipped: true,
+        reason: 'remote-terminal-order-conflict',
+        remoteData: normalizeRecordForCollection(change.collection, { id: change.id, ...remoteData }),
+      };
+    }
+
     if (remoteTerminal && !localTerminal) {
       skippedBecauseRemoteIsTerminal = true;
-      return { success: true, skipped: true, reason: 'remote-terminal-order' };
+      return {
+        success: true,
+        skipped: true,
+        reason: 'remote-terminal-order',
+        remoteData: normalizeRecordForCollection(change.collection, { id: change.id, ...remoteData }),
+      };
     }
 
     const localOperationId = localData.stockDeductionOperationId;
@@ -1835,9 +2855,15 @@ const syncPendingPosOrderUpdate = async (change: PendingChange, collectionPath: 
       return { success: false, conflict: true };
     }
 
-    transaction.set(updateDocRef, toFirestoreData(normalizeRecordForCollection(change.collection, { ...localData, id: change.id })), { merge: true });
-    return { success: true };
+    const resolvedData = await resolvePosOrderNumberForCloudTransaction(transaction, localData, remoteData);
+    const normalizedResolvedData = normalizeRecordForCollection(change.collection, { ...resolvedData, id: change.id });
+    transaction.set(updateDocRef, toFirestoreData(normalizedResolvedData), { merge: true });
+    return { success: true, remoteData: normalizedResolvedData };
   });
+
+  if (result?.remoteData) {
+    updateInLocalStorage(change.collection, change.id, result.remoteData);
+  }
 
   if (skippedBecauseRemoteIsTerminal) {
     return result;
@@ -1873,15 +2899,6 @@ const shouldSkipPendingStockIncrement = async (
     return false;
   }
 
-  const posOrdersPath = getStoreCollectionPath('pos_orders');
-  if (posOrdersPath) {
-    const orderSnapshot = await getDoc(doc(db, posOrdersPath, orderId));
-    const remoteOrder = orderSnapshot.exists() ? orderSnapshot.data() : null;
-    if (remoteOrder && remoteOrder.stockDeducted) {
-      return true;
-    }
-  }
-
   const targetSnapshot = await getDoc(doc(db, collectionPath, change.id));
   const targetData = targetSnapshot.exists() ? targetSnapshot.data() : {};
   const appliedOperationIds = Array.isArray(targetData.appliedIncrementOperationIds)
@@ -1892,6 +2909,121 @@ const shouldSkipPendingStockIncrement = async (
     getOrderIdFromStockDeductionIncrementId(appliedId) === orderId
   );
 };
+
+const syncPendingGenericUpdate = async (change: PendingChange, collectionPath: string) => {
+  const updateDocRef = doc(db, collectionPath, change.id);
+  const snapshot = await getDoc(updateDocRef);
+  const remoteData = snapshot.exists() ? { id: change.id, ...snapshot.data() } : null;
+  const localData = { ...change.data, id: change.id };
+
+  if (hasPendingRemoteConflict(change.collection, change.id, localData, remoteData)) {
+    saveSyncConflict({
+      collection: change.collection,
+      docId: change.id,
+      type: 'remote-newer-than-local-pending-write',
+      localVersion: getRecordVersion(localData),
+      remoteVersion: getRecordVersion(remoteData),
+    });
+    return { success: false, conflict: true };
+  }
+
+  await setDoc(updateDocRef, toFirestoreData(localData), { merge: true });
+  return { success: true };
+};
+
+const syncPendingPurchaseBatch = async (change: PendingChange) => {
+  const batch = change.data?.__purchaseBatch;
+  const storeId = change.storeId || getCurrentStoreId();
+  if (!batch || !storeId) throw new Error('invalid-purchase-batch');
+
+  const orderForFirestore = normalizePurchaseOrderDateFields(batch.order);
+  const stockRecordsForFirestore = batch.stockRecords.map(normalizePurchaseStockRecordDateFields);
+  const orderRef = doc(db, `stores/${storeId}/purchase_orders`, batch.order.id);
+  const inventoryRefs = batch.inventoryIncrements.map((item: PurchaseInventoryIncrement) => (
+    doc(db, `stores/${storeId}/inventory_items`, item.itemId)
+  ));
+
+  return runTransaction(db, async transaction => {
+    const [orderSnapshot, ...inventorySnapshots] = await Promise.all([
+      transaction.get(orderRef),
+      ...inventoryRefs.map((inventoryRef: any) => transaction.get(inventoryRef)),
+    ]);
+    const remoteOrder = orderSnapshot.exists() ? orderSnapshot.data() : {};
+    if (remoteOrder.purchaseBatchOperationId === batch.operationId) {
+      transaction.set(orderRef, toFirestoreData({
+        orderDate: orderForFirestore.orderDate,
+        receivedDate: orderForFirestore.receivedDate,
+      }), { merge: true });
+      return { success: true, duplicate: true };
+    }
+
+    transaction.set(orderRef, toFirestoreData({
+      ...orderForFirestore,
+      id: batch.order.id,
+      purchaseBatchOperationId: batch.operationId,
+    }, true), { merge: true });
+
+    batch.inventoryIncrements.forEach((item: PurchaseInventoryIncrement, index: number) => {
+      const currentData = inventorySnapshots[index]?.exists() ? inventorySnapshots[index].data() : {};
+      const appliedIds = Array.isArray(currentData.appliedIncrementOperationIds)
+        ? currentData.appliedIncrementOperationIds
+        : [];
+      if (appliedIds.includes(item.operationId)) return;
+
+      transaction.set(inventoryRefs[index], {
+        id: item.itemId,
+        currentStock: increment(item.quantity),
+        lastModified: item.lastModified,
+        lastUpdated: toFirestoreData({ value: item.lastUpdated }).value,
+        appliedIncrementOperationIds: arrayUnion(item.operationId),
+      }, { merge: true });
+    });
+
+    stockRecordsForFirestore.forEach((record: any) => {
+      const recordRef = doc(db, `stores/${storeId}/inventory_stock_records`, record.id);
+      transaction.set(recordRef, toFirestoreData({ ...record, id: record.id }, true), { merge: true });
+    });
+    if (batch.expense) {
+      const expenseRef = doc(db, `stores/${storeId}/expenses`, batch.expense.id);
+      transaction.set(expenseRef, toFirestoreData({ ...batch.expense, id: batch.expense.id }, true), { merge: true });
+    }
+    if (batch.supplierUpdate) {
+      const supplierRef = doc(db, `stores/${storeId}/suppliers`, batch.supplierUpdate.id);
+      transaction.set(supplierRef, toFirestoreData({
+        balance: batch.supplierUpdate.balance,
+        lastUpdated: batch.supplierUpdate.lastUpdated,
+        lastModified: batch.supplierUpdate.lastModified,
+      }), { merge: true });
+    }
+
+    return { success: true };
+  });
+};
+
+async function syncPurchaseBatchImmediately(change: PendingChange): Promise<SmartWriteResult> {
+  if (!FIRESTORE_ENABLED || !isOnline) {
+    return { success: true, pending: true, offline: true, localFirst: true };
+  }
+
+  try {
+    await withWeakNetworkTimeout(
+      () => syncPendingPurchaseBatch(change),
+      `purchase-batch:${change.id}`,
+      PURCHASE_IMMEDIATE_SYNC_TIMEOUT_MS
+    );
+    setPendingChanges(getPendingChanges().filter(pendingChange => pendingChange.id !== change.id));
+    isOnline = true;
+    return { success: true, cloudSynced: true, localFirst: true };
+  } catch (error) {
+    return {
+      success: true,
+      pending: true,
+      weakNetworkFallback: isWeakNetworkTimeout(error),
+      error,
+      localFirst: true,
+    };
+  }
+}
 
 
 /**
@@ -1918,7 +3050,9 @@ export const syncPendingChanges = async () => {
           await setDoc(doc(db, collectionPath, change.id), toFirestoreData({ ...change.data, id: change.id }, true), { merge: true });
           break;
         case 'update':
-          if (change.data?.__fridgeTransfer) {
+          if (change.data?.__purchaseBatch) {
+            await syncPendingPurchaseBatch(change);
+          } else if (change.data?.__fridgeTransfer) {
             const result = await smartTransferFridgeStock({
               ...change.data.__fridgeTransfer,
               operationId: change.id,
@@ -1928,7 +3062,16 @@ export const syncPendingChanges = async () => {
               throw new Error(`pending-fridge-transfer-failed:${change.id}:${String((result as any).error || 'unknown')}`);
             }
           } else if (change.collection === 'pos_orders') {
-            await syncPendingPosOrderUpdate(change, collectionPath);
+            const result = await syncPendingPosOrderUpdate(change, collectionPath);
+            if (result?.success === false) {
+              failedChanges.push({
+                ...change,
+                status: 'conflict',
+                lastAttemptAt: Date.now(),
+                error: String(result?.reason || 'pos-order-conflict'),
+              });
+              continue;
+            }
           } else if (change.data?.__increment) {
             const { fieldName, amount } = change.data.__increment;
             const operationId = change.data.__increment.operationId || `pending-${change.collection}-${change.id}-${change.timestamp}`;
@@ -1938,8 +3081,16 @@ export const syncPendingChanges = async () => {
             }
             await applyIdempotentIncrement(collectionPath, change.id, fieldName, amount, rest, operationId);
           } else {
-            const updateDocRef = doc(db, collectionPath, change.id);
-            await setDoc(updateDocRef, toFirestoreData({ ...change.data, id: change.id }), { merge: true });
+            const result = await syncPendingGenericUpdate(change, collectionPath);
+            if (result.conflict) {
+              failedChanges.push({
+                ...change,
+                status: 'conflict',
+                lastAttemptAt: Date.now(),
+                error: 'remote-newer-than-local-pending-write',
+              });
+              continue;
+            }
           }
           break;
         case 'delete':
@@ -1961,23 +3112,26 @@ export const syncPendingChanges = async () => {
 
 
 export const smartGetStoreDocuments = async (collectionName: string, storeId: string) => {
+  const collectionKey = getCollectionKey(collectionName);
+  const storeCollectionPath = `stores/${storeId}/${collectionKey}`;
   if (isOnline) {
     try {
-      const q = query(collection(db, collectionName), where('storeId', '==', storeId));
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => {
+      const querySnapshot = await getDocs(collection(db, storeCollectionPath));
+      const data = querySnapshot.docs.map(doc => {
         const rawData = {
           id: doc.id,
           ...doc.data(),
         };
         return convertTimestampsToLocalTime(rawData);
       });
+      setCollectionLocalCache(storeCollectionPath, data);
+      return data;
     } catch (error) {
       console.error('Firestore store query failed:', error);
-      return getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
+      return getFromLocalStorage(storeCollectionPath);
     }
   } else {
-    return getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
+    return getFromLocalStorage(storeCollectionPath);
   }
 };
 
@@ -1986,16 +3140,17 @@ export const smartSubscribeToStoreCollection = (
   storeId: string,
   callback: (data: any[]) => void
 ) => {
+  const collectionKey = getCollectionKey(collectionName);
+  const storeCollectionPath = `stores/${storeId}/${collectionKey}`;
   if (!isOnline) {
-    const localData = getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
+    const localData = getFromLocalStorage(storeCollectionPath);
     callback(localData);
     return () => {};
   }
 
   try {
     const q = query(
-      collection(db, collectionName),
-      where('storeId', '==', storeId),
+      collection(db, storeCollectionPath),
       orderBy('createdAt', 'desc')
     );
 
@@ -2008,16 +3163,16 @@ export const smartSubscribeToStoreCollection = (
         return convertTimestampsToLocalTime(rawData);
       });
 
-      localStorage.setItem(`_$storeId`, JSON.stringify(data));
+      setCollectionLocalCache(storeCollectionPath, data);
       callback(data);
     }, (error) => {
       console.error('Store subscription failed:', error);
-      const localData = getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
+      const localData = getFromLocalStorage(storeCollectionPath);
       callback(localData);
     });
   } catch (error) {
     console.error('Store data query failed:', error);
-    const localData = getFromLocalStorage(collectionName).filter(item => item.storeId === storeId);
+    const localData = getFromLocalStorage(storeCollectionPath);
     callback(localData);
     return () => {};
   }

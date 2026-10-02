@@ -4,6 +4,7 @@ import { dataService } from '../../services/DataService';
 import { getUSDToNioRate } from '../../utils/exchangeRate';
 import { smartAddDocument, smartDeleteDocument, smartGetDocuments } from '../../services/smartSyncService';
 import { normalizeHandoverRecords } from '../../utils/handoverRecords';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface CashCount {
   [key: string]: number;
@@ -27,6 +28,7 @@ interface ShiftHandoverProps {
 }
 
 const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false }) => {
+  const { t } = useI18n();
   const currentInputsStorageKey = dataService.getStoreKey('current_inputs');
 
   // 使用全局汇率
@@ -72,11 +74,11 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25:', error);
-      alert('\u5237\u65b0\u4ea4\u73ed\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('handover.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refreshHandovers();
@@ -128,7 +130,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSave = async () => {
     if (usdTotal === 0 && nioTotal === 0) {
-      alert('当前金额为0，未保存');
+      alert(t('handover.alert.zeroNotSaved'));
       return;
     }
 
@@ -164,10 +166,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
   const handleSubmitHandover = async () => {
     if (saveStatus === 'saving') return;
 
-    if (usdTotal === 0 && nioTotal === 0) {
-      alert('\u5f53\u524d\u91d1\u989d\u4e3a0\uff0c\u672a\u4fdd\u5b58');
-      return;
-    }
+    if (usdTotal === 0 && nioTotal === 0 && !window.confirm(t('handover.confirm.zeroCash'))) return;
 
     setSaveStatus('saving');
 
@@ -207,13 +206,13 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
       setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (error) {
       console.error('\u4ea4\u73ed\u5bf9\u8d26\u4fdd\u5b58\u5931\u8d25:', error);
-      alert('\u4ea4\u73ed\u5bf9\u8d26\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('handover.alert.saveFailed'));
       setSaveStatus('idle');
     }
   };
 
   const resetInputs = () => {
-    if (window.confirm('确定要清空所有输入框吗？')) {
+    if (window.confirm(t('handover.confirm.clearInputs'))) {
       setUsdCount(USD_UNITS.reduce((acc, v) => ({ ...acc, [v]: 0 }), {}));
       setNioCount(NIO_UNITS.reduce((acc, v) => ({ ...acc, [v]: 0 }), {}));
     }
@@ -221,7 +220,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
 
   // 清空历史记录
   const handleClear = async () => {
-    if (window.confirm('清空所有历史记录？')) {
+    if (window.confirm(t('handover.confirm.clearHistory'))) {
       await Promise.all(history.map(record =>
         record.id ? smartDeleteDocument('handovers', record.id) : Promise.resolve()
       ));
@@ -467,7 +466,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         {/* 美金 */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
-            <h2 style={{ color: '#1b5e20', margin: 0 }}>美金 (USD)</h2>
+            <h2 style={{ color: '#1b5e20', margin: 0 }}>{t('handover.usd')} (USD)</h2>
             <div style={{ fontWeight: 900 }}>$ {usdTotal.toLocaleString()}</div>
           </div>
           <div style={styles.listContainer}>
@@ -491,7 +490,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         {/* 科多巴 */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
-            <h2 style={{ color: '#e67e22', margin: 0 }}>科多巴 (NIO)</h2>
+            <h2 style={{ color: '#e67e22', margin: 0 }}>{t('handover.nio')} (NIO)</h2>
             <div style={{ fontWeight: 900 }}>C$ {nioTotal.toLocaleString()}</div>
           </div>
           <div style={styles.listContainer}>
@@ -519,17 +518,17 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         <div style={styles.summary}>
           <div>
             <div style={styles.sumLine}>
-              <span>💵 美金合计:</span>
+              <span>💵 {t('handover.usdTotal')}:</span>
               <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '1.2rem' }}>$ {usdTotal.toFixed(2)}</span>
             </div>
             <div style={styles.sumLine}>
-              <span>🪙 科多巴合计:</span>
+              <span>🪙 {t('handover.nioTotal')}:</span>
               <span style={{ color: '#fb923c', fontWeight: 'bold', fontSize: '1.2rem' }}>C$ {nioTotal.toFixed(2)}</span>
             </div>
           </div>
           
           <div style={styles.grandTotal}>
-            <span style={styles.grandTotalLabel}>本次对账资产 (NIO)</span>
+            <span style={styles.grandTotalLabel}>{t('handover.reconciledAssets')} (NIO)</span>
             <span style={styles.grandTotalValue}>
               {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
@@ -540,7 +539,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
             onClick={handleSubmitHandover}
             disabled={saveStatus === 'saving'}
           >
-            {saveStatus === 'saving' ? '\u4fdd\u5b58\u4e2d...' : saveStatus === 'saved' ? '\u5df2\u63d0\u4ea4' : '\u4fdd\u5b58\u63d0\u4ea4'}
+            {saveStatus === 'saving' ? t('handover.saving') : saveStatus === 'saved' ? t('handover.submitted') : t('handover.submit')}
           </button>
         </div>
 
@@ -548,13 +547,13 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
         <div style={styles.history}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <h3 style={{ margin: 0 }}>📊 历史记录</h3>
+              <h3 style={{ margin: 0 }}>📊 {t('handover.history')}</h3>
               <button style={styles.btnReset} onClick={resetInputs}>
-                🗑️ 清空输入
+                🗑️ {t('handover.clearInputs')}
               </button>
               {lastSyncedAt && (
                 <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                  {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+                  {t('handover.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
                 </span>
               )}
               <button
@@ -562,7 +561,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
                 onClick={refreshHandovers}
                 disabled={isRefreshing}
               >
-                {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+                {isRefreshing ? t('handover.refreshing') : t('handover.refresh')}
               </button>
             </div>
             <button
@@ -580,18 +579,18 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
               }}
               onClick={handleClear}
             >
-              🧹 清空历史
+              🧹 {t('handover.clearHistory')}
             </button>
           </div>
           <div style={styles.tableScroll}>
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={{ ...styles.td, whiteSpace: 'nowrap' }}>日期时间</th>
-                  <th style={styles.th}>美金</th>
-                  <th style={styles.th}>科多巴</th>
-                  <th style={styles.th}>总计 (NIO)</th>
-                  <th style={styles.th}>较上次误差</th>
+                  <th style={{ ...styles.td, whiteSpace: 'nowrap' }}>{t('handover.dateTime')}</th>
+                  <th style={styles.th}>{t('handover.usd')}</th>
+                  <th style={styles.th}>{t('handover.nio')}</th>
+                  <th style={styles.th}>{t('handover.total')} (NIO)</th>
+                  <th style={styles.th}>{t('handover.diff')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -611,7 +610,7 @@ const ShiftHandoverModule: React.FC<ShiftHandoverProps> = ({ embedded = false })
                           : {}),
                       }}
                     >
-                      {record.diff}
+                      {record.diff === '\u65e0\u53d8\u52a8' ? t('handover.noChange') : record.diff}
                     </td>
                   </tr>
                 ))}

@@ -1,6 +1,10 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
-import { DEFAULT_ROLE_PERMISSIONS, PERMISSION_SCHEMA_VERSION, migrateRolePermissions } from '../../utils/permissions';
+import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  PERMISSION_SCHEMA_VERSION,
+  migrateRolePermissions,
+} from '../../utils/permissions';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 
 interface PermissionNode {
@@ -11,7 +15,6 @@ interface PermissionNode {
 }
 
 const PERMISSION_TREE: PermissionNode[] = [
-  { id: 'dashboard', name: '老板仪表板', icon: '📊' },
   { id: 'pos', name: 'POS收银台', icon: '💰' },
   { id: 'waiter', name: '服务生点餐', icon: '🍽️' },
   { id: 'kitchen', name: '厨房显示', icon: '🍳' },
@@ -20,17 +23,26 @@ const PERMISSION_TREE: PermissionNode[] = [
     children: [
       { id: 'inventory:items', name: '物品管理', icon: '📋' },
       { id: 'inventory:menu', name: '菜品管理', icon: '🍽️' },
+      { id: 'inventory:purchase', name: '采购入库', icon: '🛒' },
       { id: 'inventory:warehouse', name: '仓库盘点', icon: '🏪' },
       { id: 'inventory:fridge', name: '冰箱盘点', icon: '🧊' },
     ]
   },
   { id: 'suppliers:manage', name: '供应商管理', icon: 'SP' },
-  { id: 'customers:manage', name: '客户管理', icon: 'CU' },
+  {
+    id: 'customers', name: '客户管理', icon: 'CU',
+    children: [
+      { id: 'customers:manage', name: '客户档案', icon: 'CR' },
+      { id: 'customers:promotion', name: '幸运轮盘', icon: 'RW' },
+      { id: 'customers:promotion-settings', name: '轮盘设置', icon: 'PS' },
+    ]
+  },
   {
     id: 'employees', name: '员工管理', icon: '👥',
     children: [
       { id: 'employees:profile', name: '员工档案', icon: '👤' },
       { id: 'employees:attendance', name: '考勤管理', icon: '📅' },
+      { id: 'employees:attendance-records', name: '考勤记录', icon: 'AR' },
       { id: 'employees:loans', name: '借款管理', icon: '💸' },
       { id: 'employees:salary', name: '薪资结算', icon: '💰' },
     ]
@@ -44,17 +56,7 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'manager:reports', name: '财务报表', icon: '📈' },
       { id: 'manager:overview', name: '数据概览', icon: '📊' },
     ]
-  },
-  {
-    id: 'settings', name: '系统设置', icon: '⚙️',
-    children: [
-      { id: 'settings:stores', name: '分店管理', icon: '🏪' },
-      { id: 'settings:exchange', name: '汇率设置', icon: '💱' },
-      { id: 'settings:permissions', name: '权限管理', icon: '🔐' },
-      { id: 'settings:backup', name: '数据备份', icon: '💾' },
-    ]
-  },
-  { id: 'reports', name: '报表中心', icon: '📈' }
+  }
 ];
 
 interface Role {
@@ -63,11 +65,21 @@ interface Role {
   description: string;
   permissions: string[];
   permissionSchemaVersion?: number;
+  promotionSettingsPermissionConfigured?: boolean;
   color: string;
   icon: string;
 }
 
 const CANONICAL_ROLES: Role[] = [
+  {
+    id: 'multi_store_manager',
+    name: '经理',
+    description: '可管理指定的多家分店',
+    permissions: DEFAULT_ROLE_PERMISSIONS.multi_store_manager,
+    permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
+    color: '#0f766e',
+    icon: 'MG',
+  },
   {
     id: 'store_manager',
     name: '店长',
@@ -108,7 +120,9 @@ const CANONICAL_ROLES: Role[] = [
 
 const ROLE_ALIAS: Record<string, string> = {
   store_manager: 'store_manager',
-  manager: 'store_manager',
+  multi_store_manager: 'multi_store_manager',
+  manager: 'multi_store_manager',
+  经理: 'multi_store_manager',
   店长: 'store_manager',
   cashier: 'cashier',
   收银: 'cashier',
@@ -132,12 +146,18 @@ const normalizeRoles = (cloudRoles: any[]): Role[] => {
   return CANONICAL_ROLES.map(defaultRole => {
     const matched = cloudRoles.find(role => getCanonicalRoleId(role) === defaultRole.id);
     const permissions = Array.isArray(matched?.permissions) && matched.permissions.length > 0
-      ? migrateRolePermissions(defaultRole.id as any, matched.permissions, matched.permissionSchemaVersion)
+      ? migrateRolePermissions(
+          defaultRole.id as any,
+          matched.permissions,
+          matched.permissionSchemaVersion,
+          matched.promotionSettingsPermissionConfigured
+        )
       : defaultRole.permissions;
 
     return {
       ...defaultRole,
       permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
+      promotionSettingsPermissionConfigured: matched?.promotionSettingsPermissionConfigured === true,
       permissions,
     };
   });
@@ -306,7 +326,7 @@ const PermissionsModule: React.FC = () => {
     }
 
     if (!editingRoleId) {
-      alert('\u89d2\u8272\u5df2\u56fa\u5b9a\u4e3a\u5e97\u957f\u3001\u6536\u94f6\u3001\u670d\u52a1\u751f\u3001\u53a8\u5e08\uff0c\u8bf7\u9009\u62e9\u5df2\u6709\u89d2\u8272\u4fee\u6539\u6743\u9650\u3002');
+      alert('角色已固定为经理、店长、收银、服务生、厨师，请选择已有角色修改权限。');
       return;
     }
 
@@ -317,12 +337,13 @@ const PermissionsModule: React.FC = () => {
       icon: formIcon,
       color: formColor,
       permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
+      promotionSettingsPermissionConfigured: true,
       permissions: formPerms,
     };
 
     try {
       const newRoles = roles.map(r => r.id === editingRoleId ? roleData : r);
-      await smartUpdateDocument('system_roles', editingRoleId, roleData);
+      await smartSetDocument('system_roles', editingRoleId, roleData);
       localStorage.setItem('system_roles', JSON.stringify(newRoles));
       setRoles(newRoles);
       setLastSyncedAt(new Date());
@@ -398,7 +419,7 @@ const PermissionsModule: React.FC = () => {
         <div>
           <h1 style={{ fontSize: font.title, fontWeight: 720, color: colors.textPrimary, margin: 0, letterSpacing: 0 }}>权限管理</h1>
           <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: '0.35rem' }}>
-            固定角色：店长 / 收银 / 服务生 / 厨师
+            固定角色：经理 / 店长 / 收银 / 服务生 / 厨师
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>

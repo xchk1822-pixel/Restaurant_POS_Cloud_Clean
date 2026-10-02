@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
-import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import { smartDeleteDocument, smartGetDocuments, smartGetDocumentsByDateRange, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { buildExpenseRankings } from '../../utils/dashboardAnalytics';
 import { buildExpenseDetailRankings, filterExpenseRecords } from '../../utils/expenseRecordInsights';
@@ -14,6 +14,7 @@ import {
   normalizeExpenseCategories,
   type ExpenseCategory,
 } from '../../utils/expenseCategories';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface ExpenseRecordsProps {
   embedded?: boolean; // 是否嵌入模式
@@ -21,7 +22,20 @@ interface ExpenseRecordsProps {
 
 type ExpenseDateMode = 'today' | 'all' | 'date' | 'month';
 
+const getExpenseCloudDateRange = (mode: ExpenseDateMode, date: string, month: string) => {
+  if (mode === 'all') return null;
+  if (mode === 'month') {
+    const firstDate = `${month}-01`;
+    const lastDay = new Date(`${month}-01T12:00:00`);
+    lastDay.setMonth(lastDay.getMonth() + 1, 0);
+    return { startDate: firstDate, endDate: getLocalDateString(lastDay) };
+  }
+  const selectedDate = mode === 'today' ? getLocalDateString() : date;
+  return { startDate: selectedDate, endDate: selectedDate };
+};
+
 const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false }) => {
+  const { t } = useI18n();
   const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
 
   // ✅ 使用统一数据管理服务
@@ -87,7 +101,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   const setCategoriesCache = React.useCallback((nextCategories: ExpenseCategory[]) => {
     setCategories(nextCategories);
-    localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
+    try {
+      localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextCategories));
+    } catch (cacheError) {
+      console.warn('开支类别缓存写入失败，继续使用云端数据:', cacheError);
+    }
   }, [expenseCategoryStorageKey]);
 
   const makeCategoryCode = (name: string): string => name.trim().toUpperCase().replace(/\s+/g, '_');
@@ -100,10 +118,15 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const refreshExpenseData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
+      const cloudRange = getExpenseCloudDateRange(filterDateMode, filterDate, filterMonth);
       const [cloudExpenses, cloudCategories, cloudPurchases] = await Promise.all([
-        smartGetDocuments('expenses', true),
+        cloudRange
+          ? smartGetDocumentsByDateRange('expenses', 'date', cloudRange.startDate, cloudRange.endDate, true)
+          : smartGetDocuments('expenses', true),
         smartGetDocuments('expense_categories', true),
-        smartGetDocuments('purchase_orders', true),
+        cloudRange
+          ? smartGetDocumentsByDateRange('purchase_orders', 'orderDate', cloudRange.startDate, cloudRange.endDate, true, 'timestamp')
+          : smartGetDocuments('purchase_orders', true),
       ]);
 
       const repairedExpenses = buildMissingPurchaseExpenses(cloudPurchases, cloudExpenses);
@@ -122,11 +145,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('\u5237\u65b0\u5f00\u652f\u8bb0\u5f55\u5931\u8d25:', error);
-      alert('\u5237\u65b0\u5f00\u652f\u8bb0\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('expense.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
-  }, [setCategoriesCache]);
+  }, [filterDate, filterDateMode, filterMonth, setCategoriesCache, t]);
 
   useEffect(() => {
     refreshExpenseData();
@@ -163,11 +186,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   // ✅ 添加开支 - 使用 dataManager 统一保存
   const handleAddExpense = async () => {
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
-      alert('请输入有效金额');
+      alert(t('expense.alert.validAmount'));
       return;
     }
 
-    if (!window.confirm('确认保存这条开支记录吗？')) {
+    if (!window.confirm(t('expense.confirm.save'))) {
       return;
     }
 
@@ -194,7 +217,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       await smartSetDocument('expenses', newExpense.id, newExpense);
     } catch (error) {
       console.error('保存开支记录失败:', error);
-      alert('保存开支记录失败，请检查网络后重试');
+      alert(t('expense.alert.saveFailed'));
       return;
     }
     setExpenses(nextExpenses);
@@ -213,13 +236,13 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
   // ✅ 删除开支 - 使用 dataManager 统一保存
   const handleDeleteExpense = async (id: string) => {
-    if (window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u6761\u8bb0\u5f55\u5417\uff1f')) {
+    if (window.confirm(t('expense.confirm.deleteRecord'))) {
       const nextExpenses = expenses.filter(exp => exp.id !== id);
       try {
         await smartDeleteDocument('expenses', id);
       } catch (error) {
         console.error('删除开支记录失败:', error);
-        alert('删除开支记录失败，请检查网络后重试');
+        alert(t('expense.alert.deleteFailed'));
         return;
       }
       setExpenses(nextExpenses);
@@ -233,13 +256,13 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
     // 验证文件类型
     if (!file.type.startsWith('image/')) {
-      alert('请上传图片文件');
+      alert(t('expense.alert.imageOnly'));
       return;
     }
 
     // 验证文件大小（限制5MB）
     if (file.size > 5 * 1024 * 1024) {
-      alert('图片大小不能超过5MB');
+      alert(t('expense.alert.imageTooLarge'));
       return;
     }
 
@@ -272,7 +295,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       await smartSetDocument('expense_categories', newCat.id, newCat);
     } catch (error) {
       console.error('保存开支类别失败:', error);
-      alert('保存开支类别失败，请检查网络后重试');
+      alert(t('expense.alert.categorySaveFailed'));
       return;
     }
     setCategoriesCache(nextCategories);
@@ -294,7 +317,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       await smartSetDocument('expense_categories', newParent.id, newParent);
     } catch (error) {
       console.error('保存开支父类失败:', error);
-      alert('保存开支父类失败，请检查网络后重试');
+      alert(t('expense.alert.parentSaveFailed'));
       return;
     }
     setCategoriesCache(nextCategories);
@@ -306,7 +329,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const handleRenameCategory = async (id: string) => {
     const category = categories.find(cat => cat.id === id);
     if (!category) return;
-    const nextName = window.prompt('New category name', category.name)?.trim();
+    const nextName = window.prompt(t('expense.prompt.categoryName'), category.name)?.trim();
     if (!nextName || nextName === category.name) return;
 
     const updatedCategory: ExpenseCategory = { ...category, name: nextName };
@@ -315,7 +338,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       await smartSetDocument('expense_categories', updatedCategory.id, updatedCategory);
     } catch (error) {
       console.error('Rename expense category failed:', error);
-      alert('Rename expense category failed. Please check the network and try again.');
+      alert(t('expense.alert.categoryRenameFailed'));
       return;
     }
     setCategoriesCache(nextCategories);
@@ -325,17 +348,17 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const handleDeleteCategory = async (id: string) => {
     const deleteCheck = canDeleteExpenseCategory(id, categories, expenses);
     if (!deleteCheck.allowed) {
-      alert(deleteCheck.reason || 'Category cannot be deleted');
+      alert(t('expense.alert.categoryCannotDelete'));
       return;
     }
     const categoryIdsToDelete = deleteCheck.categoryIdsToDelete || [id];
-    if (window.confirm('Delete this category? This cannot be undone.')) {
+    if (window.confirm(t('expense.confirm.deleteCategory'))) {
       const nextCategories = categories.filter(cat => !categoryIdsToDelete.includes(cat.id));
       try {
         await Promise.all(categoryIdsToDelete.map(categoryId => smartDeleteDocument('expense_categories', categoryId)));
       } catch (error) {
         console.error('Delete expense category failed:', error);
-        alert('Delete expense category failed. Please check the network and try again.');
+        alert(t('expense.alert.categoryDeleteFailed'));
         return;
       }
       setCategoriesCache(nextCategories);
@@ -364,7 +387,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
       } catch (error) {
         console.error('保存票据失败:', error);
-        alert('保存票据失败，请检查网络后重试');
+        alert(t('expense.alert.receiptSaveFailed'));
         return;
       }
       setExpenses(updatedExpenses);
@@ -383,7 +406,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       await smartSetDocument('expenses', updatedExpense.id, updatedExpense);
     } catch (error) {
       console.error('\u5220\u9664\u7968\u636e\u5931\u8d25:', error);
-      alert('\u5220\u9664\u7968\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('expense.alert.receiptDeleteFailed'));
       return;
     }
     setExpenses(updatedExpenses);
@@ -430,7 +453,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
   const detailRankings = buildExpenseDetailRankings(filteredExpenses, purchaseOrders, searchQuery, 6);
   const groupedCategoryRankings = React.useMemo(() => {
     return categoryRankings.reduce((groups: Array<{ title: string; items: typeof categoryRankings }>, item) => {
-      const title = item.parentCategory || '其他开支';
+      const title = item.parentCategory || t('expense.other');
       const group = groups.find(current => current.title === title);
       if (group) {
         group.items.push(item);
@@ -439,11 +462,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       }
       return groups;
     }, []);
-  }, [categoryRankings]);
+  }, [categoryRankings, t]);
   const groupedDetailRankings = React.useMemo(() => {
     if (detailRankings.length === 0) return [];
-    return [{ title: '商品 / 明细', items: detailRankings }];
-  }, [detailRankings]);
+    return [{ title: t('expense.detailItems'), items: detailRankings }];
+  }, [detailRankings, t]);
 
   const styles = {
     container: {
@@ -575,11 +598,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         {/* 头部 - 仅在非嵌入模式显示 */}
         {!embedded && (
           <div style={{ ...styles.header, marginBottom: 0 }}>
-            <h1 style={styles.title}>📝 开支记录</h1>
+            <h1 style={styles.title}>📝 {t('expense.title')}</h1>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
               {lastSyncedAt && (
                 <span style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                  {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+                  {t('expense.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
                 </span>
               )}
               <button
@@ -590,19 +613,19 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                   cursor: isRefreshing ? 'not-allowed' : 'pointer',
                 }}
               >
-                {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+                {isRefreshing ? t('expense.refreshing') : t('expense.refresh')}
               </button>
               <button
                 onClick={() => setShowCategoryManager(!showCategoryManager)}
                 style={styles.btn('#8b5cf6', 'white')}
               >
-                ⚙️ 类别管理
+                ⚙️ {t('expense.categoryManager')}
               </button>
               <button
                 onClick={() => setShowAddForm(!showAddForm)}
                 style={styles.btn(showAddForm ? '#6b7280' : '#10b981', 'white')}
               >
-                {showAddForm ? '❌ 取消' : '➕ 添加开支'}
+                {showAddForm ? `❌ ${t('expense.cancel')}` : `➕ ${t('expense.add')}`}
               </button>
             </div>
           </div>
@@ -611,25 +634,25 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         {/* 紧凑摘要 */}
         <div style={styles.statsCard}>
           <div style={styles.statItem}>
-            <span style={{ fontSize: '0.75rem', color: '#1e40af' }}>今日开支</span>
+            <span style={{ fontSize: '0.75rem', color: '#1e40af' }}>{t('expense.stat.today')}</span>
             <strong style={{ fontSize: '1rem', color: '#1e40af' }}>C$ {todayTotal.toFixed(2)}</strong>
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{todayExpenses.length} 笔</span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{todayExpenses.length} {t('expense.recordsUnit')}</span>
           </div>
           <div style={styles.statItem}>
-            <span style={{ fontSize: '0.75rem', color: '#92400e' }}>筛选后总计</span>
+            <span style={{ fontSize: '0.75rem', color: '#92400e' }}>{t('expense.stat.filteredTotal')}</span>
             <strong style={{ fontSize: '1rem', color: '#92400e' }}>C$ {totalAmount.toFixed(2)}</strong>
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{filteredExpenses.length} 笔</span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{filteredExpenses.length} {t('expense.recordsUnit')}</span>
           </div>
           <div style={styles.statItem}>
-            <span style={{ fontSize: '0.75rem', color: '#9d174d' }}>总记录数</span>
+            <span style={{ fontSize: '0.75rem', color: '#9d174d' }}>{t('expense.stat.totalRecords')}</span>
             <strong style={{ fontSize: '1rem', color: '#9d174d' }}>{expenses.length}</strong>
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>条</span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{t('expense.recordsUnit')}</span>
           </div>
           <div style={styles.statItem}>
-            <span style={{ fontSize: '0.75rem', color: '#047857' }}>当前命中</span>
+            <span style={{ fontSize: '0.75rem', color: '#047857' }}>{t('expense.stat.matches')}</span>
             <strong style={{ fontSize: '1rem', color: '#047857' }}>{filteredExpenses.length}</strong>
             <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-              {searchQuery.trim() ? `搜索：${searchQuery.trim()}` : '按当前筛选'}
+              {searchQuery.trim() ? `${t('expense.searchPrefix')}${searchQuery.trim()}` : t('expense.currentFilter')}
             </span>
           </div>
         </div>
@@ -637,21 +660,21 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {/* 类别管理 */}
       {showCategoryManager && (
         <div style={styles.card}>
-          <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>⚙️ 管理开支类别</h3>
+          <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>⚙️ {t('expense.manageCategories')}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.8fr) minmax(280px, 1.2fr)', gap: '1rem' }}>
             <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem' }}>
-              <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>父类</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>{t('expense.parentCategory')}</div>
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
                 <input
                   type="text"
                   value={newParentCategoryName}
                   onChange={(e) => setNewParentCategoryName(e.target.value)}
-                  placeholder="新父类名称"
+                  placeholder={t('expense.newParentPlaceholder')}
                   onKeyDown={(e) => e.key === 'Enter' && handleAddParentCategory()}
                   style={{ ...styles.input, flex: 1 }}
                 />
                 <button onClick={handleAddParentCategory} style={styles.btn('#0f766e', 'white')}>
-                  添加
+                  {t('expense.addButton')}
                 </button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -679,7 +702,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                       onClick={() => handleRenameCategory(parent.id)}
                       style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
                     >
-                      {'\u6539\u540d'}
+                      {t('expense.rename')}
                     </button>
                     <button
                       onClick={() => handleDeleteCategory(parent.id)}
@@ -694,19 +717,19 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
             <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem' }}>
               <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>
-                子类：{parentCategories.find(parent => parent.id === selectedParentCategoryId)?.name || '请选择父类'}
+                {t('expense.childCategory')}：{parentCategories.find(parent => parent.id === selectedParentCategoryId)?.name || t('expense.selectParent')}
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
                 <input
                   type="text"
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="新子类名称"
+                  placeholder={t('expense.newChildPlaceholder')}
                   onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
                   style={{ ...styles.input, flex: 1 }}
                 />
                 <button onClick={handleAddCategory} style={styles.btn('#10b981', 'white')}>
-                  添加
+                  {t('expense.addButton')}
                 </button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -727,7 +750,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                       onClick={() => handleRenameCategory(cat.id)}
                       style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
                     >
-                      {'\u6539\u540d'}
+                      {t('expense.rename')}
                     </button>
                     <button
                       onClick={() => handleDeleteCategory(cat.id)}
@@ -738,7 +761,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                   </div>
                 ))}
                 {selectedParentChildren.length === 0 && (
-                  <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>该父类下暂无子类</div>
+                  <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>{t('expense.noChildCategories')}</div>
                 )}
               </div>
             </div>
@@ -749,10 +772,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       {/* 添加开支表单 */}
       {showAddForm && (
         <div style={styles.card}>
-          <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>➕ 添加开支记录</h3>
+          <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>➕ {t('expense.addRecord')}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             <div style={styles.formGroup}>
-              <label style={styles.label}>日期</label>
+              <label style={styles.label}>{t('expense.date')}</label>
               <input
                 type="date"
                 value={formData.date}
@@ -761,7 +784,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               />
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>父类</label>
+              <label style={styles.label}>{t('expense.parentCategory')}</label>
               <select
                 value={formData.parentCategoryId}
                 onChange={(e) => {
@@ -777,7 +800,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               </select>
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>子类</label>
+              <label style={styles.label}>{t('expense.childCategory')}</label>
               <select
                 value={formData.categoryId}
                 onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
@@ -789,7 +812,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               </select>
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>金额 (C$)</label>
+              <label style={styles.label}>{t('expense.amount')}</label>
               <input
                 type="number"
                 value={formData.amount}
@@ -801,12 +824,12 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
               />
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>备注说明</label>
+              <label style={styles.label}>{t('expense.description')}</label>
               <input
                 type="text"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="可选"
+                placeholder={t('expense.optional')}
                 style={{ ...styles.input, width: '100%' }}
               />
             </div>
@@ -814,7 +837,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
           {/* 票据图片上传 */}
           <div style={styles.formGroup}>
-            <label style={styles.label}>📷 票据图片（可选）</label>
+            <label style={styles.label}>📷 {t('expense.receiptOptional')}</label>
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
               <div style={{ flex: 1 }}>
                 <input
@@ -824,14 +847,14 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                   style={{ ...styles.input, width: '100%' }}
                 />
                 <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                  支持 JPG、PNG 格式，最大 5MB
+                  {t('expense.receiptHelp')}
                 </div>
               </div>
               {receiptImage && (
                 <div style={{ position: 'relative' }}>
                   <img
                     src={receiptImage}
-                    alt="票据预览"
+                    alt={t('expense.receiptPreview')}
                     style={{
                       maxWidth: '150px',
                       maxHeight: '150px',
@@ -868,10 +891,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
             <button onClick={handleAddExpense} style={styles.btn('#10b981', 'white')}>
-              💾 保存
+              💾 {t('expense.save')}
             </button>
             <button onClick={() => setShowAddForm(false)} style={styles.btn('#6b7280', 'white')}>
-              取消
+              {t('expense.cancel')}
             </button>
           </div>
         </div>
@@ -893,10 +916,10 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           }}
           style={styles.select}
         >
-          <option value="today">今天</option>
-          <option value="all">全部</option>
-          <option value="date">指定日期</option>
-          <option value="month">月份</option>
+          <option value="today">{t('expense.dateMode.today')}</option>
+          <option value="all">{t('expense.dateMode.all')}</option>
+          <option value="date">{t('expense.dateMode.date')}</option>
+          <option value="month">{t('expense.dateMode.month')}</option>
         </select>
         {(filterDateMode === 'today' || filterDateMode === 'date') && (
           <input
@@ -928,7 +951,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           }}
           style={styles.select}
         >
-          <option value="all">全部父类</option>
+          <option value="all">{t('expense.allParents')}</option>
           {parentCategories.map(parent => (
             <option key={parent.id} value={parent.id}>{parent.name}</option>
           ))}
@@ -938,7 +961,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           onChange={(e) => setFilterCategory(e.target.value)}
           style={styles.select}
         >
-          <option value="all">全部子类</option>
+          <option value="all">{t('expense.allChildren')}</option>
           {(filterParentCategory === 'all'
             ? categories.filter(category => category.level === 'child')
             : getExpenseChildCategories(categories, filterParentCategory)
@@ -950,7 +973,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
           type="search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索开支、供应商、单号、商品，如 鸡肉"
+          placeholder={t('expense.searchPlaceholder')}
           style={{ ...styles.input, minWidth: '260px', flex: '1 1 280px' }}
         />
         {searchQuery.trim() && (
@@ -958,7 +981,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
             onClick={() => setSearchQuery('')}
             style={styles.btn('#e5e7eb', '#374151')}
           >
-            清除搜索
+            {t('expense.clearSearch')}
           </button>
         )}
       </div>
@@ -968,19 +991,19 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
         {filteredExpenses.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📭</div>
-            <div>暂无开支记录</div>
+            <div>{t('expense.empty')}</div>
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ ...styles.table, background: 'white' }}>
               <thead>
                 <tr>
-                  <th style={{ ...styles.th, width: '100px' }}>日期</th>
-                  <th style={{ ...styles.th, width: '100px' }}>类别</th>
-                  <th style={styles.th}>备注</th>
-                  <th style={{ ...styles.th, width: '120px', textAlign: 'right' }}>金额</th>
-                  <th style={{ ...styles.th, width: '100px', textAlign: 'center' }}>票据</th>
-                  <th style={{ ...styles.th, width: '80px', textAlign: 'center' }}>操作</th>
+                  <th style={{ ...styles.th, width: '100px' }}>{t('expense.date')}</th>
+                  <th style={{ ...styles.th, width: '100px' }}>{t('expense.category')}</th>
+                  <th style={styles.th}>{t('expense.note')}</th>
+                  <th style={{ ...styles.th, width: '120px', textAlign: 'right' }}>{t('expense.amountShort')}</th>
+                  <th style={{ ...styles.th, width: '100px', textAlign: 'center' }}>{t('expense.receipt')}</th>
+                  <th style={{ ...styles.th, width: '80px', textAlign: 'center' }}>{t('expense.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1009,7 +1032,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                           <div style={{ position: 'relative', display: 'inline-block' }}>
                             <img
                               src={exp.receipt}
-                              alt="票据"
+                              alt={t('expense.receipt')}
                               style={{ height: '40px', borderRadius: '0.25rem', cursor: 'pointer' }}
                               onClick={() => window.open(exp.receipt, '_blank')}
                             />
@@ -1043,7 +1066,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                               fontSize: '0.75rem',
                             }}
                           >
-                            📎 上传
+                            📎 {t('expense.upload')}
                             <input
                               type="file"
                               accept="image/*"
@@ -1077,22 +1100,22 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
       <div style={{ ...styles.card, padding: '1rem', marginBottom: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '1rem', marginBottom: '0.75rem' }}>
           <div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>开支排名</div>
-            <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>基于上方筛选结果，先按大类归类，再看小类和商品明细。</div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{t('expense.ranking.title')}</div>
+            <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{t('expense.ranking.subtitle')}</div>
           </div>
           <span style={{ fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-            {filteredExpenses.length} 笔 / C$ {totalAmount.toFixed(2)}
+            {filteredExpenses.length} {t('expense.recordsUnit')} / C$ {totalAmount.toFixed(2)}
           </span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
           <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>类别开支排名</strong>
+              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>{t('expense.ranking.category')}</strong>
               <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Top {categoryRankings.length}</span>
             </div>
             {groupedCategoryRankings.length === 0 ? (
-              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>暂无排名数据</div>
+              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>{t('expense.ranking.empty')}</div>
             ) : groupedCategoryRankings.map(group => (
               <div key={group.title} style={{ marginBottom: '0.75rem' }}>
                 <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem' }}>{group.title}</div>
@@ -1115,11 +1138,11 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
 
           <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>商品 / 明细排名</strong>
+              <strong style={{ fontSize: '0.9rem', color: '#111827' }}>{t('expense.ranking.detail')}</strong>
               <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Top {detailRankings.length}</span>
             </div>
             {groupedDetailRankings.length === 0 ? (
-              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>暂无明细数据</div>
+              <div style={{ color: '#9ca3af', fontSize: '0.875rem', padding: '0.5rem 0' }}>{t('expense.ranking.detailEmpty')}</div>
             ) : groupedDetailRankings.map(group => (
               <div key={group.title}>
                 <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: '0.35rem' }}>{group.title}</div>
@@ -1129,7 +1152,7 @@ const ExpenseRecordsModule: React.FC<ExpenseRecordsProps> = ({ embedded = false 
                       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span style={{ color: '#94a3b8', marginRight: '0.4rem' }}>#{index + 1}</span>{item.label}
                         <span style={{ color: '#64748b', marginLeft: '0.4rem', fontSize: '0.75rem' }}>
-                          {item.quantity > 0 ? `数量 ${item.quantity}` : `${item.count} 笔`}
+                          {item.quantity > 0 ? `${t('expense.quantity')} ${item.quantity}` : `${item.count} ${t('expense.recordsUnit')}`}
                         </span>
                       </span>
                       <strong style={{ color: '#0f766e', whiteSpace: 'nowrap' }}>C$ {item.amount.toFixed(2)}</strong>

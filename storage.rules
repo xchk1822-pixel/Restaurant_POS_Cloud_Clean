@@ -13,6 +13,10 @@ service firebase.storage {
       return getUserDoc().data.storeId;
     }
 
+    function getUserStoreIds() {
+      return getUserDoc().data.get('storeIds', []);
+    }
+
     function getUserRole() {
       return getUserDoc().data.role;
     }
@@ -30,7 +34,11 @@ service firebase.storage {
     }
 
     function hasStoreAccess(storeId) {
-      return isActiveUser() && (getUserStoreId() == storeId || isSuperAdmin());
+      return isActiveUser() && (
+        getUserStoreId() == storeId
+        || isSuperAdmin()
+        || (getUserRole() == 'multi_store_manager' && storeId in getUserStoreIds())
+      );
     }
 
     match /stores/{storeId}/menu-images/{menuId}/{fileName} {

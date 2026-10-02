@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 
 interface Table {
   id: string;
@@ -26,6 +27,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
   onTablesUpdate,
   editable = false
 }) => {
+  const { t } = useI18n();
   const [draggedTable, setDraggedTable] = useState<string | null>(null);
   const [showContextMenu, setShowContextMenu] = useState<{ x: number; y: number; tableId: string } | null>(null);
 
@@ -78,13 +80,13 @@ const TableLayout: React.FC<TableLayoutProps> = ({
 
   const handleMergeTables = () => {
     // 合并桌子逻辑
-    alert('合并桌子功能');
+    alert(t('tableLayout.mergeAction'));
     setShowContextMenu(null);
   };
 
   const handleSplitTable = () => {
     // 拆分桌子逻辑
-    alert('拆分桌子功能');
+    alert(t('tableLayout.splitAction'));
     setShowContextMenu(null);
   };
 
@@ -123,7 +125,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
             }}
           >
             <div style={{ fontSize: '1.25rem' }}>{table.number}</div>
-            <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>{table.capacity}人</div>
+            <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>{table.capacity} {t('tableLayout.people')}</div>
           </div>
         ))}
       </div>
@@ -154,7 +156,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
               fontSize: '0.875rem'
             }}
           >
-            合并桌子
+            {t('tableLayout.merge')}
           </button>
           <button
             onClick={handleSplitTable}
@@ -168,7 +170,7 @@ const TableLayout: React.FC<TableLayoutProps> = ({
               fontSize: '0.875rem'
             }}
           >
-            拆分桌子
+            {t('tableLayout.split')}
           </button>
         </div>
       )}
@@ -186,15 +188,15 @@ const TableLayout: React.FC<TableLayoutProps> = ({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
           <div style={{ width: '12px', height: '12px', backgroundColor: '#10b981', borderRadius: '2px', marginRight: '0.5rem' }}></div>
-          <span>空闲</span>
+          <span>{t('tableLayout.available')}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
           <div style={{ width: '12px', height: '12px', backgroundColor: '#ef4444', borderRadius: '2px', marginRight: '0.5rem' }}></div>
-          <span>占用</span>
+          <span>{t('tableLayout.occupied')}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <div style={{ width: '12px', height: '12px', backgroundColor: '#f59e0b', borderRadius: '2px', marginRight: '0.5rem' }}></div>
-          <span>预订</span>
+          <span>{t('tableLayout.reserved')}</span>
         </div>
       </div>
     </div>

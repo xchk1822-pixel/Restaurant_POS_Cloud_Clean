@@ -1,14 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { dataManager } from '../../services/dataManager';
 import { dataService } from '../../services/DataService';
-import { smartAddDocument, smartDeleteDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartAddDocument, smartDeleteDocument, smartGetDocuments, smartGetDocumentsWhereEqual, smartUpdateDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey } from '../../i18n/translations';
 import {
   SupplierRecord,
   PurchaseOrderRecord,
   SupplierPaymentRecord,
+  SupplierLedgerEntry,
   buildSupplierAccountSnapshot,
   buildSupplierLedgerEntries,
   filterSupplierOrdersByDateRange,
@@ -25,17 +28,52 @@ import {
 
 type PaymentMethod = 'cash' | 'transfer' | 'check';
 
-const paymentMethodLabels: Record<PaymentMethod, string> = {
-  cash: '现金',
-  transfer: '转账',
-  check: '支票'
+const paymentMethodKeys: Record<PaymentMethod, TranslationKey> = {
+  cash: 'supplier.paymentMethod.cash',
+  transfer: 'supplier.paymentMethod.transfer',
+  check: 'supplier.paymentMethod.check'
+};
+
+const getPaymentMethodLabel = (method: string | undefined, t: (key: TranslationKey) => string): string => {
+  const key = paymentMethodKeys[method as PaymentMethod];
+  return key ? t(key) : (method || t('supplier.repayment'));
+};
+
+const getLedgerLabel = (entry: SupplierLedgerEntry, t: (key: TranslationKey) => string): string => {
+  if (entry.kind === 'payment') return t('supplier.repayment');
+  if (entry.order?.paymentType === 'cash') return t('supplier.ledger.cashPurchase');
+  if (entry.remainingDebt <= 0 && entry.amount > 0) return t('supplier.ledger.settledPurchase');
+  if (entry.paidAmount > 0 && entry.remainingDebt > 0) return t('supplier.ledger.partialCredit');
+  return t('supplier.ledger.creditPurchase');
+};
+
+const getLedgerDetail = (entry: SupplierLedgerEntry, t: (key: TranslationKey) => string): string => {
+  if (entry.kind !== 'payment' || !entry.payment) return entry.detail;
+  const method = getPaymentMethodLabel(entry.payment.paymentMethod, t);
+  return `${method}${entry.payment.notes ? ` · ${entry.payment.notes}` : ''}`;
 };
 
 const saveStoreCollection = (collectionName: string, data: any[]) => {
-  const storeId = dataService.getCurrentStoreId();
-  const storageKey = storeId ? `store_${storeId}_${collectionName}` : collectionName;
-  localStorage.setItem(storageKey, JSON.stringify(data));
+  try {
+    const storageKey = dataService.getStoreKey(collectionName);
+    localStorage.setItem(storageKey, JSON.stringify(data));
+  } catch {
+    // Auxiliary cache only; never fall back to an unscoped business key.
+  }
 };
+
+const loadStoreCollection = (collectionName: string): any[] => {
+  try {
+    const stored = localStorage.getItem(dataService.getStoreKey(collectionName));
+    const parsed = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const getPurchaseTraceCacheName = (kind: 'stock' | 'expense', orderId: string) =>
+  `supplier_purchase_trace_${kind}_${orderId}`;
 
 const money = (value: number): string => `C$ ${value.toFixed(2)}`;
 
@@ -69,14 +107,15 @@ const printSupplierStatement = (
   supplier: SupplierRecord,
   orders: PurchaseOrderRecord[],
   payments: SupplierPaymentRecord[],
-  periodLabel: string
+  periodLabel: string,
+  t: (key: TranslationKey) => string
 ) => {
   const snapshot = buildSupplierAccountSnapshot(supplier, orders, payments);
   const ledger = buildSupplierLedgerEntries(orders, payments);
   const printWindow = window.open('', '_blank');
 
   if (!printWindow) {
-    alert('请允许弹出窗口以生成供应商账单');
+    alert(t('supplier.alert.allowPopup'));
     return;
   }
 
@@ -86,7 +125,7 @@ const printSupplierStatement = (
       <tr>
         <td>${formatSupplierDate(order.orderDate || order.receivedDate || order.createdAt)}</td>
         <td>${order.orderNumber || order.id}</td>
-        <td>${order.paymentType === 'cash' ? '现付' : '欠款'}</td>
+        <td>${order.paymentType === 'cash' ? t('supplier.payment.cash') : t('supplier.payment.credit')}</td>
         <td class="amount">${money(Number(order.totalAmount || 0))}</td>
         <td class="amount">${money(getPurchasePaidAmount(order))}</td>
         <td class="amount">${money(remaining)}</td>
@@ -97,9 +136,9 @@ const printSupplierStatement = (
   const ledgerRows = ledger.map(entry => `
     <tr>
       <td>${entry.dateKey}</td>
-      <td><span class="badge ${entry.kind}">${entry.label}</span></td>
+      <td><span class="badge ${entry.kind}">${getLedgerLabel(entry, t)}</span></td>
       <td>${entry.title}</td>
-      <td>${entry.detail}</td>
+      <td>${getLedgerDetail(entry, t)}</td>
       <td class="amount">${money(entry.amount)}</td>
       <td class="amount">${money(entry.paidAmount)}</td>
       <td class="amount">${money(entry.remainingDebt)}</td>
@@ -111,7 +150,7 @@ const printSupplierStatement = (
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>供应商对账单 - ${supplier.name}</title>
+        <title>${t('supplier.statement.title')} - ${supplier.name}</title>
         <style>
           * { box-sizing: border-box; }
           body { margin: 0; padding: 24px; color: #111827; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12px; }
@@ -141,33 +180,33 @@ const printSupplierStatement = (
       <body>
         <div class="header">
           <div>
-            <h1>供应商对账单</h1>
+            <h1>${t('supplier.statement.title')}</h1>
             <div class="muted">${supplier.name} · ${supplier.contact || '-'} · ${supplier.phone || '-'}</div>
-            <div class="muted">账单期间：${periodLabel}</div>
+            <div class="muted">${t('supplier.statement.period')}：${periodLabel}</div>
           </div>
-          <div class="muted">打印日期：${getLocalDateString()}</div>
+          <div class="muted">${t('supplier.statement.printDate')}：${getLocalDateString()}</div>
         </div>
         <div class="summary">
-          <div class="box"><div class="label">采购总额</div><div class="value">${money(snapshot.totalPurchase)}</div></div>
-          <div class="box"><div class="label">已付金额</div><div class="value">${money(snapshot.totalPaid)}</div></div>
-          <div class="box"><div class="label">剩余欠款</div><div class="value">${money(snapshot.totalDebt)}</div></div>
-          <div class="box"><div class="label">未清单数</div><div class="value">${snapshot.unpaidOrderCount}</div></div>
+          <div class="box"><div class="label">${t('supplier.totalPurchases')}</div><div class="value">${money(snapshot.totalPurchase)}</div></div>
+          <div class="box"><div class="label">${t('supplier.totalPaid')}</div><div class="value">${money(snapshot.totalPaid)}</div></div>
+          <div class="box"><div class="label">${t('supplier.outstandingDebt')}</div><div class="value">${money(snapshot.totalDebt)}</div></div>
+          <div class="box"><div class="label">${t('supplier.unpaidOrders')}</div><div class="value">${snapshot.unpaidOrderCount}</div></div>
         </div>
-        <div class="section-title">采购单汇总</div>
+        <div class="section-title">${t('supplier.statement.purchaseSummary')}</div>
         <table>
           <thead>
-            <tr><th>日期</th><th>单号</th><th>方式</th><th class="amount">总额</th><th class="amount">已付</th><th class="amount">剩余欠款</th></tr>
+            <tr><th>${t('supplier.date')}</th><th>${t('supplier.invoice')}</th><th>${t('supplier.method')}</th><th class="amount">${t('supplier.total')}</th><th class="amount">${t('supplier.paid')}</th><th class="amount">${t('supplier.outstandingDebt')}</th></tr>
           </thead>
-          <tbody>${orderRows || '<tr><td colspan="6">暂无采购记录</td></tr>'}</tbody>
+          <tbody>${orderRows || `<tr><td colspan="6">${t('supplier.noPurchases')}</td></tr>`}</tbody>
         </table>
-        <div class="section-title">业务流水</div>
+        <div class="section-title">${t('supplier.ledger.title')}</div>
         <table>
           <thead>
-            <tr><th>日期</th><th>类型</th><th>单号</th><th>明细</th><th class="amount">总额</th><th class="amount">已付/还款</th><th class="amount">剩余</th></tr>
+            <tr><th>${t('supplier.date')}</th><th>${t('supplier.type')}</th><th>${t('supplier.invoice')}</th><th>${t('supplier.details')}</th><th class="amount">${t('supplier.total')}</th><th class="amount">${t('supplier.paidOrRepaid')}</th><th class="amount">${t('supplier.remaining')}</th></tr>
           </thead>
-          <tbody>${ledgerRows || '<tr><td colspan="7">暂无业务流水</td></tr>'}</tbody>
+          <tbody>${ledgerRows || `<tr><td colspan="7">${t('supplier.noLedger')}</td></tr>`}</tbody>
         </table>
-        <div class="no-print"><button onclick="window.print()">打印账单</button></div>
+        <div class="no-print"><button onclick="window.print()">${t('supplier.statement.print')}</button></div>
       </body>
     </html>
   `);
@@ -175,8 +214,9 @@ const printSupplierStatement = (
 };
 
 const SupplierWorkbench: React.FC = () => {
+  const { t } = useI18n();
   const { suppliers, setSuppliers, purchaseOrders, setPurchaseOrders } = useAppContext();
-  const [payments, setPayments] = useState<SupplierPaymentRecord[]>([]);
+  const [payments, setPayments] = useState<SupplierPaymentRecord[]>(() => loadStoreCollection('supplier_payments').map(normalizePayment));
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const [searchText, setSearchText] = useState('');
   const [debtFilter, setDebtFilter] = useState<'all' | 'debt' | 'settled'>('all');
@@ -185,8 +225,14 @@ const SupplierWorkbench: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Partial<SupplierRecord> | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<PurchaseOrderRecord | null>(null);
+  const [paymentOperationId, setPaymentOperationId] = useState('');
   const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMethod: 'cash' as PaymentMethod, notes: '' });
   const [dateRange, setDateRange] = useState(() => getCurrentMonthSupplierRange());
+  const [traceOrder, setTraceOrder] = useState<PurchaseOrderRecord | null>(null);
+  const [traceStockRecords, setTraceStockRecords] = useState<any[]>([]);
+  const [traceExpenses, setTraceExpenses] = useState<any[]>([]);
+  const [isLoadingTrace, setIsLoadingTrace] = useState(false);
+  const isSubmittingPaymentRef = useRef(false);
 
   const allSuppliers = suppliers as SupplierRecord[];
   const allOrders = purchaseOrders as PurchaseOrderRecord[];
@@ -227,7 +273,7 @@ const SupplierWorkbench: React.FC = () => {
   const unpaidOrders = getUnpaidPurchaseOrders(selectedOrders);
   const totalDebt = supplierSummaries.reduce((sum, row) => sum + row.summary.totalDebt, 0);
   const suppliersWithDebt = supplierSummaries.filter(row => row.summary.totalDebt > 0).length;
-  const periodLabel = `${dateRange.startDate || '不限'} 至 ${dateRange.endDate || '不限'}`;
+  const periodLabel = `${dateRange.startDate || t('supplier.noLimit')} ${t('supplier.to')} ${dateRange.endDate || t('supplier.noLimit')}`;
 
   const refresh = async () => {
     setIsRefreshing(true);
@@ -247,7 +293,7 @@ const SupplierWorkbench: React.FC = () => {
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('供应商模块刷新失败:', error);
-      alert('刷新供应商数据失败，请检查网络后重试');
+      alert(t('supplier.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
@@ -259,7 +305,7 @@ const SupplierWorkbench: React.FC = () => {
 
   const saveSupplier = async () => {
     if (!editingSupplier?.name?.trim()) {
-      alert('请填写供应商名称');
+      alert(t('supplier.alert.nameRequired'));
       return;
     }
     setIsSaving(true);
@@ -289,7 +335,7 @@ const SupplierWorkbench: React.FC = () => {
       setEditingSupplier(null);
     } catch (error) {
       console.error('保存供应商失败:', error);
-      alert('保存供应商失败，请检查网络后重试');
+      alert(t('supplier.alert.saveFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -298,10 +344,10 @@ const SupplierWorkbench: React.FC = () => {
   const deleteSupplier = async () => {
     if (!selectedSupplier || !selectedSummary) return;
     if (selectedSummary.totalDebt > 0) {
-      alert(`该供应商还有欠款 ${money(selectedSummary.totalDebt)}，不能删除`);
+      alert(`${t('supplier.alert.debtBlocksDelete')} ${money(selectedSummary.totalDebt)}`);
       return;
     }
-    if (!window.confirm(`确定删除供应商 ${selectedSupplier.name}？`)) return;
+    if (!window.confirm(`${t('supplier.confirm.delete')} ${selectedSupplier.name}?`)) return;
 
     setIsSaving(true);
     try {
@@ -310,7 +356,7 @@ const SupplierWorkbench: React.FC = () => {
       setSelectedSupplierId('');
     } catch (error) {
       console.error('删除供应商失败:', error);
-      alert('删除供应商失败，请检查网络后重试');
+      alert(t('supplier.alert.deleteFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -318,6 +364,7 @@ const SupplierWorkbench: React.FC = () => {
 
   const openPayment = (order: PurchaseOrderRecord) => {
     setPaymentOrder(order);
+    setPaymentOperationId(`supplier-payment-${order.id}-${Date.now()}`);
     setPaymentForm({
       amount: getPurchaseRemainingDebt(order).toFixed(2),
       paymentMethod: 'cash',
@@ -325,19 +372,46 @@ const SupplierWorkbench: React.FC = () => {
     });
   };
 
+  const openPurchaseTrace = async (order: PurchaseOrderRecord) => {
+    const stockCacheName = getPurchaseTraceCacheName('stock', order.id);
+    const expenseCacheName = getPurchaseTraceCacheName('expense', order.id);
+    const cachedStockRecords = loadStoreCollection(stockCacheName);
+    const cachedExpenses = loadStoreCollection(expenseCacheName);
+    setTraceOrder(order);
+    setTraceStockRecords(cachedStockRecords);
+    setTraceExpenses(cachedExpenses);
+    setIsLoadingTrace(true);
+    try {
+      const [stockRecords, expenses] = await Promise.all([
+        smartGetDocumentsWhereEqual('inventory_stock_records', 'sourceId', order.id, true),
+        smartGetDocumentsWhereEqual('expenses', 'purchaseOrderId', order.id, true),
+      ]);
+      const resolvedStockRecords = stockRecords.length > 0 ? stockRecords : cachedStockRecords;
+      const resolvedExpenses = expenses.length > 0 ? expenses : cachedExpenses;
+      setTraceStockRecords(resolvedStockRecords);
+      setTraceExpenses(resolvedExpenses);
+      if (stockRecords.length > 0) saveStoreCollection(stockCacheName, stockRecords);
+      if (expenses.length > 0) saveStoreCollection(expenseCacheName, expenses);
+    } finally {
+      setIsLoadingTrace(false);
+    }
+  };
+
   const submitPayment = async () => {
     if (!paymentOrder) return;
+    if (isSubmittingPaymentRef.current) return;
     const amount = Number(paymentForm.amount);
     const remaining = getPurchaseRemainingDebt(paymentOrder);
     if (!Number.isFinite(amount) || amount <= 0) {
-      alert('请输入正确的还款金额');
+      alert(t('supplier.alert.invalidRepayment'));
       return;
     }
     if (amount > remaining) {
-      alert(`还款金额不能超过剩余欠款 ${money(remaining)}`);
+      alert(`${t('supplier.alert.exceedsDebt')} ${money(remaining)}`);
       return;
     }
 
+    isSubmittingPaymentRef.current = true;
     setIsSaving(true);
     try {
       const now = Date.now();
@@ -349,7 +423,7 @@ const SupplierWorkbench: React.FC = () => {
         lastModified: now
       };
       const nextOrders = allOrders.map(order => order.id === paymentOrder.id ? updatedOrder : order);
-      const paymentId = `supplier-payment-${now}`;
+      const paymentId = paymentOperationId || `supplier-payment-${paymentOrder.id}-${now}`;
       const paymentRecord: SupplierPaymentRecord = {
         id: paymentId,
         orderId: paymentOrder.id,
@@ -359,17 +433,20 @@ const SupplierWorkbench: React.FC = () => {
         amount,
         paymentDate: new Date(),
         paymentMethod: paymentForm.paymentMethod,
-        notes: paymentForm.notes
+        notes: paymentForm.notes,
+        createdAt: new Date(),
+        lastModified: now,
       };
+      const nextPayments = [...payments.filter(payment => payment.id !== paymentId), paymentRecord];
       const relatedSupplier = allSuppliers.find(supplier => supplier.id === paymentOrder.supplierId);
       const updatedSupplier = relatedSupplier ? {
         ...relatedSupplier,
-        balance: buildSupplierAccountSnapshot(relatedSupplier, nextOrders, [...payments, paymentRecord]).totalDebt,
+        balance: buildSupplierAccountSnapshot(relatedSupplier, nextOrders, nextPayments).totalDebt,
         lastUpdated: new Date(),
         lastModified: now
       } : null;
       const paymentExpense = {
-        id: `expense_supplier_payment_${now}`,
+        id: `expense-${paymentId}`,
         date: getLocalDateString(),
         categoryId: 'supplier_payment',
         categoryName: '供应商货款',
@@ -382,7 +459,8 @@ const SupplierWorkbench: React.FC = () => {
         purchaseOrderId: paymentOrder.id,
         relatedType: 'supplier_repayment',
         orderNumber: paymentOrder.orderNumber,
-        createdAt: getLocalDateString()
+        createdAt: new Date(),
+        lastModified: now,
       };
 
       await smartUpdateDocument('purchase_orders', paymentOrder.id, updatedOrder);
@@ -393,17 +471,23 @@ const SupplierWorkbench: React.FC = () => {
       await smartAddDocument('expenses', paymentExpense);
 
       setPurchaseOrders(nextOrders as any);
-      setPayments(prev => [...prev, paymentRecord]);
+      setPayments(nextPayments);
+      saveStoreCollection('supplier_payments', nextPayments);
       if (updatedSupplier) {
         setSuppliers(prev => prev.map(item => item.id === updatedSupplier.id ? updatedSupplier as any : item));
       }
-      const nextExpenses = [...dataManager.getData('expenses'), paymentExpense];
+      const nextExpenses = [
+        paymentExpense,
+        ...dataManager.getData('expenses').filter(expense => expense.id !== paymentExpense.id),
+      ];
       await dataManager.saveData('expenses', nextExpenses, { syncFirestore: false });
       setPaymentOrder(null);
+      setPaymentOperationId('');
     } catch (error) {
       console.error('供应商还款失败:', error);
-      alert('供应商还款失败，请检查网络后重试');
+      alert(t('supplier.alert.repaymentFailed'));
     } finally {
+      isSubmittingPaymentRef.current = false;
       setIsSaving(false);
     }
   };
@@ -563,30 +647,30 @@ const SupplierWorkbench: React.FC = () => {
 
       <header className="supplier-head">
         <div>
-          <h2 style={{ margin: 0, fontSize: font.title, fontWeight: 850 }}>供应商账款中心</h2>
-          <div style={{ marginTop: 6, color: colors.textSecondary }}>围绕供应商管理采购、欠款、付款流水和账单生成</div>
+          <h2 style={{ margin: 0, fontSize: font.title, fontWeight: 850 }}>{t('supplier.title')}</h2>
+          <div style={{ marginTop: 6, color: colors.textSecondary }}>{t('supplier.subtitle')}</div>
         </div>
         <div className="supplier-actions">
           {lastSyncedAt && (
             <span style={{ alignSelf: 'center', color: colors.textSecondary, fontSize: font.caption }}>
-              已刷新 {lastSyncedAt.toLocaleTimeString('zh-CN', { hour12: false })}
+              {t('supplier.refreshed')} {lastSyncedAt.toLocaleTimeString(undefined, { hour12: false })}
             </span>
           )}
           <button className="supplier-button" style={{ background: colors.blue }} onClick={refresh} disabled={isRefreshing}>
-            {isRefreshing ? '刷新中...' : '刷新'}
+            {isRefreshing ? t('supplier.refreshing') : t('supplier.refresh')}
           </button>
           <button className="supplier-button" style={{ background: colors.teal }} onClick={openNewSupplier}>
-            新增供应商
+            {t('supplier.add')}
           </button>
         </div>
       </header>
 
       <section className="supplier-metrics">
         {[
-          { label: '供应商', value: String(allSuppliers.length), accent: colors.blue },
-          { label: '有欠款', value: String(suppliersWithDebt), accent: colors.amber },
-          { label: '总欠款', value: money(totalDebt), accent: colors.danger },
-          { label: '付款流水', value: String(payments.length), accent: colors.success }
+          { label: t('supplier.stats.suppliers'), value: String(allSuppliers.length), accent: colors.blue },
+          { label: t('supplier.stats.withDebt'), value: String(suppliersWithDebt), accent: colors.amber },
+          { label: t('supplier.stats.totalDebt'), value: money(totalDebt), accent: colors.danger },
+          { label: t('supplier.stats.payments'), value: String(payments.length), accent: colors.success }
         ].map(item => (
           <div key={item.label} className="supplier-kpi" style={{ '--accent': item.accent } as React.CSSProperties}>
             <div style={{ color: colors.textSecondary, fontSize: font.caption, fontWeight: 800 }}>{item.label}</div>
@@ -599,14 +683,14 @@ const SupplierWorkbench: React.FC = () => {
         <aside className="supplier-panel">
           <div style={{ display: 'grid', gap: 10 }}>
             <div>
-              <div style={{ fontSize: font.section, fontWeight: 850 }}>供应商列表</div>
-              <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 4 }}>按供应商进入账款视图</div>
+              <div style={{ fontSize: font.section, fontWeight: 850 }}>{t('supplier.list.title')}</div>
+              <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 4 }}>{t('supplier.list.subtitle')}</div>
             </div>
-            <input className="supplier-input" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="搜索名称、联系人、电话" />
+            <input className="supplier-input" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder={t('supplier.searchPlaceholder')} />
             <select className="supplier-input" value={debtFilter} onChange={event => setDebtFilter(event.target.value as any)}>
-              <option value="all">全部供应商</option>
-              <option value="debt">只看欠款</option>
-              <option value="settled">只看已结清</option>
+              <option value="all">{t('supplier.filter.all')}</option>
+              <option value="debt">{t('supplier.filter.debt')}</option>
+              <option value="settled">{t('supplier.filter.settled')}</option>
             </select>
             <div style={{ display: 'grid', gap: 8 }}>
               {filteredSuppliers.map(({ supplier, summary }) => (
@@ -626,18 +710,18 @@ const SupplierWorkbench: React.FC = () => {
                       fontWeight: 800,
                       whiteSpace: 'nowrap'
                     }}>
-                      {summary.totalDebt > 0 ? '欠款' : '结清'}
+                      {summary.totalDebt > 0 ? t('supplier.status.debt') : t('supplier.status.settled')}
                     </span>
                   </div>
                   <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 5 }}>{supplier.contact || '-'} · {supplier.phone || '-'}</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-                    <span style={{ color: colors.textSecondary }}>余额</span>
+                    <span style={{ color: colors.textSecondary }}>{t('supplier.balance')}</span>
                     <strong style={{ color: summary.totalDebt > 0 ? colors.danger : colors.success }}>{money(summary.totalDebt)}</strong>
                   </div>
                 </button>
               ))}
               {filteredSuppliers.length === 0 && (
-                <div style={{ color: colors.textMuted, textAlign: 'center', padding: '28px 8px' }}>暂无供应商</div>
+                <div style={{ color: colors.textMuted, textAlign: 'center', padding: '28px 8px' }}>{t('supplier.empty')}</div>
               )}
             </div>
           </div>
@@ -648,12 +732,12 @@ const SupplierWorkbench: React.FC = () => {
             <div style={{ display: 'grid', gap: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
                 <div>
-                  <div style={{ color: colors.textSecondary, fontWeight: 800, fontSize: font.caption }}>当前供应商</div>
+                  <div style={{ color: colors.textSecondary, fontWeight: 800, fontSize: font.caption }}>{t('supplier.current')}</div>
                   <h3 style={{ margin: '4px 0', fontSize: '1.45rem' }}>{selectedSupplier.name}</h3>
                   <div style={{ color: colors.textSecondary }}>{selectedSupplier.contact || '-'} · {selectedSupplier.phone || '-'}{selectedSupplier.address ? ` · ${selectedSupplier.address}` : ''}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: colors.textSecondary, fontWeight: 800, fontSize: font.caption }}>当前剩余欠款</div>
+                  <div style={{ color: colors.textSecondary, fontWeight: 800, fontSize: font.caption }}>{t('supplier.outstandingDebt')}</div>
                   <div style={{ fontSize: '2rem', fontWeight: 900, color: selectedSummary.totalDebt > 0 ? colors.danger : colors.success }}>
                     {money(selectedSummary.totalDebt)}
                   </div>
@@ -662,10 +746,10 @@ const SupplierWorkbench: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
                 {[
-                  ['采购单', selectedSummary.purchaseCount],
-                  ['挂账单', selectedSummary.creditOrderCount],
-                  ['未清单', selectedSummary.unpaidOrderCount],
-                  ['还款笔数', selectedSummary.repaymentCount]
+                  [t('supplier.count.purchaseOrders'), selectedSummary.purchaseCount],
+                  [t('supplier.count.creditOrders'), selectedSummary.creditOrderCount],
+                  [t('supplier.count.unpaidOrders'), selectedSummary.unpaidOrderCount],
+                  [t('supplier.count.repayments'), selectedSummary.repaymentCount]
                 ].map(([label, value]) => (
                   <div key={String(label)} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, background: colors.surfaceMuted, padding: 10 }}>
                     <div style={{ color: colors.textSecondary, fontSize: font.caption }}>{label}</div>
@@ -676,7 +760,7 @@ const SupplierWorkbench: React.FC = () => {
 
               <section className="supplier-datebar" data-supplier-date-filter="true">
                 <div>
-                  <div style={{ color: colors.textSecondary, fontSize: font.caption, fontWeight: 800, marginBottom: 6 }}>账单开始日期</div>
+                  <div style={{ color: colors.textSecondary, fontSize: font.caption, fontWeight: 800, marginBottom: 6 }}>{t('supplier.period.start')}</div>
                   <input
                     className="supplier-input"
                     type="date"
@@ -685,7 +769,7 @@ const SupplierWorkbench: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <div style={{ color: colors.textSecondary, fontSize: font.caption, fontWeight: 800, marginBottom: 6 }}>账单结束日期</div>
+                  <div style={{ color: colors.textSecondary, fontSize: font.caption, fontWeight: 800, marginBottom: 6 }}>{t('supplier.period.end')}</div>
                   <input
                     className="supplier-input"
                     type="date"
@@ -694,19 +778,19 @@ const SupplierWorkbench: React.FC = () => {
                   />
                 </div>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button className="supplier-quick-range" onClick={() => setDateRange({ startDate: getLocalDateString(), endDate: getLocalDateString() })}>今天</button>
-                  <button className="supplier-quick-range" onClick={() => setDateRange(getCurrentMonthSupplierRange())}>本月</button>
-                  <button className="supplier-quick-range" onClick={() => setDateRange(getPreviousMonthRange())}>上月</button>
-                  <button className="supplier-quick-range" onClick={() => setDateRange(getLastDaysRange(30))}>近30天</button>
+                  <button className="supplier-quick-range" onClick={() => setDateRange({ startDate: getLocalDateString(), endDate: getLocalDateString() })}>{t('supplier.range.today')}</button>
+                  <button className="supplier-quick-range" onClick={() => setDateRange(getCurrentMonthSupplierRange())}>{t('supplier.range.currentMonth')}</button>
+                  <button className="supplier-quick-range" onClick={() => setDateRange(getPreviousMonthRange())}>{t('supplier.range.previousMonth')}</button>
+                  <button className="supplier-quick-range" onClick={() => setDateRange(getLastDaysRange(30))}>{t('supplier.range.last30Days')}</button>
                 </div>
               </section>
 
               <section className="supplier-period-metrics" data-supplier-period-summary="true">
                 {[
-                  ['期间采购', money(periodSummary.purchaseAmount)],
-                  ['期间付款', money(periodSummary.paymentAmount)],
-                  ['采购单数', periodSummary.purchaseCount],
-                  ['付款笔数', periodSummary.paymentCount]
+                  [t('supplier.period.purchases'), money(periodSummary.purchaseAmount)],
+                  [t('supplier.period.payments'), money(periodSummary.paymentAmount)],
+                  [t('supplier.period.purchaseCount'), periodSummary.purchaseCount],
+                  [t('supplier.period.paymentCount'), periodSummary.paymentCount]
                 ].map(([label, value]) => (
                   <div key={String(label)} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, background: '#fff', padding: 10 }}>
                     <div style={{ color: colors.textSecondary, fontSize: font.caption }}>{label}</div>
@@ -717,8 +801,8 @@ const SupplierWorkbench: React.FC = () => {
 
               <section>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: font.section }}>未清采购单</h3>
-                  <span style={{ color: colors.textSecondary, fontSize: font.caption }}>只显示真正有剩余欠款的单据</span>
+                  <h3 style={{ margin: 0, fontSize: font.section }}>{t('supplier.unpaid.title')}</h3>
+                  <span style={{ color: colors.textSecondary, fontSize: font.caption }}>{t('supplier.unpaid.subtitle')}</span>
                 </div>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {unpaidOrders.map(order => (
@@ -728,16 +812,16 @@ const SupplierWorkbench: React.FC = () => {
                         <strong style={{ color: colors.danger }}>{money(getPurchaseRemainingDebt(order))}</strong>
                       </div>
                       <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 5 }}>
-                        {formatSupplierDate(order.orderDate || order.receivedDate || order.createdAt)} · 总额 {money(Number(order.totalAmount || 0))} · 已付 {money(getPurchasePaidAmount(order))}
+                        {formatSupplierDate(order.orderDate || order.receivedDate || order.createdAt)} · {t('supplier.total')} {money(Number(order.totalAmount || 0))} · {t('supplier.paid')} {money(getPurchasePaidAmount(order))}
                       </div>
                       <button className="supplier-button" style={{ background: colors.teal, marginTop: 8, padding: '7px 10px' }} onClick={() => openPayment(order)}>
-                        还款
+                        {t('supplier.repay')}
                       </button>
                     </div>
                   ))}
                   {unpaidOrders.length === 0 && (
                     <div style={{ color: colors.textMuted, background: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.lg, padding: 14 }}>
-                      当前供应商没有未清采购单。
+                      {t('supplier.unpaid.empty')}
                     </div>
                   )}
                 </div>
@@ -745,7 +829,7 @@ const SupplierWorkbench: React.FC = () => {
 
               <section data-supplier-ledger-timeline="true">
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-                  <h3 style={{ margin: 0, fontSize: font.section }}>账务流水</h3>
+                  <h3 style={{ margin: 0, fontSize: font.section }}>{t('supplier.ledger.title')}</h3>
                   <span style={{ color: colors.textSecondary, fontSize: font.caption }}>{periodLabel}</span>
                 </div>
                 <div style={{ display: 'grid', gap: 8 }}>
@@ -753,68 +837,153 @@ const SupplierWorkbench: React.FC = () => {
                     <div key={entry.id} style={{ display: 'grid', gridTemplateColumns: '82px 1fr auto', gap: 12, alignItems: 'center', border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: 10 }}>
                       <div style={{ color: colors.textSecondary, fontSize: font.caption }}>{entry.dateKey}</div>
                       <div>
-                        <strong>{entry.label} · {entry.title}</strong>
-                        <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 3 }}>{entry.detail}</div>
+                        <strong>{getLedgerLabel(entry, t)} · {entry.title}</strong>
+                        <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 3 }}>{getLedgerDetail(entry, t)}</div>
+                        {entry.kind === 'purchase' && entry.order && (
+                          <button
+                            className="supplier-quick-range"
+                            style={{ marginTop: 6 }}
+                            onClick={() => void openPurchaseTrace(entry.order!)}
+                          >
+                            {t('supplier.trace.open')}
+                          </button>
+                        )}
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ color: entry.kind === 'payment' ? colors.success : colors.textPrimary, fontWeight: 850 }}>{money(entry.amount)}</div>
-                        {entry.kind === 'purchase' && <div style={{ color: colors.textSecondary, fontSize: font.caption }}>余 {money(entry.remainingDebt)}</div>}
+                        {entry.kind === 'purchase' && <div style={{ color: colors.textSecondary, fontSize: font.caption }}>{t('supplier.remainingShort')} {money(entry.remainingDebt)}</div>}
                       </div>
                     </div>
                   ))}
                   {selectedLedger.length === 0 && (
                     <div style={{ color: colors.textMuted, background: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.lg, padding: 14 }}>
-                      当前日期范围内暂无账务流水。
+                      {t('supplier.ledger.empty')}
                     </div>
                   )}
                 </div>
               </section>
             </div>
           ) : (
-            <div style={{ color: colors.textMuted, minHeight: 300, display: 'grid', placeItems: 'center' }}>请选择或新增供应商</div>
+            <div style={{ color: colors.textMuted, minHeight: 300, display: 'grid', placeItems: 'center' }}>{t('supplier.selectPrompt')}</div>
           )}
         </section>
 
         <aside className="supplier-panel" data-supplier-action-panel="true">
           <div style={{ display: 'grid', gap: 10 }}>
             <div>
-              <div style={{ fontSize: font.section, fontWeight: 850 }}>操作区</div>
-              <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 4 }}>围绕当前供应商处理资料和账款</div>
+              <div style={{ fontSize: font.section, fontWeight: 850 }}>{t('supplier.actions.title')}</div>
+              <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 4 }}>{t('supplier.actions.subtitle')}</div>
             </div>
-            <button className="supplier-button" style={{ background: colors.teal }} onClick={openNewSupplier}>新增供应商</button>
-            <button className="supplier-button supplier-outline" disabled={!selectedSupplier} onClick={() => selectedSupplier && setEditingSupplier(selectedSupplier)}>编辑资料</button>
-            <button className="supplier-button supplier-outline" disabled={!selectedSupplier || unpaidOrders.length === 0} onClick={() => unpaidOrders[0] && openPayment(unpaidOrders[0])}>处理最近欠款</button>
-            <button className="supplier-button supplier-outline" disabled={!selectedSupplier} onClick={() => selectedSupplier && printSupplierStatement(selectedSupplier, periodOrders, periodPayments, periodLabel)}>生成账单</button>
-            <button className="supplier-button" style={{ background: colors.danger }} disabled={!selectedSupplier || isSaving} onClick={deleteSupplier}>删除供应商</button>
+            <button className="supplier-button" style={{ background: colors.teal }} onClick={openNewSupplier}>{t('supplier.add')}</button>
+            <button className="supplier-button supplier-outline" disabled={!selectedSupplier} onClick={() => selectedSupplier && setEditingSupplier(selectedSupplier)}>{t('supplier.edit')}</button>
+            <button className="supplier-button supplier-outline" disabled={!selectedSupplier || unpaidOrders.length === 0} onClick={() => unpaidOrders[0] && openPayment(unpaidOrders[0])}>{t('supplier.handleLatestDebt')}</button>
+            <button className="supplier-button supplier-outline" disabled={!selectedSupplier} onClick={() => selectedSupplier && printSupplierStatement(selectedSupplier, periodOrders, periodPayments, periodLabel, t)}>{t('supplier.statement.generate')}</button>
+            <button className="supplier-button" style={{ background: colors.danger }} disabled={!selectedSupplier || isSaving} onClick={deleteSupplier}>{t('supplier.delete')}</button>
             {selectedSummary && (
               <div style={{ display: 'grid', gap: 8, border: `1px solid ${colors.border}`, borderRadius: radii.lg, padding: 12, background: colors.surfaceMuted }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>最近采购</span><strong>{selectedSummary.lastPurchaseDate}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>最近还款</span><strong>{selectedSummary.lastPaymentDate}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>采购总额</span><strong>{money(selectedSummary.totalPurchase)}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>已付金额</span><strong>{money(selectedSummary.totalPaid)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>{t('supplier.recentPurchase')}</span><strong>{selectedSummary.lastPurchaseDate}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>{t('supplier.recentPayment')}</span><strong>{selectedSummary.lastPaymentDate}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>{t('supplier.totalPurchases')}</span><strong>{money(selectedSummary.totalPurchase)}</strong></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: colors.textSecondary }}>{t('supplier.totalPaid')}</span><strong>{money(selectedSummary.totalPaid)}</strong></div>
               </div>
             )}
           </div>
         </aside>
       </main>
 
+      {traceOrder && (
+        <div className="supplier-modal-bg" onClick={() => setTraceOrder(null)}>
+          <div className="supplier-modal" style={{ width: 'min(760px, 100%)' }} onClick={event => event.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: font.section }}>{t('supplier.trace.title')} · {traceOrder.orderNumber || traceOrder.id}</h3>
+                <div style={{ color: colors.textSecondary, marginTop: 5 }}>
+                  {traceOrder.supplierName || selectedSupplier?.name || '-'} · {formatSupplierDate(traceOrder.orderDate || traceOrder.receivedDate)}
+                </div>
+              </div>
+              <button className="supplier-button supplier-outline" onClick={() => setTraceOrder(null)}>{t('supplier.close')}</button>
+            </div>
+
+            {isLoadingTrace && <div style={{ marginTop: 14, color: colors.textSecondary }}>{t('supplier.trace.loading')}</div>}
+
+            <div style={{ display: 'grid', gap: 14, marginTop: 16 }}>
+              <section>
+                <strong>{t('supplier.trace.stockRecords')} ({traceStockRecords.length})</strong>
+                <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
+                  {traceStockRecords.map(record => (
+                    <div key={record.id} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: 9, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                      <span>{record.itemName || record.itemId}</span>
+                      <span style={{ color: colors.textSecondary }}>
+                        +{Number(record.quantity || record.signedQuantity || 0)} · {Number(record.beforeStock || 0)} → {Number(record.afterStock || 0)}
+                      </span>
+                    </div>
+                  ))}
+                  {!isLoadingTrace && traceStockRecords.length === 0 && <div style={{ color: colors.textMuted }}>{t('supplier.trace.noStock')}</div>}
+                </div>
+              </section>
+
+              <section>
+                <strong>{t('supplier.trace.expenses')} ({traceExpenses.length})</strong>
+                <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
+                  {traceExpenses.map(expense => {
+                    const receipt = expense.receipt || expense.receiptImage || expense.invoiceImage;
+                    return (
+                      <div key={expense.id} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: 9, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                        <div>
+                          <div>{expense.description || expense.categoryName || t('supplier.defaultDebtCategory')}</div>
+                          <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: 3 }}>{formatSupplierDate(expense.date || expense.createdAt)}</div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <strong>{money(Number(expense.amount || 0))}</strong>
+                          {receipt && (
+                            <button className="supplier-quick-range" onClick={() => window.open(receipt, '_blank', 'noopener,noreferrer')}>{t('supplier.trace.viewReceipt')}</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!isLoadingTrace && traceExpenses.length === 0 && (
+                    <div style={{ color: colors.textMuted }}>
+                      {traceOrder.paymentType === 'credit' ? t('supplier.trace.creditNotPaid') : t('supplier.trace.noExpense')}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section>
+                <strong>{t('supplier.trace.repayments')}</strong>
+                <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
+                  {payments.filter(payment => payment.orderId === traceOrder.id).map(payment => (
+                    <div key={payment.id} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: 9, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                      <span>{formatSupplierDate(payment.paymentDate || payment.createdAt)} · {getPaymentMethodLabel(payment.paymentMethod, t)}</span>
+                      <strong>{money(Number(payment.amount || 0))}</strong>
+                    </div>
+                  ))}
+                  {payments.filter(payment => payment.orderId === traceOrder.id).length === 0 && <div style={{ color: colors.textMuted }}>{t('supplier.trace.noRepayments')}</div>}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingSupplier && (
         <div className="supplier-modal-bg" onClick={() => setEditingSupplier(null)}>
           <div className="supplier-modal" onClick={event => event.stopPropagation()}>
-            <h3 style={{ margin: '0 0 14px', fontSize: font.section }}>{editingSupplier.id ? '编辑供应商' : '新增供应商'}</h3>
+            <h3 style={{ margin: '0 0 14px', fontSize: font.section }}>{editingSupplier.id ? t('supplier.editTitle') : t('supplier.addTitle')}</h3>
             <div style={{ display: 'grid', gap: 12 }}>
-              <input className="supplier-input" placeholder="供应商名称" value={editingSupplier.name || ''} onChange={event => setEditingSupplier({ ...editingSupplier, name: event.target.value })} />
-              <input className="supplier-input" placeholder="联系人" value={editingSupplier.contact || ''} onChange={event => setEditingSupplier({ ...editingSupplier, contact: event.target.value })} />
-              <input className="supplier-input" placeholder="电话" value={editingSupplier.phone || ''} onChange={event => setEditingSupplier({ ...editingSupplier, phone: event.target.value })} />
-              <input className="supplier-input" placeholder="地址" value={editingSupplier.address || ''} onChange={event => setEditingSupplier({ ...editingSupplier, address: event.target.value })} />
+              <input className="supplier-input" placeholder={t('supplier.namePlaceholder')} value={editingSupplier.name || ''} onChange={event => setEditingSupplier({ ...editingSupplier, name: event.target.value })} />
+              <input className="supplier-input" placeholder={t('supplier.contactPlaceholder')} value={editingSupplier.contact || ''} onChange={event => setEditingSupplier({ ...editingSupplier, contact: event.target.value })} />
+              <input className="supplier-input" placeholder={t('supplier.phonePlaceholder')} value={editingSupplier.phone || ''} onChange={event => setEditingSupplier({ ...editingSupplier, phone: event.target.value })} />
+              <input className="supplier-input" placeholder={t('supplier.addressPlaceholder')} value={editingSupplier.address || ''} onChange={event => setEditingSupplier({ ...editingSupplier, address: event.target.value })} />
               <select className="supplier-input" value={editingSupplier.status || 'active'} onChange={event => setEditingSupplier({ ...editingSupplier, status: event.target.value as any })}>
-                <option value="active">合作中</option>
-                <option value="inactive">停用</option>
+                <option value="active">{t('supplier.status.active')}</option>
+                <option value="inactive">{t('supplier.status.inactive')}</option>
               </select>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
-              <button className="supplier-button supplier-outline" onClick={() => setEditingSupplier(null)}>取消</button>
-              <button className="supplier-button" style={{ background: colors.teal }} disabled={isSaving} onClick={saveSupplier}>{isSaving ? '保存中...' : '保存'}</button>
+              <button className="supplier-button supplier-outline" onClick={() => setEditingSupplier(null)}>{t('supplier.cancel')}</button>
+              <button className="supplier-button" style={{ background: colors.teal }} disabled={isSaving} onClick={saveSupplier}>{isSaving ? t('supplier.saving') : t('supplier.save')}</button>
             </div>
           </div>
         </div>
@@ -823,20 +992,20 @@ const SupplierWorkbench: React.FC = () => {
       {paymentOrder && (
         <div className="supplier-modal-bg" onClick={() => setPaymentOrder(null)}>
           <div className="supplier-modal" onClick={event => event.stopPropagation()}>
-            <h3 style={{ margin: '0 0 10px', fontSize: font.section }}>供应商还款</h3>
+            <h3 style={{ margin: '0 0 10px', fontSize: font.section }}>{t('supplier.repaymentTitle')}</h3>
             <div style={{ color: colors.textSecondary, marginBottom: 12 }}>
-              {paymentOrder.supplierName} · {paymentOrder.orderNumber || paymentOrder.id} · 剩余 {money(getPurchaseRemainingDebt(paymentOrder))}
+              {paymentOrder.supplierName} · {paymentOrder.orderNumber || paymentOrder.id} · {t('supplier.remaining')} {money(getPurchaseRemainingDebt(paymentOrder))}
             </div>
             <div style={{ display: 'grid', gap: 12 }}>
               <input className="supplier-input" type="number" min="0" step="0.01" value={paymentForm.amount} onChange={event => setPaymentForm({ ...paymentForm, amount: event.target.value })} />
               <select className="supplier-input" value={paymentForm.paymentMethod} onChange={event => setPaymentForm({ ...paymentForm, paymentMethod: event.target.value as PaymentMethod })}>
-                {Object.entries(paymentMethodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {(['cash', 'transfer', 'check'] as PaymentMethod[]).map(value => <option key={value} value={value}>{getPaymentMethodLabel(value, t)}</option>)}
               </select>
-              <textarea className="supplier-input" rows={3} placeholder="备注" value={paymentForm.notes} onChange={event => setPaymentForm({ ...paymentForm, notes: event.target.value })} />
+              <textarea className="supplier-input" rows={3} placeholder={t('supplier.notesPlaceholder')} value={paymentForm.notes} onChange={event => setPaymentForm({ ...paymentForm, notes: event.target.value })} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
-              <button className="supplier-button supplier-outline" onClick={() => setPaymentOrder(null)}>取消</button>
-              <button className="supplier-button" style={{ background: colors.teal }} disabled={isSaving} onClick={submitPayment}>{isSaving ? '提交中...' : '确认还款'}</button>
+              <button className="supplier-button supplier-outline" onClick={() => setPaymentOrder(null)}>{t('supplier.cancel')}</button>
+              <button className="supplier-button" style={{ background: colors.teal }} disabled={isSaving} onClick={submitPayment}>{isSaving ? t('supplier.submitting') : t('supplier.confirmRepayment')}</button>
             </div>
           </div>
         </div>

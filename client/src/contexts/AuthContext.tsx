@@ -1,9 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChange, getFirebaseUserProfile } from '../services/FirebaseAuthService';
 import { dataService } from '../services/DataService';
+import { syncPendingChanges } from '../services/smartSyncService';
 import { clearAuthenticatedSession, persistAuthenticatedSession } from '../utils/storeSessionIsolation';
 
-export type UserRole = 'super_admin' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
+export type UserRole = 'super_admin' | 'multi_store_manager' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
+
+export interface AssignedStore {
+  id: string;
+  name: string;
+}
 
 export interface User {
   id: string;
@@ -12,6 +18,8 @@ export interface User {
   role: UserRole;
   storeId?: string;
   storeName?: string;
+  storeIds?: string[];
+  assignedStores?: AssignedStore[];
   avatar?: string;
   status?: 'active' | 'inactive';
 }
@@ -38,9 +46,15 @@ export const useAuth = () => {
 const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
 const syncUserDataInBackground = (userData: User) => {
-  const syncTask = userData.storeId
-    ? dataService.syncStoreData(userData.storeId)
-    : dataService.syncGlobalDataForAdmin();
+  const syncTask = (async () => {
+    if (userData.storeId && !isOffline()) {
+      await syncPendingChanges();
+    }
+
+    return userData.storeId
+      ? dataService.syncStoreData(userData.storeId)
+      : dataService.syncGlobalDataForAdmin();
+  })();
 
   syncTask.catch((error) => {
     console.error('Background user data sync failed:', error);
@@ -119,11 +133,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchStore = (storeId: string, storeName: string) => {
-    if (user) {
-      const updatedUser = { ...user, storeId, storeName };
-      setUser(updatedUser);
-      persistAuthenticatedSession(updatedUser);
+    if (!user) return;
+
+    const canSwitch = user.role === 'super_admin'
+      || (user.role === 'multi_store_manager' && user.storeIds?.includes(storeId))
+      || user.storeId === storeId;
+    if (!canSwitch) {
+      throw new Error('当前账号未获授权访问该分店');
     }
+
+    const updatedUser = { ...user, storeId, storeName };
+    setUser(updatedUser);
+    persistAuthenticatedSession(updatedUser);
   };
 
   return (

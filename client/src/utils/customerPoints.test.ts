@@ -24,12 +24,11 @@ describe('customer points local cache helpers', () => {
     expect(localStorage.getItem('points_transactions')).toBeNull();
   });
 
-  test('keeps global points cache for owner accounts without a store id', () => {
+  test('blocks customer points cache access without a store id', () => {
     saveScopedPointsTransactions([{ id: 'global-record', customerId: 'c2', type: 'redeem', points: 2, description: 'test', createdAt: '2026-06-11T00:00:00.000Z' }]);
 
-    expect(getScopedPointsTransactionsKey()).toBe('points_transactions');
-    expect(loadScopedPointsTransactions()).toEqual([
-      { id: 'global-record', customerId: 'c2', type: 'redeem', points: 2, description: 'test', createdAt: '2026-06-11T00:00:00.000Z' },
-    ]);
+    expect(getScopedPointsTransactionsKey()).toBeNull();
+    expect(loadScopedPointsTransactions()).toEqual([]);
+    expect(localStorage.getItem('points_transactions')).toBeNull();
   });
 });

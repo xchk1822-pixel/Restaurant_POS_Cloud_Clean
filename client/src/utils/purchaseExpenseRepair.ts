@@ -1,16 +1,9 @@
 import { getLocalDateString } from './exchangeRate';
+import { getPurchaseOrderTime } from './purchaseDates';
 
 const toNumber = (value: any): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const toTime = (value: any): number => {
-  if (!value) return 0;
-  if (typeof value?.toDate === 'function') return value.toDate().getTime() || 0;
-  if (typeof value?.seconds === 'number') return value.seconds * 1000;
-  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
 };
 
 export const getPurchaseExpenseId = (purchase: any): string => {
@@ -18,8 +11,8 @@ export const getPurchaseExpenseId = (purchase: any): string => {
 };
 
 export const getPurchaseExpenseDate = (purchase: any): string => {
-  const time = toTime(purchase?.orderDate || purchase?.receivedDate || purchase?.createdAt || purchase?.lastModified);
-  return time ? getLocalDateString(new Date(time)) : getLocalDateString();
+  const time = getPurchaseOrderTime(purchase);
+  return time ? getLocalDateString(new Date(time)) : '';
 };
 
 export const isPaidCashPurchase = (purchase: any): boolean => {
@@ -78,6 +71,7 @@ export const buildPurchaseExpenseFromOrder = (purchase: any): any => {
 export const buildMissingPurchaseExpenses = (purchases: any[], expenses: any[]): any[] => {
   return (Array.isArray(purchases) ? purchases : [])
     .filter(isPaidCashPurchase)
+    .filter(purchase => getPurchaseOrderTime(purchase) > 0)
     .filter(purchase => !hasPurchaseExpense(purchase, expenses))
     .map(buildPurchaseExpenseFromOrder);
 };

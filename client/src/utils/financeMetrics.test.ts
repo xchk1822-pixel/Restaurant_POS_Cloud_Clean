@@ -2,7 +2,10 @@ import {
   buildDailyExpenseBreakdown,
   calculateOrderStatusSummary,
   calculateFinancialReportTotals,
+  calculateHandoverDifferenceForDates,
+  getExpenseCashAmount,
   getExpenseDateKey,
+  getExpenseProfitAmount,
   getLatestHandoverAmountForDate,
   getOrderCollectedAmount,
   getOrderFinancialDateKey,
@@ -31,6 +34,27 @@ describe('finance metrics helpers', () => {
     expect(sumExpensesByKind(expenses, '2026-06-11', '2026-06-12', 'operating')).toBe(30);
   });
 
+  test('separates employee loan cash flow from profit expense', () => {
+    const loanExpense = {
+      id: 'loan_1',
+      categoryId: 'employee_loan',
+      relatedType: 'loan',
+      amount: 1000,
+    };
+    const salaryExpense = {
+      id: 'salary_1',
+      relatedType: 'salary',
+      amount: 4000,
+      cashAmount: 4000,
+      profitAmount: 5000,
+    };
+
+    expect(getExpenseProfitAmount(loanExpense)).toBe(0);
+    expect(getExpenseCashAmount(loanExpense)).toBe(1000);
+    expect(getExpenseProfitAmount(salaryExpense)).toBe(5000);
+    expect(getExpenseCashAmount(salaryExpense)).toBe(4000);
+  });
+
   test('normalizes expense date keys', () => {
     expect(getExpenseDateKey({ date: '2026-06-11' })).toBe('2026-06-11');
   });
@@ -40,7 +64,27 @@ describe('finance metrics helpers', () => {
     expect(getOrderCollectedAmount({ status: 'served', paymentStatus: 'partial', totalAmount: 100, paidAmount: 40 })).toBe(40);
     expect(getOrderCollectedAmount({ status: 'served', paymentStatus: 'paid', totalAmount: 100, paidAmount: 100 })).toBe(100);
     expect(getOrderCollectedAmount({ status: 'completed', totalAmount: 80 })).toBe(80);
+    expect(getOrderCollectedAmount({
+      status: 'completed',
+      paymentStatus: 'paid',
+      totalAmount: 0,
+      paidAmount: 190,
+      settledAmount: 190,
+      cashAmount: 190,
+      items: [],
+      cancelRecords: [{ orderType: 'item', quantity: 1 }],
+    })).toBe(0);
+    expect(getOrderCollectedAmount({
+      status: 'completed',
+      paymentStatus: 'paid',
+      totalAmount: 160,
+      paidAmount: 350,
+      settledAmount: 350,
+      cashAmount: 350,
+      cancelRecords: [{ orderType: 'item', quantity: 1, refundAmount: 190 }],
+    })).toBe(160);
     expect(getOrderCollectedAmount({ status: 'cancelled', paymentStatus: 'paid', totalAmount: 100 })).toBe(0);
+    expect(getOrderCollectedAmount({ isDeleted: true, status: 'completed', paymentStatus: 'paid', totalAmount: 100 })).toBe(0);
   });
 
   test('splits collected order amounts by payment method', () => {
@@ -49,6 +93,8 @@ describe('finance metrics helpers', () => {
     expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 120, paymentMethod: 'mixed', cashAmount: 50, cardAmount: 70 })).toEqual({ cash: 50, card: 70 });
     expect(getOrderPaymentBreakdown({ paymentStatus: 'partial', totalAmount: 120, paidAmount: 30, paymentMethod: 'cash' })).toEqual({ cash: 30, card: 0 });
     expect(getOrderPaymentBreakdown({ paymentStatus: 'unpaid', totalAmount: 120, paymentMethod: 'cash' })).toEqual({ cash: 0, card: 0 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 0, paidAmount: 190, cashAmount: 190 })).toEqual({ cash: 0, card: 0 });
+    expect(getOrderPaymentBreakdown({ paymentStatus: 'paid', totalAmount: 160, paidAmount: 350, cashAmount: 350 })).toEqual({ cash: 160, card: 0 });
   });
 
   test('removes cash change from payment breakdown when saved cash includes tendered amount', () => {
@@ -78,6 +124,7 @@ describe('finance metrics helpers', () => {
 
     expect(getOrderFinancialDateKey(order)).toBe('2026-06-11');
     expect(getOrderFinancialDateKey({ ...order, paymentStatus: 'unpaid' })).toBe('');
+    expect(getOrderFinancialDateKey({ ...order, isDeleted: true })).toBe('');
   });
 
   test('summarizes daily completed orders cancelled orders and cancelled dishes separately', () => {
@@ -166,6 +213,8 @@ describe('finance metrics helpers', () => {
       totalSales: 130,
       profit: 125,
       difference: 25,
+      expectedCashHandover: 70,
+      fundingGap: 0,
     });
 
     expect(calculateFinancialReportTotals({
@@ -178,6 +227,8 @@ describe('finance metrics helpers', () => {
       totalSales: 130,
       profit: 135,
       difference: 35,
+      expectedCashHandover: 70,
+      fundingGap: 0,
     });
 
     expect(calculateFinancialReportTotals({
@@ -190,6 +241,8 @@ describe('finance metrics helpers', () => {
       totalSales: 200,
       profit: 140,
       difference: -10,
+      expectedCashHandover: 150,
+      fundingGap: 0,
     });
 
     expect(calculateFinancialReportTotals({
@@ -202,6 +255,8 @@ describe('finance metrics helpers', () => {
       totalSales: 1000,
       profit: 810,
       difference: 10,
+      expectedCashHandover: 300,
+      fundingGap: 0,
     });
 
     expect(calculateFinancialReportTotals({
@@ -214,6 +269,41 @@ describe('finance metrics helpers', () => {
       totalSales: 28370,
       profit: 7850,
       difference: 20.12,
+      expectedCashHandover: 7829.88,
+      fundingGap: 0,
+    });
+  });
+
+  test('allows zero handover and records excess cash expenses as a funding gap', () => {
+    expect(calculateFinancialReportTotals({
+      cashPayment: 500,
+      cardPayment: 500,
+      purchaseAmount: 700,
+      expenseAmount: 500,
+      handoverAmount: 0,
+    })).toEqual({
+      totalSales: 1000,
+      profit: -200,
+      difference: 0,
+      expectedCashHandover: 0,
+      fundingGap: 700,
+    });
+  });
+
+  test('uses operating expense for profit and actual cash expense for handover', () => {
+    expect(calculateFinancialReportTotals({
+      cashPayment: 1000,
+      cardPayment: 0,
+      purchaseAmount: 0,
+      expenseAmount: 200,
+      cashExpenseAmount: 300,
+      handoverAmount: 700,
+    })).toEqual({
+      totalSales: 1000,
+      profit: 800,
+      difference: 0,
+      expectedCashHandover: 700,
+      fundingGap: 0,
     });
   });
 
@@ -223,6 +313,54 @@ describe('finance metrics helpers', () => {
       { id: 'older', t: '2026-06-12 09:00:00', rawG: 95 },
       { id: 'other-day', t: '2026-06-11 23:00:00', rawG: 999 },
     ], '2026-06-12')).toBe(105);
+
+    expect(getLatestHandoverAmountForDate([
+      { id: 'zero', t: '2026-06-12 22:00:00', rawG: 0 },
+    ], '2026-06-12')).toBe(0);
+  });
+
+  test('sums only submitted daily handover differences for a selected range', () => {
+    const orders = [
+      { status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', totalAmount: 500, paidAt: '2026-07-01T12:00:00-06:00' },
+      { status: 'completed', paymentStatus: 'paid', paymentMethod: 'card', totalAmount: 500, paidAt: '2026-07-01T12:05:00-06:00' },
+      { status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', totalAmount: 200, paidAt: '2026-07-02T12:00:00-06:00' },
+    ];
+    const expenses = [
+      { date: '2026-07-01', amount: 100, type: 'purchase' },
+      { date: '2026-07-01', amount: 100, type: 'daily' },
+    ];
+    const handovers = [{ t: '2026-07-01 22:00:00', rawG: 310 }];
+
+    expect(calculateHandoverDifferenceForDates({
+      dates: ['2026-07-01', '2026-07-02'],
+      orders,
+      expenses,
+      handovers,
+    })).toBe(10);
+  });
+
+  test('employee loan changes expected cash without changing handover profit difference', () => {
+    expect(calculateHandoverDifferenceForDates({
+      dates: ['2026-07-01'],
+      orders: [
+        { status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', totalAmount: 1000, paidAt: '2026-07-01T12:00:00-06:00' },
+      ],
+      expenses: [
+        { id: 'loan_1', date: '2026-07-01', amount: 300, categoryId: 'employee_loan', relatedType: 'loan' },
+      ],
+      handovers: [{ t: '2026-07-01 22:00:00', rawG: 700 }],
+    })).toBe(0);
+  });
+
+  test('financial expense detail excludes employee loans and uses salary profit amount', () => {
+    const breakdown = buildDailyExpenseBreakdown([
+      { id: 'loan_1', date: '2026-07-01', amount: 300, categoryId: 'employee_loan', relatedType: 'loan' },
+      { id: 'salary_1', date: '2026-07-01', amount: 700, profitAmount: 1000, categoryId: 'employee_salary', relatedType: 'salary' },
+    ], '2026-07-01');
+
+    expect(breakdown.details).toHaveLength(1);
+    expect(breakdown.details[0]).toMatchObject({ id: 'salary_1', amount: 1000 });
+    expect(breakdown.summaries[0].amount).toBe(1000);
   });
 
   test('builds daily expense groups with readable category names and purchase order labels', () => {

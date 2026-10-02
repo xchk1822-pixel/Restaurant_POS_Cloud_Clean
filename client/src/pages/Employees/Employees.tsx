@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { smartGetDocuments, smartGetDocumentsWhereEqual } from '../../services/smartSyncService';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { filterActiveEmployees } from '../../utils/employeeRecords';
 import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
 import SalarySettlement from './SalarySettlement';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface Employee {
   id: string;
@@ -18,6 +20,7 @@ interface Employee {
   hireDate: string;
   status: 'active' | 'inactive';
   dailyRate: number;
+  monthlySalary?: number;
   overtimeRate: number;
   avatar?: string;
   notes?: string;
@@ -37,6 +40,8 @@ interface AttendanceRecord {
 interface SalaryRecord {
   id: string;
   employeeId: string;
+  employeeName?: string;
+  employeePosition?: string;
   month: string;
   startDate: string;
   endDate: string;
@@ -82,19 +87,19 @@ interface CashFlowRecord {
   salaryPeriod?: string;
 }
 
-const getScopedStorageKey = (collectionName: string): string => {
+const getScopedStorageKey = (collectionName: string): string | null => {
   try {
-    const currentUser = localStorage.getItem('current_user');
-    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
-    return storeId ? `store_${storeId}_${collectionName}` : collectionName;
+    return dataService.getStoreKey(collectionName);
   } catch {
-    return collectionName;
+    return null;
   }
 };
 
 const saveLocalCollection = (collectionName: string, records: any[]) => {
   try {
-    localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
+    const storageKey = getScopedStorageKey(collectionName);
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, JSON.stringify(records));
   } catch {
     // Auxiliary cache only; cloud data and current React state remain authoritative.
   }
@@ -102,7 +107,9 @@ const saveLocalCollection = (collectionName: string, records: any[]) => {
 
 const removeLocalCollection = (collectionName: string) => {
   try {
-    localStorage.removeItem(getScopedStorageKey(collectionName));
+    const storageKey = getScopedStorageKey(collectionName);
+    if (!storageKey) return;
+    localStorage.removeItem(storageKey);
   } catch {
     // Non-critical cleanup only.
   }
@@ -118,6 +125,7 @@ const mergeById = (records: any[]): any[] => {
 
 const EmployeesModule: React.FC = () => {
   const location = useLocation();
+  const { t } = useI18n();
 
   const getPathTab = (): 'employees' | 'attendance' | 'loans' | 'salary' => {
     const path = location.pathname;
@@ -188,11 +196,11 @@ const EmployeesModule: React.FC = () => {
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('加载员工管理数据失败:', error);
-      alert('加载员工管理数据失败，请检查网络后重试');
+      alert(t('employees.alert.loadFailed'));
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     loadEmployeeModuleData();
@@ -253,11 +261,11 @@ const EmployeesModule: React.FC = () => {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>员工管理</h1>
+        <h1 style={styles.title}>{t('employees.title')}</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {lastSyncedAt && (
             <span style={styles.syncInfo}>
-              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              {t('employees.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
           <button
@@ -266,7 +274,7 @@ const EmployeesModule: React.FC = () => {
             disabled={isRefreshing}
             style={styles.refreshButton}
           >
-            {isRefreshing ? '刷新中...' : '刷新云端数据'}
+            {isRefreshing ? t('employees.refreshing') : t('employees.refresh')}
           </button>
         </div>
       </div>
@@ -280,6 +288,7 @@ const EmployeesModule: React.FC = () => {
             employees={employees}
             attendanceRecords={attendanceRecords}
             setAttendanceRecords={setAttendanceRecords}
+            view={location.pathname.includes('/attendance-records') ? 'records' : 'checkin'}
           />
         )}
         {activeTab === 'loans' && (

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { dataManager } from '../../services/dataManager';
 import { smartUpdateDocument } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface OrderItem {
   id: string;
@@ -89,6 +90,7 @@ const toKitchenOrders = (allOrders: any[]): KitchenOrder[] => {
 };
 
 const KitchenDisplay: React.FC = () => {
+  const { t } = useI18n();
   const [filter, setFilter] = useState<'all' | 'pending' | 'preparing' | 'ready'>('all');
   const [sortBy, setSortBy] = useState<'time' | 'priority'>('time');
 
@@ -110,10 +112,11 @@ const KitchenDisplay: React.FC = () => {
   // 计算等待时间
   const getWaitTime = (createdAt: Date) => {
     const minutes = Math.floor((Date.now() - createdAt.getTime()) / 60000);
-    if (minutes < 1) return '刚刚';
-    if (minutes < 60) return `${minutes}分钟前`;
+    if (minutes < 1) return t('kitchen.time.justNow');
+    const agoPrefix = t('kitchen.time.agoPrefix');
+    if (minutes < 60) return `${agoPrefix ? `${agoPrefix} ` : ''}${minutes}${t('kitchen.time.minutes')}`;
     const hours = Math.floor(minutes / 60);
-    return `${hours}小时前`;
+    return `${agoPrefix ? `${agoPrefix} ` : ''}${hours}${t('kitchen.time.hours')}`;
   };
 
   // 更新菜品状态
@@ -230,22 +233,22 @@ const KitchenDisplay: React.FC = () => {
           <div style={{ display: 'flex', gap: '1.5rem' }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.blue }}>{stats.total}</div>
-              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>总订单</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>{t('kitchen.stats.total')}</div>
             </div>
             <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.amber }}>{stats.pending}</div>
-              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>待制作</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>{t('kitchen.status.pending')}</div>
             </div>
             <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.blue }}>{stats.preparing}</div>
-              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>制作中</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>{t('kitchen.status.preparing')}</div>
             </div>
             <div style={{ width: '1px', backgroundColor: colors.border }} />
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.8rem', fontWeight: '800', color: colors.success }}>{stats.ready}</div>
-              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>已完成</div>
+              <div style={{ fontSize: '0.8rem', color: colors.textSecondary }}>{t('kitchen.status.ready')}</div>
             </div>
           </div>
 
@@ -265,7 +268,7 @@ const KitchenDisplay: React.FC = () => {
                   fontSize: '0.85rem'
                 }}
               >
-                全部
+                {t('kitchen.filter.all')}
               </button>
               <button
                 onClick={() => setFilter('pending')}
@@ -280,7 +283,7 @@ const KitchenDisplay: React.FC = () => {
                   fontSize: '0.85rem'
                 }}
               >
-                待制作
+                {t('kitchen.status.pending')}
               </button>
               <button
                 onClick={() => setFilter('preparing')}
@@ -295,7 +298,7 @@ const KitchenDisplay: React.FC = () => {
                   fontSize: '0.85rem'
                 }}
               >
-                制作中
+                {t('kitchen.status.preparing')}
               </button>
               <button
                 onClick={() => setFilter('ready')}
@@ -310,7 +313,7 @@ const KitchenDisplay: React.FC = () => {
                   fontSize: '0.85rem'
                 }}
               >
-                已完成
+                {t('kitchen.status.ready')}
               </button>
             </div>
 
@@ -325,8 +328,8 @@ const KitchenDisplay: React.FC = () => {
                 fontSize: '0.85rem'
               }}
             >
-              <option value="time">按时间排序</option>
-              <option value="priority">按优先级排序</option>
+              <option value="time">{t('kitchen.sort.time')}</option>
+              <option value="priority">{t('kitchen.sort.priority')}</option>
             </select>
           </div>
         </div>
@@ -343,7 +346,7 @@ const KitchenDisplay: React.FC = () => {
             color: '#9ca3af',
             fontSize: '1.2rem'
           }}>
-            🎉 没有订单，休息一下吧！
+            🎉 {t('kitchen.empty')}
           </div>
         ) : (
           <div style={{
@@ -373,7 +376,9 @@ const KitchenDisplay: React.FC = () => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.textPrimary }}>
                         {order.type === 'dine_in' ? '🍽️' : (order.type === 'takeout' ? '🥡' : '🚚')}
-                        {' '}{order.tableNumber}号桌
+                        {' '}{order.type === 'dine_in'
+                          ? `${t('pos.orderType.dineIn')} ${order.tableNumber}`
+                          : t(order.type === 'takeout' ? 'pos.orderType.takeout' : 'pos.orderType.delivery')}
                       </span>
                       {order.priority === 'urgent' && (
                         <span style={{
@@ -385,7 +390,7 @@ const KitchenDisplay: React.FC = () => {
                           fontWeight: 'bold',
                           animation: 'pulse 2s infinite'
                         }}>
-                          🔥 加急
+                          🔥 {t('kitchen.priority.urgent')}
                         </span>
                       )}
                     </div>
@@ -401,7 +406,9 @@ const KitchenDisplay: React.FC = () => {
                       fontSize: '0.75rem',
                       fontWeight: '600'
                     }}>
-                      {order.status === 'pending' ? '⏳ 待制作' : (order.status === 'preparing' ? '👨‍🍳 制作中' : '✅ 已完成')}
+                      {order.status === 'pending'
+                        ? `⏳ ${t('kitchen.status.pending')}`
+                        : (order.status === 'preparing' ? `👨‍🍳 ${t('kitchen.status.preparing')}` : `✅ ${t('kitchen.status.ready')}`)}
                     </span>
                     {order.status === 'ready' && (
                       <button
@@ -417,7 +424,7 @@ const KitchenDisplay: React.FC = () => {
                           fontSize: '0.8rem'
                         }}
                       >
-                        ✓ 出餐完成
+                        ✓ {t('kitchen.action.served')}
                       </button>
                     )}
                   </div>
@@ -455,7 +462,7 @@ const KitchenDisplay: React.FC = () => {
                                 cursor: 'pointer'
                               }}
                             >
-                              开始制作
+                              {t('kitchen.action.start')}
                             </button>
                           )}
                           {item.status === 'preparing' && (
@@ -472,7 +479,7 @@ const KitchenDisplay: React.FC = () => {
                                 cursor: 'pointer'
                               }}
                             >
-                              完成
+                              {t('kitchen.action.finish')}
                             </button>
                           )}
                         </div>

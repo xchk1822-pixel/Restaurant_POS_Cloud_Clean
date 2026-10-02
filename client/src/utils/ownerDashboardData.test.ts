@@ -2,6 +2,7 @@ import {
   dedupeOwnerRecordsById,
   dedupeOwnerRecordsByStoreAndId,
   buildOwnerExpenseEvidenceRows,
+  buildOwnerLowStockRisks,
   summarizeOwnerOrderTypes,
   sumOwnerExpenseByKind,
   sumOwnerSupplierDebt,
@@ -37,10 +38,12 @@ describe('owner dashboard data helpers', () => {
       { id: 'purchase-1', amount: 100, relatedType: 'purchase' },
       { id: 'repayment-1', amount: 40, relatedType: 'supplier_repayment' },
       { id: 'rent-1', amount: 25, categoryId: 'rent' },
+      { id: 'loan-1', amount: 100, categoryId: 'employee_loan', relatedType: 'loan' },
+      { id: 'salary-1', amount: 80, profitAmount: 100, categoryId: 'employee_salary', relatedType: 'salary' },
     ];
 
     expect(sumOwnerExpenseByKind(expenses, 'purchase')).toBe(140);
-    expect(sumOwnerExpenseByKind(expenses, 'operating')).toBe(25);
+    expect(sumOwnerExpenseByKind(expenses, 'operating')).toBe(125);
   });
 
   test('calculates supplier debt from unpaid purchase balance', () => {
@@ -123,6 +126,33 @@ describe('owner dashboard data helpers', () => {
       mesa: 2,
       barra: 1,
       delivery: 1,
+    });
+  });
+
+  test('calculates low stock risk separately for each store', () => {
+    const risks = buildOwnerLowStockRisks(
+      [
+        { id: 'store-a', name: 'Bluefields' },
+        { id: 'store-b', name: 'Managua' },
+      ],
+      [
+        { id: 'drink', storeId: 'store-a', name: 'Drink A', unit: 'BOT', currentStock: 1, minStock: 5, costPrice: 10 },
+        { id: 'drink', storeId: 'store-b', name: 'Drink B', unit: 'BOT', currentStock: 8, minStock: 5, costPrice: 10 },
+      ],
+      [
+        { id: 'fridge-a', storeId: 'store-a', itemId: 'drink', quantity: 1 },
+        { id: 'fridge-b', storeId: 'store-b', itemId: 'drink', quantity: 2 },
+      ],
+      [],
+      []
+    );
+
+    expect(risks).toHaveLength(1);
+    expect(risks[0]).toMatchObject({
+      storeId: 'store-a',
+      storeName: 'Bluefields',
+      itemName: 'Drink A',
+      currentStock: 2,
     });
   });
 });

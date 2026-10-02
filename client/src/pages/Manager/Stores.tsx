@@ -3,6 +3,7 @@ import { getLocalDateString } from '../../utils/localTime';
 import { smartDeleteDocument, smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
 import { createFirebaseUser } from '../../services/FirebaseAuthService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import type { PrinterRole, PrinterTransport, StorePrinterConfig } from '../../utils/receiptPrinter';
 
 interface Store {
   id: string;
@@ -20,7 +21,38 @@ interface Store {
   receiptAddress?: string;
   receiptPhone?: string;
   receiptFooter?: string;
+  receiptPaperWidthMm?: 80 | 58;
+  cashierPrintEnabled?: boolean;
+  kitchenPrintEnabled?: boolean;
+  receiptCutEnabled?: boolean;
+  kitchenCutEnabled?: boolean;
+  receiptFeedLines?: number;
+  kitchenFeedLines?: number;
+  printers?: StorePrinterConfig[];
 }
+
+const createStorePrinter = (): StorePrinterConfig => ({
+  id: `printer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  name: '新打印机',
+  role: 'kitchen',
+  transport: 'network',
+  host: '',
+  port: 9100,
+  widthMm: 80,
+  enabled: true,
+  cut: true,
+  feedLines: 8,
+  printAllCategories: false,
+  categories: [],
+});
+
+const isPrivatePrinterIp = (value: string): boolean => {
+  const parts = String(value || '').trim().split('.').map(Number);
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168);
+};
 
 const getStoreDedupeKey = (store: any): string => {
   const code = String(store?.code || '').trim().toLowerCase();
@@ -84,9 +116,11 @@ interface User {
   username: string;
   password?: string;
   name: string;
-  role: 'store_manager' | 'cashier' | 'waiter' | 'chef';
+  role: 'multi_store_manager' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
   storeId: string;
   storeName: string;
+  storeIds?: string[];
+  assignedStores?: Array<{ id: string; name: string }>;
   email?: string;
   createdAt: string;
   status: 'active' | 'inactive';
@@ -123,10 +157,14 @@ const StoresModule: React.FC = () => {
   
   // 添加/编辑用户
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showManagerManagement, setShowManagerManagement] = useState(false);
+  const [userModalScope, setUserModalScope] = useState<'store' | 'manager'>('store');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [userForm, setUserForm] = useState({
     username: '', password: '', name: '',
-    role: 'cashier' as 'store_manager' | 'cashier' | 'waiter' | 'chef',
+    role: 'cashier' as 'multi_store_manager' | 'store_manager' | 'cashier' | 'waiter' | 'chef',
+    assignedStoreIds: [] as string[],
+    defaultStoreId: '',
   });
 
   const usernameExists = (username: string, exceptUserId?: string) => {
@@ -165,6 +203,8 @@ const StoresModule: React.FC = () => {
       role: user.role,
       storeId: user.storeId,
       storeName: user.storeName,
+      storeIds: user.storeIds,
+      assignedStores: user.assignedStores,
       email: `${user.username}@restaurant.local`,
     });
 
@@ -226,6 +266,13 @@ const StoresModule: React.FC = () => {
       receiptAddress: newStore.receiptAddress || newStore.address || '',
       receiptPhone: newStore.receiptPhone || newStore.phone || '',
       receiptFooter: newStore.receiptFooter || '',
+      receiptPaperWidthMm: 80,
+      cashierPrintEnabled: true,
+      kitchenPrintEnabled: true,
+      receiptCutEnabled: true,
+      kitchenCutEnabled: true,
+      receiptFeedLines: 8,
+      kitchenFeedLines: 8,
     };
 
     const wizardUsernames = [
@@ -360,13 +407,43 @@ const StoresModule: React.FC = () => {
   const handleDeleteStore = async (storeId: string) => {
     if (!window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u6b64\u5206\u5e97\u5417\uff1f')) return;
 
-    const removedUsers = users.filter(u => u.storeId === storeId);
+    const affectedManagers = users.filter(user =>
+      user.role === 'multi_store_manager' &&
+      Array.from(new Set([...(user.storeIds || []), user.storeId].filter(Boolean))).includes(storeId)
+    );
+    const managersWithoutAnotherStore = affectedManagers.filter(user =>
+      Array.from(new Set([...(user.storeIds || []), user.storeId].filter(Boolean))).filter(id => id !== storeId).length === 0
+    );
+    if (managersWithoutAnotherStore.length > 0) {
+      alert(`请先为经理 ${managersWithoutAnotherStore.map(user => user.name || user.username).join('、')} 指定其他分店，再删除此分店。`);
+      return;
+    }
+
+    const removedUsers = users.filter(u => u.role !== 'multi_store_manager' && u.storeId === storeId);
     const updatedStores = stores.filter(s => s.id !== storeId);
-    const updatedUsers = users.filter(u => u.storeId !== storeId);
+    const managerUpdates = affectedManagers.map(manager => {
+      const storeIds = Array.from(new Set([...(manager.storeIds || []), manager.storeId].filter(Boolean))).filter(id => id !== storeId);
+      const assignedStores = updatedStores
+        .filter(store => storeIds.includes(store.id))
+        .map(store => ({ id: store.id, name: store.name }));
+      const defaultStore = updatedStores.find(store => store.id === manager.storeId) || assignedStores[0];
+      return {
+        ...manager,
+        storeId: defaultStore.id,
+        storeName: defaultStore.name,
+        storeIds,
+        assignedStores,
+      };
+    });
+    const managerUpdateMap = new Map(managerUpdates.map(manager => [manager.id, manager]));
+    const updatedUsers = users
+      .filter(user => !removedUsers.some(removed => removed.id === user.id))
+      .map(user => managerUpdateMap.get(user.id) || user);
 
     await Promise.all([
       smartDeleteDocument('stores', storeId),
       ...removedUsers.map(user => smartDeleteDocument('users', user.id)),
+      ...managerUpdates.map(manager => smartSetDocument('users', manager.id, toCloudUser(manager))),
     ]);
     await persistStores(updatedStores);
     await persistUsers(updatedUsers);
@@ -387,12 +464,38 @@ const StoresModule: React.FC = () => {
 
   // 编辑分店
   const handleEditStore = (store: Store) => {
-    setEditingStore(store);
+    setEditingStore({ ...store, printers: Array.isArray(store.printers) ? store.printers : [] });
     setShowEditStore(true);
+  };
+
+  const updateEditingPrinter = (printerId: string, changes: Partial<StorePrinterConfig>) => {
+    setEditingStore(current => current ? {
+      ...current,
+      printers: (current.printers || []).map(printer =>
+        printer.id === printerId ? { ...printer, ...changes } : printer
+      ),
+    } : current);
+  };
+
+  const removeEditingPrinter = (printerId: string) => {
+    setEditingStore(current => current ? {
+      ...current,
+      printers: (current.printers || []).filter(printer => printer.id !== printerId),
+    } : current);
   };
 
   const handleSaveStore = async () => {
     if (!editingStore) return;
+    const invalidPrinter = (editingStore.printers || []).find(printer =>
+      printer.enabled && (
+        (printer.transport === 'network' && !isPrivatePrinterIp(printer.host || '')) ||
+        (printer.transport === 'windows' && !String(printer.printerName || '').trim())
+      )
+    );
+    if (invalidPrinter) {
+      alert(`打印机“${invalidPrinter.name}”配置不完整：网络打印机必须填写局域网 IP，Windows 打印机必须填写系统打印机名称。`);
+      return;
+    }
     const duplicateVisibleStore = stores.find(store =>
       store.id !== editingStore.id &&
       String(store.code || '').trim().toLowerCase() === String(editingStore.code || '').trim().toLowerCase()
@@ -422,31 +525,68 @@ const StoresModule: React.FC = () => {
 
   // 添加用户
   const handleAddUser = () => {
+    setUserModalScope('store');
     setEditingUser(null);
-    setUserForm({ username: '', password: '', name: '', role: 'cashier' });
+    setUserForm({ username: '', password: '', name: '', role: 'cashier', assignedStoreIds: selectedStore ? [selectedStore] : [], defaultStoreId: selectedStore });
+    setShowUserModal(true);
+  };
+
+  const handleAddManager = () => {
+    setUserModalScope('manager');
+    setEditingUser(null);
+    setUserForm({ username: '', password: '', name: '', role: 'multi_store_manager', assignedStoreIds: [], defaultStoreId: '' });
     setShowUserModal(true);
   };
 
   // 编辑用户
   const handleEditUser = (user: User) => {
+    const isManager = user.role === 'multi_store_manager';
+    setUserModalScope(isManager ? 'manager' : 'store');
     setEditingUser(user);
     setUserForm({
       username: user.username,
       password: user.password || '',
       name: user.name,
       role: user.role,
+      assignedStoreIds: user.role === 'multi_store_manager'
+        ? Array.from(new Set([...(user.storeIds || []), user.storeId].filter(Boolean)))
+        : [user.storeId],
+      defaultStoreId: user.storeId,
     });
     setShowUserModal(true);
   };
 
   const handleSaveUser = async () => {
-    if (!userForm.username || !selectedStore || (!editingUser && !userForm.password)) {
+    const isManager = userModalScope === 'manager';
+    if (!userForm.username || (!editingUser && !userForm.password)) {
       alert('请填写完整信息');
       return;
     }
 
+    if (!isManager && !selectedStore) {
+      alert('请先选择分店');
+      return;
+    }
+
     const store = stores.find(s => s.id === selectedStore);
-    if (!store) return;
+    if (!isManager && !store) return;
+
+    const assignedStoreIds = isManager
+      ? Array.from(new Set(userForm.assignedStoreIds.filter(id => stores.some(item => item.id === id))))
+      : [selectedStore];
+    if (isManager && assignedStoreIds.length === 0) {
+      alert('经理账号至少需要指定一家分店');
+      return;
+    }
+    const assignedStores = stores
+      .filter(item => assignedStoreIds.includes(item.id))
+      .map(item => ({ id: item.id, name: item.name }));
+    const primaryStoreId = isManager && assignedStoreIds.includes(userForm.defaultStoreId)
+      ? userForm.defaultStoreId
+      : assignedStoreIds[0];
+    const primaryStore = stores.find(item => item.id === primaryStoreId);
+    if (!primaryStore) return;
+    const effectiveRole = isManager ? 'multi_store_manager' : userForm.role;
 
     if (usernameExists(userForm.username, editingUser?.id)) {
       alert(`账号 ${userForm.username} 已存在，请更换用户名`);
@@ -459,13 +599,23 @@ const StoresModule: React.FC = () => {
         return;
       }
       // 编辑现有用户
-      const updatedUser = {
+      const updatedUser: User = {
         ...editingUser,
         username: editingUser.username,
         password: undefined,
         name: userForm.name,
-        role: userForm.role,
+        role: effectiveRole,
+        storeId: isManager ? primaryStore.id : selectedStore,
+        storeName: isManager ? primaryStore.name : store!.name,
       };
+      if (isManager) {
+        updatedUser.storeIds = assignedStoreIds;
+        updatedUser.assignedStores = assignedStores;
+      }
+      if (!isManager) {
+        delete updatedUser.storeIds;
+        delete updatedUser.assignedStores;
+      }
       const updated = users.map(u => u.id === editingUser.id ? updatedUser : u);
       await smartSetDocument('users', updatedUser.id, toCloudUser(updatedUser));
       setUsers(updated);
@@ -478,9 +628,15 @@ const StoresModule: React.FC = () => {
         username: userForm.username,
         password: userForm.password,
         name: userForm.name,
-        role: userForm.role,
+        role: effectiveRole,
         storeId: selectedStore,
-        storeName: store.name,
+        storeName: store?.name || primaryStore.name,
+        ...(isManager ? {
+          storeId: primaryStore.id,
+          storeName: primaryStore.name,
+          storeIds: assignedStoreIds,
+          assignedStores,
+        } : {}),
         createdAt: getLocalDateString(), // 🔥 使用本地时间
         status: 'active',
       };
@@ -504,7 +660,8 @@ const StoresModule: React.FC = () => {
   };
 
   const selectedStoreData = stores.find(s => s.id === selectedStore);
-  const storeUsers = users.filter(u => u.storeId === selectedStore);
+  const managerUsers = users.filter(u => u.role === 'multi_store_manager');
+  const storeUsers = users.filter(u => u.role !== 'multi_store_manager' && u.storeId === selectedStore);
 
   const styles = {
     container: { 
@@ -734,6 +891,9 @@ const StoresModule: React.FC = () => {
           >
             {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
           </button>
+          <button onClick={() => setShowManagerManagement(true)} style={styles.btn(colors.teal)}>
+            经理管理 ({managerUsers.length})
+          </button>
           <button onClick={() => setShowCreateWizard(true)} style={styles.btn(colors.blue)}>➕ 创建分店</button>
         </div>
       </div>
@@ -755,7 +915,7 @@ const StoresModule: React.FC = () => {
                   <div>地址: {store.address || '未设置'}</div>
                   <div>电话: {store.phone || '未设置'}</div>
                   <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: `1px solid ${colors.border}` }}>
-                    账号数: {users.filter(u => u.storeId === store.id).length}
+                    账号数: {users.filter(u => u.role !== 'multi_store_manager' && u.storeId === store.id).length}
                   </div>
                 </div>
               </div>
@@ -829,6 +989,7 @@ const StoresModule: React.FC = () => {
                             <td style={styles.td}>{user.username}</td>
                             <td style={styles.td}>
                               {user.role === 'store_manager' && '🏢 店长'}
+                              {user.role === 'multi_store_manager' && 'MG 经理'}
                               {user.role === 'cashier' && '💰 收银员'}
                               {user.role === 'waiter' && '🍽️ 服务生'}
                               {user.role === 'chef' && '👨‍🍳 厨师'}
@@ -859,7 +1020,7 @@ const StoresModule: React.FC = () => {
 
       {showCreateWizard && (
         <div style={styles.modal} onClick={() => { setShowCreateWizard(false); resetWizard(); }}>
-          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+          <div style={{ ...styles.modalContent, maxWidth: '1100px', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '1.5rem' }}>创建新分店</h2>
 
             <div style={styles.stepIndicator}>
@@ -1089,6 +1250,139 @@ const StoresModule: React.FC = () => {
                   style={styles.input}
                 />
               </div>
+              <div style={{ ...styles.formGroup, gridColumn: '1 / -1', borderTop: `1px solid ${colors.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+                <label style={styles.label}>打印配置</label>
+                <span style={{ color: colors.textSecondary, fontSize: font.caption }}>打印机名称由每家分店电脑的本地打印桥配置，云端只保存本分店的纸张和动作设置。</span>
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>小票纸宽</label>
+                <select
+                  value={editingStore.receiptPaperWidthMm || 80}
+                  onChange={(e) => setEditingStore({ ...editingStore, receiptPaperWidthMm: Number(e.target.value) === 58 ? 58 : 80 })}
+                  style={styles.input}
+                >
+                  <option value={80}>80 mm</option>
+                  <option value={58}>58 mm</option>
+                </select>
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>收银走纸行数</label>
+                <input type="number" min={1} max={20} value={editingStore.receiptFeedLines ?? 8} onChange={(e) => setEditingStore({ ...editingStore, receiptFeedLines: Number(e.target.value) })} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>厨房走纸行数</label>
+                <input type="number" min={1} max={20} value={editingStore.kitchenFeedLines ?? 8} onChange={(e) => setEditingStore({ ...editingStore, kitchenFeedLines: Number(e.target.value) })} style={styles.input} />
+              </div>
+              <div style={{ ...styles.formGroup, gap: '0.65rem' }}>
+                <label style={styles.label}>打印动作</label>
+                <label><input type="checkbox" checked={editingStore.cashierPrintEnabled !== false} onChange={(e) => setEditingStore({ ...editingStore, cashierPrintEnabled: e.target.checked })} /> 启用收银打印</label>
+                <label><input type="checkbox" checked={editingStore.kitchenPrintEnabled !== false} onChange={(e) => setEditingStore({ ...editingStore, kitchenPrintEnabled: e.target.checked })} /> 启用厨房打印</label>
+                <label><input type="checkbox" checked={editingStore.receiptCutEnabled !== false} onChange={(e) => setEditingStore({ ...editingStore, receiptCutEnabled: e.target.checked })} /> 收银自动切纸</label>
+                <label><input type="checkbox" checked={editingStore.kitchenCutEnabled !== false} onChange={(e) => setEditingStore({ ...editingStore, kitchenCutEnabled: e.target.checked })} /> 厨房自动切纸</label>
+              </div>
+              <div style={{ gridColumn: '1 / -1', borderTop: `1px solid ${colors.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.85rem' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, color: colors.textPrimary }}>分店打印机与出单路由</div>
+                    <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: '0.25rem' }}>
+                      每家分店独立配置，可添加任意数量打印机。网络打印机默认端口为 9100；厨房分类名称需与菜品管理中的分类完全一致。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingStore({ ...editingStore, printers: [...(editingStore.printers || []), createStorePrinter()] })}
+                    style={styles.btn(colors.teal)}
+                  >
+                    + 添加打印机
+                  </button>
+                </div>
+                {(editingStore.printers || []).length === 0 ? (
+                  <div style={{ padding: '1rem', border: `1px dashed ${colors.borderStrong}`, borderRadius: radii.md, color: colors.textSecondary, background: colors.surfaceMuted }}>
+                    尚未配置网络打印机，系统继续使用原来的本机打印桥角色配置。
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '0.85rem' }}>
+                    {(editingStore.printers || []).map((printer, index) => (
+                      <div key={printer.id} style={{ border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.9rem', background: colors.surfaceMuted }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                          <strong>打印机 {index + 1}</strong>
+                          <button type="button" onClick={() => removeEditingPrinter(printer.id)} style={{ ...styles.btn('#b91c1c'), padding: '0.38rem 0.65rem' }}>删除</button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
+                          <div style={styles.formGroup}>
+                            <label style={styles.label}>名称</label>
+                            <input value={printer.name} onChange={(e) => updateEditingPrinter(printer.id, { name: e.target.value })} style={styles.input} />
+                          </div>
+                          <div style={styles.formGroup}>
+                            <label style={styles.label}>用途</label>
+                            <select value={printer.role} onChange={(e) => updateEditingPrinter(printer.id, { role: e.target.value as PrinterRole })} style={styles.input}>
+                              <option value="cashier">收银小票</option>
+                              <option value="kitchen">厨房出单</option>
+                              <option value="bar">酒水出单</option>
+                              <option value="report">报表打印</option>
+                            </select>
+                          </div>
+                          <div style={styles.formGroup}>
+                            <label style={styles.label}>连接方式</label>
+                            <select value={printer.transport} onChange={(e) => updateEditingPrinter(printer.id, { transport: e.target.value as PrinterTransport })} style={styles.input}>
+                              <option value="network">局域网 IP</option>
+                              <option value="windows">Windows 打印机</option>
+                            </select>
+                          </div>
+                          {printer.transport === 'network' ? (
+                            <>
+                              <div style={styles.formGroup}>
+                                <label style={styles.label}>打印机 IP</label>
+                                <input value={printer.host || ''} onChange={(e) => updateEditingPrinter(printer.id, { host: e.target.value.trim() })} placeholder="192.168.1.250" style={styles.input} />
+                              </div>
+                              <div style={styles.formGroup}>
+                                <label style={styles.label}>端口</label>
+                                <input type="number" min={1} max={65535} value={printer.port || 9100} onChange={(e) => updateEditingPrinter(printer.id, { port: Number(e.target.value) || 9100 })} style={styles.input} />
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ ...styles.formGroup, gridColumn: 'span 2' }}>
+                              <label style={styles.label}>Windows 打印机名称</label>
+                              <input value={printer.printerName || ''} onChange={(e) => updateEditingPrinter(printer.id, { printerName: e.target.value })} placeholder="例如 FACTURAS" style={styles.input} />
+                            </div>
+                          )}
+                          <div style={styles.formGroup}>
+                            <label style={styles.label}>纸宽</label>
+                            <select value={printer.widthMm} onChange={(e) => updateEditingPrinter(printer.id, { widthMm: Number(e.target.value) === 58 ? 58 : 80 })} style={styles.input}>
+                              <option value={80}>80 mm</option>
+                              <option value={58}>58 mm</option>
+                            </select>
+                          </div>
+                          <div style={styles.formGroup}>
+                            <label style={styles.label}>走纸行数</label>
+                            <input type="number" min={1} max={20} value={printer.feedLines} onChange={(e) => updateEditingPrinter(printer.id, { feedLines: Number(e.target.value) || 8 })} style={styles.input} />
+                          </div>
+                          {(printer.role === 'kitchen' || printer.role === 'bar') && (
+                            <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                              <label style={styles.label}>菜品分类（用逗号分隔）</label>
+                              <input
+                                key={`${printer.id}-${(printer.categories || []).join('|')}`}
+                                defaultValue={(printer.categories || []).join(', ')}
+                                onBlur={(e) => updateEditingPrinter(printer.id, { categories: e.target.value.split(/[,，]/).map(value => value.trim()).filter(Boolean) })}
+                                disabled={printer.printAllCategories}
+                                placeholder="例如 Comida China, Sopas"
+                                style={styles.input}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '0.75rem' }}>
+                          <label><input type="checkbox" checked={printer.enabled} onChange={(e) => updateEditingPrinter(printer.id, { enabled: e.target.checked })} /> 启用</label>
+                          <label><input type="checkbox" checked={printer.cut} onChange={(e) => updateEditingPrinter(printer.id, { cut: e.target.checked })} /> 自动切纸</label>
+                          {(printer.role === 'kitchen' || printer.role === 'bar') && (
+                            <label><input type="checkbox" checked={printer.printAllCategories === true} onChange={(e) => updateEditingPrinter(printer.id, { printAllCategories: e.target.checked })} /> 打印全部菜品</label>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>状态</label>
                 <select value={editingStore.status} onChange={(e) => setEditingStore({ ...editingStore, status: e.target.value as 'active' | 'inactive' })} style={styles.input}>
@@ -1105,12 +1399,70 @@ const StoresModule: React.FC = () => {
         </div>
       )}
 
+      {showManagerManagement && (
+        <div style={styles.modal} onClick={() => setShowManagerManagement(false)}>
+          <div style={{ ...styles.modalContent, maxWidth: '980px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>经理管理</h2>
+                <p style={{ margin: '0.35rem 0 0', color: colors.textSecondary }}>经理账号独立于分店创建，只能访问已授权的分店。</p>
+              </div>
+              <button onClick={handleAddManager} style={styles.btn(colors.success)}>添加经理</button>
+            </div>
+
+            {managerUsers.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2.5rem', color: colors.textSecondary, background: colors.surfaceMuted, borderRadius: radii.md }}>
+                暂无经理账号
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>姓名</th>
+                      <th style={styles.th}>用户名</th>
+                      <th style={styles.th}>管理分店</th>
+                      <th style={styles.th}>默认分店</th>
+                      <th style={styles.th}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {managerUsers.map(manager => (
+                      <tr key={manager.id}>
+                        <td style={styles.td}>{manager.name}</td>
+                        <td style={styles.td}>{manager.username}</td>
+                        <td style={styles.td}>
+                          {(manager.assignedStores || stores.filter(store => manager.storeIds?.includes(store.id)))
+                            .map(store => store.name)
+                            .join('、') || '未分配'}
+                        </td>
+                        <td style={styles.td}>{manager.storeName || stores.find(store => store.id === manager.storeId)?.name || '-'}</td>
+                        <td style={styles.td}>
+                          <button onClick={() => handleEditUser(manager)} style={{ ...styles.btn(colors.blue), marginRight: '0.5rem', padding: '0.5rem 1rem' }}>编辑</button>
+                          <button onClick={() => handleDeleteUser(manager.id)} style={{ ...styles.btn(colors.danger), padding: '0.5rem 1rem' }}>删除</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button onClick={() => setShowManagerManagement(false)} style={styles.btn(colors.textSecondary)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 添加/编辑用户模态框 */}
       {showUserModal && (
         <div style={styles.modal} onClick={() => setShowUserModal(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '1.5rem' }}>
-              {editingUser ? '✏️ 编辑账号' : '➕ 添加新账号'}
+              {userModalScope === 'manager'
+                ? (editingUser ? '编辑经理' : '添加经理')
+                : (editingUser ? '✏️ 编辑账号' : '➕ 添加新账号')}
             </h2>
             <div style={styles.grid2}>
               <div style={styles.formGroup}>
@@ -1119,12 +1471,16 @@ const StoresModule: React.FC = () => {
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>角色</label>
-                <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value as any })} style={styles.input}>
-                  <option value="store_manager">🏢 店长</option>
-                  <option value="cashier">💰 收银员</option>
-                  <option value="waiter">🍽️ 服务生</option>
-                  <option value="chef">👨‍🍳 厨师</option>
-                </select>
+                {userModalScope === 'manager' ? (
+                  <input type="text" value="经理（多门店）" readOnly style={{ ...styles.input, background: colors.surfaceMuted }} />
+                ) : (
+                  <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value as any })} style={styles.input}>
+                    <option value="store_manager">🏢 店长</option>
+                    <option value="cashier">💰 收银员</option>
+                    <option value="waiter">🍽️ 服务生</option>
+                    <option value="chef">👨‍🍳 厨师</option>
+                  </select>
+                )}
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>用户名</label>
@@ -1134,6 +1490,62 @@ const StoresModule: React.FC = () => {
                 <label style={styles.label}>密码</label>
                 <input type="password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} style={styles.input} />
               </div>
+              {userModalScope === 'manager' && (
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label}>管理分店（可选择多家）</label>
+                  <details>
+                    <summary style={{ ...styles.input, cursor: 'pointer', listStyle: 'none' }}>
+                      {userForm.assignedStoreIds.length > 0
+                        ? stores
+                            .filter(storeOption => userForm.assignedStoreIds.includes(storeOption.id))
+                            .map(storeOption => storeOption.name)
+                            .join('、')
+                        : '请选择分店'}
+                    </summary>
+                    <div style={{ display: 'grid', gap: '0.65rem', marginTop: '0.35rem', padding: '0.85rem', border: `1px solid ${colors.border}`, borderRadius: radii.md, background: colors.surface, boxShadow: shadows.soft, maxHeight: '240px', overflowY: 'auto' }}>
+                      {stores.length === 0 ? (
+                        <span style={{ color: colors.textMuted }}>暂无分店数据，请先刷新云端数据</span>
+                      ) : stores.map(storeOption => (
+                        <label key={storeOption.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={userForm.assignedStoreIds.includes(storeOption.id)}
+                            onChange={(event) => setUserForm(current => {
+                              const assignedStoreIds = event.target.checked
+                                ? Array.from(new Set([...current.assignedStoreIds, storeOption.id]))
+                                : current.assignedStoreIds.filter(id => id !== storeOption.id);
+                              return {
+                                ...current,
+                                assignedStoreIds,
+                                defaultStoreId: assignedStoreIds.includes(current.defaultStoreId)
+                                  ? current.defaultStoreId
+                                  : (assignedStoreIds[0] || ''),
+                              };
+                            })}
+                          />
+                          <span>{storeOption.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              )}
+              {userModalScope === 'manager' && (
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label}>默认进入分店</label>
+                  <select
+                    value={userForm.defaultStoreId}
+                    onChange={(event) => setUserForm({ ...userForm, defaultStoreId: event.target.value })}
+                    style={styles.input}
+                    disabled={userForm.assignedStoreIds.length === 0}
+                  >
+                    <option value="">请选择默认分店</option>
+                    {stores
+                      .filter(storeOption => userForm.assignedStoreIds.includes(storeOption.id))
+                      .map(storeOption => <option key={storeOption.id} value={storeOption.id}>{storeOption.name}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '2rem' }}>
               <button onClick={() => setShowUserModal(false)} style={styles.btn('#6b7280')}>取消</button>

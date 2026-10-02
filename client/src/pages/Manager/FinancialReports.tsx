@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/DataService';
-import { smartGetDocuments, smartSetDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartGetDocumentsByDateRange, smartGetPosOrdersByActivityDateRange, smartSetDocument } from '../../services/smartSyncService';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { buildMissingPurchaseExpenses } from '../../utils/purchaseExpenseRepair';
-import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseDateKey, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { getInclusiveLocalDateKeys } from '../../utils/localTime';
+import { buildMissingPurchaseExpenses, getPurchaseExpenseDate } from '../../utils/purchaseExpenseRepair';
+import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseCashAmount, getExpenseDateKey, getExpenseProfitAmount, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey } from '../../i18n/translations';
+import { getFinancialSourceRevision } from '../../services/dataManager';
 
 interface DailyReport {
   date: string;
@@ -23,11 +27,48 @@ interface DailyReport {
   profit: number;
   handoverAmount?: number;
   difference?: number;
+  expectedCashHandover: number;
+  fundingGap: number;
 }
 
 interface FinancialReportsModuleProps {
   orders?: any[];
 }
+
+interface FinancialReportCloudSnapshot {
+  orders: any[];
+  expenses: any[];
+  purchases: any[];
+  handovers: any[];
+  expenseCategories: any[];
+  syncedAt: number;
+  sourceRevision: number;
+}
+
+const financialReportRangeCache = new Map<string, FinancialReportCloudSnapshot>();
+
+const rememberFinancialSnapshot = (key: string, value: FinancialReportCloudSnapshot): void => {
+  financialReportRangeCache.delete(key);
+  financialReportRangeCache.set(key, value);
+  if (financialReportRangeCache.size > 8) {
+    const oldestKey = financialReportRangeCache.keys().next().value;
+    if (oldestKey) financialReportRangeCache.delete(oldestKey);
+  }
+};
+
+const clearFinancialSnapshotsForStore = (storeId: string): void => {
+  const prefix = `${storeId}|`;
+  Array.from(financialReportRangeCache.keys()).forEach(key => {
+    if (key.startsWith(prefix)) financialReportRangeCache.delete(key);
+  });
+};
+
+const getMonthDateRange = (monthKey: string) => {
+  const startDate = `${monthKey}-01`;
+  const endDate = new Date(`${startDate}T12:00:00`);
+  endDate.setMonth(endDate.getMonth() + 1, 0);
+  return { startDate, endDate: getLocalDateString(endDate) };
+};
 
 const getSupplierDebtTotal = (purchases: any[]): number => {
   return purchases.reduce((sum: number, purchase: any) => {
@@ -43,8 +84,32 @@ const signedMoney = (value: number | undefined | null): string => {
   return `${amount > 0 ? '+' : ''}${money(amount)}`;
 };
 
-const formatTodayOrders = (report: Pick<DailyReport, 'completedOrders' | 'dineInOrders' | 'takeoutOrders' | 'deliveryOrders' | 'cancelledOrders' | 'cancelledItems'>): string =>
-  `\u5b8c\u6210 ${report.completedOrders} \u5355 / Mesa ${report.dineInOrders} / Barra ${report.takeoutOrders} / Delivery ${report.deliveryOrders} / \u53d6\u6d88\u6574\u5355 ${report.cancelledOrders} \u5355 / \u53d6\u6d88\u83dc\u54c1 ${report.cancelledItems} \u9053`;
+const getFinancialCloudDateRange = (
+  reportType: 'daily' | 'weekly' | 'monthly' | 'custom',
+  selectedDate: string,
+  selectedMonth: string,
+  startDate: string,
+  endDate: string
+) => {
+  if (reportType === 'daily') return { startDate: selectedDate, endDate: selectedDate };
+  if (reportType === 'monthly') return getMonthDateRange(selectedMonth);
+  if (reportType === 'custom') {
+    return startDate <= endDate
+      ? { startDate, endDate }
+      : { startDate: endDate, endDate: startDate };
+  }
+  const days = 7;
+  return {
+    startDate: getLocalDateString(new Date(Date.now() - days * 24 * 60 * 60 * 1000)),
+    endDate: getLocalDateString(),
+  };
+};
+
+const formatOrderSummary = (
+  report: Pick<DailyReport, 'completedOrders' | 'dineInOrders' | 'takeoutOrders' | 'deliveryOrders' | 'cancelledOrders' | 'cancelledItems'>,
+  t: (key: TranslationKey) => string
+): string =>
+  `${t('finance.orders.completed')} ${report.completedOrders} / Mesa ${report.dineInOrders} / Barra ${report.takeoutOrders} / Delivery ${report.deliveryOrders} / ${t('finance.orders.cancelled')} ${report.cancelledOrders} / ${t('finance.orders.cancelledItems')} ${report.cancelledItems}`;
 
 const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -54,6 +119,7 @@ const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/'/g, '&#039;');
 
 const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders: propOrders }) => {
+  const { language, t } = useI18n();
   const expenseCategoryStorageKey = dataService.getStoreKey('expense_categories');
   const [orders, setOrders] = useState<any[]>(() => propOrders || []);
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -70,6 +136,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
   const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
   const [selectedDate, setSelectedDate] = useState(getLocalDateString());
+  const [selectedMonth, setSelectedMonth] = useState(getLocalDateString().slice(0, 7));
   const [startDate, setStartDate] = useState(getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
   const [endDate, setEndDate] = useState(getLocalDateString());
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
@@ -79,57 +146,103 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // Low-frequency manager data: fetch once on entry, then manual refresh.
-  const refreshFinancialData = React.useCallback(async () => {
+  const refreshFinancialData = React.useCallback(async (forceCloud = false) => {
     setIsRefreshing(true);
     try {
-      const [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers, cloudExpenseCategories] = await Promise.all([
-        smartGetDocuments('pos_orders', true),
-        smartGetDocuments('expenses', true),
-        smartGetDocuments('purchase_orders', true),
-        smartGetDocuments('handovers', true),
-        smartGetDocuments('expense_categories', true),
-      ]);
+      const storeId = dataService.getCurrentStoreId();
+      if (!storeId) throw new Error('Missing storeId for financial reports');
+      const cloudRange = getFinancialCloudDateRange(reportType, selectedDate, selectedMonth, startDate, endDate);
+      const cacheKey = `${storeId}|${cloudRange.startDate}|${cloudRange.endDate}`;
+      const sourceRevision = getFinancialSourceRevision(storeId);
+      const cachedSnapshot = forceCloud ? undefined : financialReportRangeCache.get(cacheKey);
+      const cached = cachedSnapshot?.sourceRevision === sourceRevision ? cachedSnapshot : undefined;
+      let cloudOrders = cached?.orders;
+      let cloudExpenses = cached?.expenses;
+      let cloudPurchases = cached?.purchases;
+      let cloudHandovers = cached?.handovers;
+      let cloudExpenseCategories = cached?.expenseCategories;
 
-      const repairedExpenses = buildMissingPurchaseExpenses(cloudPurchases, cloudExpenses);
+      if (!cached) {
+        [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers, cloudExpenseCategories] = await Promise.all([
+          smartGetPosOrdersByActivityDateRange(cloudRange.startDate, cloudRange.endDate, true, undefined, ['lastPaidAt', 'cancelledAt'], false),
+          smartGetDocumentsByDateRange('expenses', 'date', cloudRange.startDate, cloudRange.endDate, true),
+          smartGetDocuments('purchase_orders', true),
+          smartGetDocumentsByDateRange('handovers', 't', cloudRange.startDate, cloudRange.endDate, true),
+          smartGetDocuments('expense_categories', true),
+        ]);
+      }
+
+      const nextOrders = cloudOrders || [];
+      const nextCloudExpenses = cloudExpenses || [];
+      const nextPurchases = cloudPurchases || [];
+      const nextHandovers = cloudHandovers || [];
+      const nextExpenseCategories = cloudExpenseCategories || [];
+
+      const rangePurchases = nextPurchases.filter(purchase => {
+        const purchaseDate = getPurchaseExpenseDate(purchase);
+        return purchaseDate >= cloudRange.startDate && purchaseDate <= cloudRange.endDate;
+      });
+      const repairedExpenses = cached ? [] : buildMissingPurchaseExpenses(rangePurchases, nextCloudExpenses);
       if (repairedExpenses.length > 0) {
         await Promise.all(repairedExpenses.map(expense =>
           smartSetDocument('expenses', expense.id, expense)
         ));
       }
-      const nextExpenses = [...repairedExpenses, ...cloudExpenses];
+      const nextExpenses = [...repairedExpenses, ...nextCloudExpenses];
+      const syncedAt = cached?.syncedAt || Date.now();
 
-      setOrders(cloudOrders);
+      if (!cached) {
+        rememberFinancialSnapshot(cacheKey, {
+          orders: nextOrders,
+          expenses: nextExpenses,
+          purchases: nextPurchases,
+          handovers: nextHandovers,
+          expenseCategories: nextExpenseCategories,
+          syncedAt,
+          sourceRevision,
+        });
+      }
+
+      setOrders(nextOrders);
       setExpenses(nextExpenses);
-      setPurchaseOrders(cloudPurchases);
-      setHandovers(cloudHandovers);
-      if (cloudExpenseCategories.length > 0) {
-        setExpenseCategories(cloudExpenseCategories);
-        localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(cloudExpenseCategories));
+      setPurchaseOrders(nextPurchases);
+      setHandovers(nextHandovers);
+      if (nextExpenseCategories.length > 0) {
+        setExpenseCategories(nextExpenseCategories);
+        try {
+          localStorage.setItem(expenseCategoryStorageKey, JSON.stringify(nextExpenseCategories));
+        } catch (cacheError) {
+          console.warn('财务报表开支类别缓存写入失败，继续使用云端数据:', cacheError);
+        }
       }
       setDataVersion(version => version + 1);
-      setLastSyncedAt(new Date());
+      setLastSyncedAt(new Date(syncedAt));
     } catch (error) {
-      console.error('\u5237\u65b0\u8d22\u52a1\u62a5\u8868\u6570\u636e\u5931\u8d25:', error);
-      alert('\u5237\u65b0\u8d22\u52a1\u62a5\u8868\u6570\u636e\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      console.error('Failed to refresh financial report data:', error);
+      alert(t('finance.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
-  }, [expenseCategoryStorageKey]);
+  }, [endDate, expenseCategoryStorageKey, reportType, selectedDate, selectedMonth, startDate, t]);
 
   useEffect(() => {
-    refreshFinancialData();
+    refreshFinancialData(false);
   }, [refreshFinancialData]);
 
   useEffect(() => {
     const handleFinancialSourceUpdated = () => {
+      const storeId = dataService.getCurrentStoreId();
+      if (storeId) clearFinancialSnapshotsForStore(storeId);
       setDataVersion(version => version + 1);
     };
 
     window.addEventListener('expensesUpdated', handleFinancialSourceUpdated);
     window.addEventListener('purchasesUpdated', handleFinancialSourceUpdated);
+    window.addEventListener('posOrdersUpdated', handleFinancialSourceUpdated);
     return () => {
       window.removeEventListener('expensesUpdated', handleFinancialSourceUpdated);
       window.removeEventListener('purchasesUpdated', handleFinancialSourceUpdated);
+      window.removeEventListener('posOrdersUpdated', handleFinancialSourceUpdated);
     };
   }, []);
 
@@ -177,18 +290,26 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         return sum;
       }
       if (getExpenseDateKey(exp) === date) {
-        return sum + (exp.amount || 0);
+        return sum + getExpenseProfitAmount(exp);
       }
       return sum;
     }, 0);
 
+    const cashExpenseAmount = expenses.reduce((sum: number, exp: any) => {
+      if (isPurchaseRelatedExpense(exp)) return sum;
+      return getExpenseDateKey(exp) === date
+        ? sum + getExpenseCashAmount(exp)
+        : sum;
+    }, 0);
+
     // Read shift handover records.
     const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
-    const { totalSales, profit, difference } = calculateFinancialReportTotals({
+    const { totalSales, profit, difference, expectedCashHandover, fundingGap } = calculateFinancialReportTotals({
       cashPayment,
       cardPayment,
       purchaseAmount,
       expenseAmount,
+      cashExpenseAmount,
       handoverAmount,
     });
 
@@ -208,7 +329,9 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       expenseAmount,
       profit,
       handoverAmount,
-      difference
+      difference,
+      expectedCashHandover,
+      fundingGap,
     };
   }, [orders, expenses, handovers]);
 
@@ -216,12 +339,15 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   const loadReports = React.useCallback(() => {
     if (reportType === 'daily') {
       setDailyReports([generateDailyReport(selectedDate)]);
-    } else if (reportType === 'weekly' || reportType === 'monthly' || reportType === 'custom') {
+    } else if (reportType === 'custom') {
+      setDailyReports(getInclusiveLocalDateKeys(startDate, endDate).map(generateDailyReport));
+    } else if (reportType === 'monthly') {
+      const range = getMonthDateRange(selectedMonth);
+      setDailyReports(getInclusiveLocalDateKeys(range.startDate, range.endDate).map(generateDailyReport));
+    } else if (reportType === 'weekly') {
       const reports: DailyReport[] = [];
-      const start = new Date(reportType === 'custom' ? startDate :
-        reportType === 'weekly' ? Date.now() - 7 * 24 * 60 * 60 * 1000 :
-        Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const end = new Date(reportType === 'custom' ? endDate : Date.now());
+      const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const end = new Date();
 
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dateStr = getLocalDateString(d);
@@ -229,7 +355,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       }
       setDailyReports(reports);
     }
-  }, [reportType, selectedDate, startDate, endDate, generateDailyReport]);
+  }, [reportType, selectedDate, selectedMonth, startDate, endDate, generateDailyReport]);
 
   useEffect(() => {
     loadReports();
@@ -254,12 +380,22 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     profit: acc.profit + report.profit,
     difference: acc.difference + (report.difference || 0),
     handoverAmount: acc.handoverAmount + (report.handoverAmount || 0),
+    expectedCashHandover: acc.expectedCashHandover + report.expectedCashHandover,
+    fundingGap: acc.fundingGap + report.fundingGap,
     hasHandover: acc.hasHandover || report.handoverAmount !== undefined,
     supplierDebt: supplierDebtTotal
-  }), { totalSales: 0, orderCount: 0, completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
+  }), { totalSales: 0, orderCount: 0, completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, expectedCashHandover: 0, fundingGap: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
     ? buildDailyExpenseBreakdown(expenses, selectedDate, expenseCategories, purchaseOrders)
     : { summaries: [], details: [], groups: [] };
+  const getExpenseTypeLabel = (type: 'purchase' | 'operating') => (
+    t(type === 'purchase' ? 'finance.purchasePayment' : 'finance.operatingExpense')
+  );
+  const getExpenseGroupTitle = (title: string) => (
+    language === 'es-NI'
+      ? title.replace(/\s*-\s*\u5355\u53f7\s*/g, ` - ${t('finance.invoiceNumber')} `)
+      : title
+  );
 
   const styles = {
     container: {
@@ -443,12 +579,14 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     const isDaily = reportType === 'daily';
     const firstDate = dailyReports[0]?.date || selectedDate;
     const lastDate = dailyReports[dailyReports.length - 1]?.date || selectedDate;
-    const title = isDaily ? `\u8d22\u52a1\u65e5\u62a5 ${selectedDate}` : `\u8d22\u52a1\u6c47\u603b\u62a5\u8868 ${firstDate} - ${lastDate}`;
+    const title = isDaily
+      ? `${t('finance.print.dailyTitle')} ${selectedDate}`
+      : `${t('finance.print.summaryTitle')} ${firstDate} - ${lastDate}`;
     const reportRows = dailyReports.map(report => `
       <tr>
         <td>${htmlEscape(report.date)}</td>
         <td class="num">${money(report.totalSales)}</td>
-        <td>${htmlEscape(formatTodayOrders(report))}</td>
+        <td>${htmlEscape(formatOrderSummary(report, t))}</td>
         <td class="num">${money(report.cashPayment)}</td>
         <td class="num">${money(report.cardPayment)}</td>
         <td class="num">${money(report.purchaseAmount)}</td>
@@ -463,14 +601,14 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     const expenseGroupRows = dailyExpenseBreakdown.groups.map(group => `
       <tr class="group-row">
-        <td colspan="5"><strong>${htmlEscape(group.typeLabel)} - ${htmlEscape(group.title)}</strong></td>
+        <td colspan="5"><strong>${htmlEscape(getExpenseTypeLabel(group.type))} - ${htmlEscape(getExpenseGroupTitle(group.title))}</strong></td>
         <td class="num"><strong>${group.count}</strong></td>
         <td class="num"><strong>${money(group.amount)}</strong></td>
       </tr>
       ${group.details.map((expense, index) => `
       <tr class="detail-row">
         <td>${index + 1}</td>
-        <td>${htmlEscape(expense.typeLabel)}</td>
+        <td>${htmlEscape(getExpenseTypeLabel(expense.type))}</td>
         <td>${htmlEscape(expense.orderNumber || expense.category || '-')}</td>
         <td>${htmlEscape(expense.description || '-')}</td>
         <td class="num">${expense.quantity !== undefined ? expense.quantity : '-'}</td>
@@ -482,7 +620,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('\u8bf7\u5141\u8bb8\u5f39\u51fa\u7a97\u53e3\u4ee5\u6253\u5370\u8d22\u52a1\u62a5\u8868');
+      alert(t('finance.alert.allowPopup'));
       return;
     }
 
@@ -521,32 +659,32 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       </head>
       <body>
         <h1>${htmlEscape(title)}</h1>
-        <div class="meta">\u6253\u5370\u65f6\u95f4: ${new Date().toLocaleString('es-NI', { hour12: false })}</div>
+        <div class="meta">${htmlEscape(t('finance.printTime'))}: ${new Date().toLocaleString(language === 'es-NI' ? 'es-NI' : 'zh-CN', { hour12: false })}</div>
         <div class="summary">
-          <div class="box"><div class="label">\u8425\u4e1a\u989d</div><div class="value">${money(summary.totalSales)}</div></div>
-          <div class="box"><div class="label">\u73b0\u91d1</div><div class="value">${money(summary.cashPayment)}</div></div>
-          <div class="box"><div class="label">\u5237\u5361</div><div class="value">${money(summary.cardPayment)}</div></div>
-          <div class="box"><div class="label">\u8ba2\u5355</div><div class="value">${htmlEscape(formatTodayOrders(summary))}</div></div>
-          <div class="box"><div class="label">\u76c8\u4e8f\uff08\u542b\u8bef\u5dee\uff09</div><div class="value">${money(summary.profit)}</div></div>
-          <div class="box"><div class="label">\u5b9e\u4ea4\u73b0\u91d1</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
-          <div class="box difference-box"><div class="label">\u4ea4\u73ed\u8bef\u5dee\uff08\u5b9e\u4ea4-\u5e94\u4ea4\u73b0\u91d1\uff09</div><div class="value difference-value">${summary.hasHandover ? signedMoney(summary.difference) : '\u672a\u4ea4\u73ed'}</div></div>
-          <div class="box"><div class="label">\u65e5\u5e38\u5f00\u652f</div><div class="value">${money(summary.expenseAmount)}</div></div>
-          <div class="box"><div class="label">\u91c7\u8d2d\u4ed8\u6b3e</div><div class="value">${money(summary.purchaseAmount)}</div></div>
-          <div class="box"><div class="label">\u4f9b\u5e94\u5546\u8d27\u6b3e\uff08\u5f53\u524d\u5269\u4f59\u6b20\u6b3e\uff09</div><div class="value">${money(summary.supplierDebt)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.sales'))}</div><div class="value">${money(summary.totalSales)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.cash'))}</div><div class="value">${money(summary.cashPayment)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.card'))}</div><div class="value">${money(summary.cardPayment)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.orders'))}</div><div class="value">${htmlEscape(formatOrderSummary(summary, t))}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.profitWithDifference'))}</div><div class="value">${money(summary.profit)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.handoverCash'))}</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
+          <div class="box difference-box"><div class="label">${htmlEscape(t('finance.shiftDifferenceWithFormula'))}</div><div class="value difference-value">${summary.hasHandover ? signedMoney(summary.difference) : htmlEscape(t('finance.notHandedOver'))}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.operatingExpense'))}</div><div class="value">${money(summary.expenseAmount)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.purchasePayment'))}</div><div class="value">${money(summary.purchaseAmount)}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.supplierDebtCurrent'))}</div><div class="value">${money(summary.supplierDebt)}</div></div>
         </div>
-        <h2>${isDaily ? '\u5f53\u65e5\u4ea4\u73ed\u5bf9\u8d26' : '\u65e5\u671f\u6c47\u603b'}</h2>
+        <h2>${htmlEscape(t(isDaily ? 'finance.print.dailyReconciliation' : 'finance.print.dateSummary'))}</h2>
         <table>
-          <thead><tr><th>\u65e5\u671f</th><th>\u8425\u4e1a\u989d</th><th>\u8ba2\u5355</th><th>\u73b0\u91d1</th><th>\u5237\u5361</th><th>\u91c7\u8d2d\u4ed8\u6b3e</th><th>\u65e5\u5e38\u5f00\u652f</th><th>\u76c8\u4e8f</th><th>\u5b9e\u4ea4</th><th>\u8bef\u5dee</th></tr></thead>
+          <thead><tr><th>${htmlEscape(t('finance.date'))}</th><th>${htmlEscape(t('finance.sales'))}</th><th>${htmlEscape(t('finance.orders'))}</th><th>${htmlEscape(t('finance.cash'))}</th><th>${htmlEscape(t('finance.card'))}</th><th>${htmlEscape(t('finance.purchasePayment'))}</th><th>${htmlEscape(t('finance.operatingExpense'))}</th><th>${htmlEscape(t('finance.profit'))}</th><th>${htmlEscape(t('finance.handover'))}</th><th>${htmlEscape(t('finance.difference'))}</th></tr></thead>
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
-          <h2>\u5f53\u5929\u5f00\u652f\u548c\u91c7\u8d2d\u5355\u660e\u7ec6</h2>
+          <h2>${htmlEscape(t('finance.dailyExpenseDetails'))}</h2>
           <table>
-            <thead><tr><th style="width: 32px;">#</th><th style="width: 78px;">\u7c7b\u578b</th><th style="width: 96px;">\u5355\u53f7/\u7c7b\u522b</th><th>\u5546\u54c1/\u8bf4\u660e</th><th style="width: 58px;">\u6570\u91cf</th><th style="width: 76px;">\u5355\u4ef7</th><th style="width: 88px;">\u91d1\u989d</th></tr></thead>
-            <tbody>${expenseGroupRows || '<tr><td colspan="7" style="text-align:center;color:#6b7280;">\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55</td></tr>'}</tbody>
+            <thead><tr><th style="width: 32px;">#</th><th style="width: 78px;">${htmlEscape(t('finance.type'))}</th><th style="width: 96px;">${htmlEscape(t('finance.invoiceOrCategory'))}</th><th>${htmlEscape(t('finance.itemOrDescription'))}</th><th style="width: 58px;">${htmlEscape(t('finance.quantity'))}</th><th style="width: 76px;">${htmlEscape(t('finance.unitPrice'))}</th><th style="width: 88px;">${htmlEscape(t('finance.amount'))}</th></tr></thead>
+            <tbody>${expenseGroupRows || `<tr><td colspan="7" style="text-align:center;color:#6b7280;">${htmlEscape(t('finance.noDailyExpenses'))}</td></tr>`}</tbody>
           </table>
         ` : ''}
-        <div class="footer"><div class="sign">\u5236\u8868\u4eba</div><div class="sign">\u5ba1\u6838\u4eba</div></div>
+        <div class="footer"><div class="sign">${htmlEscape(t('finance.preparedBy'))}</div><div class="sign">${htmlEscape(t('finance.reviewedBy'))}</div></div>
       </body>
       </html>
     `);
@@ -558,75 +696,79 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
   return (
     <div className="financial-report-page" style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>{'\u8d22\u52a1\u62a5\u8868'}</h1>
+        <h1 style={styles.title}>{t('finance.title')}</h1>
         <div style={styles.controls}>
           <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} style={styles.select}>
-            <option value="daily">{'\u65e5\u62a5\u8868'}</option>
-            <option value="weekly">{'\u5468\u62a5\u8868'}</option>
-            <option value="monthly">{'\u6708\u62a5\u8868'}</option>
-            <option value="custom">{'\u81ea\u5b9a\u4e49'}</option>
+            <option value="daily">{t('finance.report.daily')}</option>
+            <option value="weekly">{t('finance.report.weekly')}</option>
+            <option value="monthly">{t('finance.report.monthly')}</option>
+            <option value="custom">{t('finance.report.custom')}</option>
           </select>
 
           {reportType === 'daily' && (
             <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} style={styles.input} />
           )}
 
+          {reportType === 'monthly' && (
+            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} style={styles.input} />
+          )}
+
           {reportType === 'custom' && (
             <>
               <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={styles.input} />
-              <span>{'\u81f3'}</span>
+              <span>{t('finance.to')}</span>
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={styles.input} />
             </>
           )}
 
           {lastSyncedAt && (
             <span style={styles.syncBadge}>
-              {'\u6700\u540e\u540c\u6b65 '} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              {t('finance.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
 
-          <button onClick={refreshFinancialData} disabled={isRefreshing} style={{ ...styles.btn(isRefreshing ? colors.textMuted : colors.blue, 'white'), cursor: isRefreshing ? 'not-allowed' : 'pointer' }}>
-            {isRefreshing ? '\u540c\u6b65\u4e2d...' : '\u5237\u65b0\u4e91\u7aef\u6570\u636e'}
+          <button onClick={() => refreshFinancialData(true)} disabled={isRefreshing} style={{ ...styles.btn(isRefreshing ? colors.textMuted : colors.blue, 'white'), cursor: isRefreshing ? 'not-allowed' : 'pointer' }}>
+            {isRefreshing ? t('finance.refreshing') : t('finance.refresh')}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: colors.textSecondary }}>{'\u52a0\u8f7d\u4e2d...'}</div>
+        <div style={{ textAlign: 'center', padding: '3rem', color: colors.textSecondary }}>{t('finance.loading')}</div>
       ) : (
         <div style={styles.content}>
           <div style={styles.statsGrid}>
-            <div style={styles.statCard(colors.blue, colors.blue)}><div style={styles.statLabel}>{'\u8425\u4e1a\u989d'}</div><div style={styles.statValue(colors.blue)}>{money(summary.totalSales)}</div><div style={styles.statSub}>{'\u5b8c\u6210'} {summary.completedOrders} {'\u5355'}</div></div>
-            <div style={styles.statCard(colors.success, colors.success)}><div style={styles.statLabel}>{'\u73b0\u91d1\u6536\u5165'}</div><div style={styles.statValue(colors.success)}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard('#7c3aed', '#7c3aed')}><div style={styles.statLabel}>{'\u5237\u5361\u6536\u5165'}</div><div style={styles.statValue('#7c3aed')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{'\u5360\u6bd4'} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{'\u8ba2\u5355'}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '0.86rem', lineHeight: 1.35 }}>{formatTodayOrders(summary)}</div><div style={styles.statSub}>Mesa / Barra / Delivery</div></div>
-            <div style={styles.statCard(summary.profit >= 0 ? colors.success : colors.danger, summary.profit >= 0 ? colors.success : colors.danger)}><div style={styles.statLabel}>{'\u76c8\u4e8f'}</div><div style={styles.statValue(summary.profit >= 0 ? colors.success : colors.danger)}>{money(summary.profit)}</div><div style={styles.statSub}>{'\u8425\u4e1a\u989d - \u91c7\u8d2d\u4ed8\u6b3e - \u65e5\u5e38\u5f00\u652f + \u8bef\u5dee'} | {'\u76c8\u4e8f\u7387'} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{'\u5b9e\u4ea4\u73b0\u91d1'}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{'\u4ea4\u73ed\u5bf9\u8d26\u586b\u5199\u91d1\u989d'}</div></div>
-            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success, summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}><div style={styles.statLabel}>{'\u4ea4\u73ed\u8bef\u5dee'}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{'\u5b9e\u4ea4 - \u5e94\u4ea4\u73b0\u91d1'}</div></div>
-            <div style={styles.statCard(colors.danger, colors.danger)}><div style={styles.statLabel}>{'\u65e5\u5e38\u5f00\u652f'}</div><div style={styles.statValue(colors.danger)}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{'\u8fd0\u8425\u652f\u51fa'}</div></div>
-            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</div><div style={styles.statValue(colors.amber)}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{'\u5df2\u4ed8\u6b3e\u8d27\u6b3e'}</div></div>
-            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{'\u4f9b\u5e94\u5546\u8d27\u6b3e'}</div><div style={styles.statValue(colors.amber)}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{'\u5f53\u524d\u5269\u4f59\u6b20\u6b3e'}</div></div>
+            <div style={styles.statCard(colors.blue, colors.blue)}><div style={styles.statLabel}>{t('finance.sales')}</div><div style={styles.statValue(colors.blue)}>{money(summary.totalSales)}</div><div style={styles.statSub}>{t('finance.orders.completed')} {summary.completedOrders}</div></div>
+            <div style={styles.statCard(colors.success, colors.success)}><div style={styles.statLabel}>{t('finance.cashIncome')}</div><div style={styles.statValue(colors.success)}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{t('finance.share')} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard('#7c3aed', '#7c3aed')}><div style={styles.statLabel}>{t('finance.cardIncome')}</div><div style={styles.statValue('#7c3aed')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{t('finance.share')} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{t('finance.orders')}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '0.86rem', lineHeight: 1.35 }}>{formatOrderSummary(summary, t)}</div><div style={styles.statSub}>Mesa / Barra / Delivery</div></div>
+            <div style={styles.statCard(summary.profit >= 0 ? colors.success : colors.danger, summary.profit >= 0 ? colors.success : colors.danger)}><div style={styles.statLabel}>{t('finance.profit')}</div><div style={styles.statValue(summary.profit >= 0 ? colors.success : colors.danger)}>{money(summary.profit)}</div><div style={styles.statSub}>{t('finance.profitFormula')} | {t('finance.profitMargin')} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
+            <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{t('finance.handoverCash')}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{summary.fundingGap > 0 ? `${t('finance.expected')} ${money(summary.expectedCashHandover)} / ${t('finance.fundingGap')} ${money(summary.fundingGap)}` : `${t('finance.expectedCash')} ${money(summary.expectedCashHandover)}`}</div></div>
+            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success, summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}><div style={styles.statLabel}>{t('finance.shiftDifference')}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{t('finance.differenceFormula')}</div></div>
+            <div style={styles.statCard(colors.danger, colors.danger)}><div style={styles.statLabel}>{t('finance.operatingExpense')}</div><div style={styles.statValue(colors.danger)}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{t('finance.operatingOutflow')}</div></div>
+            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{t('finance.purchasePayment')}</div><div style={styles.statValue(colors.amber)}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{t('finance.paidPurchases')}</div></div>
+            <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{t('finance.supplierDebt')}</div><div style={styles.statValue(colors.amber)}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{t('finance.outstandingDebt')}</div></div>
           </div>
 
           <div style={styles.card}>
-            <div style={styles.cardTitle}>{'\u62a5\u8868\u660e\u7ec6'}</div>
+            <div style={styles.cardTitle}>{t('finance.reportDetails')}</div>
             {dailyReports.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>{'\u6682\u65e0\u6570\u636e'}</div>
+              <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>{t('finance.noData')}</div>
             ) : (
               <div style={styles.tableWrap}>
                 <table style={styles.table}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>{'\u65e5\u671f'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8425\u4e1a\u989d'}</th>
-                      <th style={styles.th}>{'\u8ba2\u5355'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u73b0\u91d1'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5237\u5361'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91c7\u8d2d\u4ed8\u6b3e'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5f00\u652f'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u76c8\u4e8f'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5b9e\u4ea4'}</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>{'\u8bef\u5dee'}</th>
+                      <th style={styles.th}>{t('finance.date')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.sales')}</th>
+                      <th style={styles.th}>{t('finance.orders')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.cash')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.card')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.purchasePayment')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.expense')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.profit')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.handover')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.difference')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -634,7 +776,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                       <tr key={index}>
                         <td style={styles.td}>{report.date}</td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600' }}>{money(report.totalSales)}</td>
-                        <td style={styles.td}>{formatTodayOrders(report)}</td>
+                        <td style={styles.td}>{formatOrderSummary(report, t)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: colors.success }}>{money(report.cashPayment)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: '#7c3aed' }}>{money(report.cardPayment)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: colors.amber }}>{money(report.purchaseAmount)}</td>
@@ -653,21 +795,21 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           {reportType === 'daily' && (
             <>
               <div style={styles.card}>
-                <div style={styles.cardTitle}>{'\u5f53\u5929\u5f00\u652f\u548c\u91c7\u8d2d\u5355\u660e\u7ec6'}</div>
+                <div style={styles.cardTitle}>{t('finance.dailyExpenseDetails')}</div>
                 {dailyExpenseBreakdown.groups.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: colors.textMuted }}>{'\u5f53\u5929\u6ca1\u6709\u5f00\u652f\u8bb0\u5f55'}</div>
+                  <div style={{ textAlign: 'center', padding: '2rem', color: colors.textMuted }}>{t('finance.noDailyExpenses')}</div>
                 ) : (
                   <div style={styles.tableWrap}>
                     <table style={styles.table}>
                       <thead>
                         <tr>
                           <th style={{ ...styles.th, width: '4rem' }}>#</th>
-                          <th style={styles.th}>{'\u7c7b\u578b'}</th>
-                          <th style={styles.th}>{'\u5355\u53f7/\u7c7b\u522b'}</th>
-                          <th style={styles.th}>{'\u5546\u54c1/\u8bf4\u660e'}</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u6570\u91cf'}</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u5355\u4ef7'}</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>{'\u91d1\u989d'}</th>
+                          <th style={styles.th}>{t('finance.type')}</th>
+                          <th style={styles.th}>{t('finance.invoiceOrCategory')}</th>
+                          <th style={styles.th}>{t('finance.itemOrDescription')}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.quantity')}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.unitPrice')}</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.amount')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -675,10 +817,10 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                           <React.Fragment key={`${group.type}-${group.category}-${groupIndex}`}>
                             <tr>
                               <td style={{ ...styles.td, ...styles.groupCell }} colSpan={5}>
-                                <strong>{group.typeLabel} - {group.title}</strong>
+                                <strong>{getExpenseTypeLabel(group.type)} - {getExpenseGroupTitle(group.title)}</strong>
                               </td>
                               <td style={{ ...styles.td, ...styles.groupCell, color: colors.textSecondary }}>
-                                {group.count} {'\u7b14'}
+                                {group.count} {t('finance.recordsUnit')}
                               </td>
                               <td style={{ ...styles.td, ...styles.groupCell, textAlign: 'right', fontWeight: '700', color: group.type === 'purchase' ? colors.amber : colors.danger }}>
                                 {money(group.amount)}
@@ -687,7 +829,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                             {group.details.map((expense, index) => (
                               <tr key={expense.id || `${groupIndex}-${index}`}>
                                 <td style={styles.td}>{index + 1}</td>
-                                <td style={styles.td}>{expense.typeLabel}</td>
+                                <td style={styles.td}>{getExpenseTypeLabel(expense.type)}</td>
                                 <td style={styles.td}>{expense.orderNumber || expense.category}</td>
                                 <td style={styles.td}>{expense.description}</td>
                                 <td style={{ ...styles.td, textAlign: 'right' }}>{expense.quantity !== undefined ? expense.quantity : '-'}</td>
@@ -705,7 +847,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             </>
           )}
 
-          <button onClick={handlePrint} style={styles.printBtn}>{'\u6253\u5370\u62a5\u8868'}</button>
+          <button onClick={handlePrint} style={styles.printBtn}>{t('finance.printReport')}</button>
         </div>
       )}
 

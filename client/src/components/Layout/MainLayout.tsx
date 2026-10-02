@@ -4,6 +4,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { canAccessPermission } from '../../utils/permissions';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import logo from '../../logo.svg';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey, UiLanguage } from '../../i18n/translations';
+import type { UserRole } from '../../contexts/AuthContext';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -12,85 +15,126 @@ interface MainLayoutProps {
 interface NavItem {
   path: string;
   icon: string;
-  label: string;
+  labelKey: TranslationKey;
   roles?: string[];
   children?: Array<{
     path: string;
     icon: string;
-    label: string;
+    labelKey: TranslationKey;
   }>;
 }
 
-const roleLabel: Record<string, string> = {
-  super_admin: '超级管理员',
-  store_manager: '店长',
-  cashier: '收银',
-  waiter: '服务生',
-  chef: '厨师',
+const roleLabelKey: Record<string, TranslationKey> = {
+  super_admin: 'role.superAdmin',
+  multi_store_manager: 'role.multiStoreManager',
+  store_manager: 'role.storeManager',
+  cashier: 'role.cashier',
+  waiter: 'role.waiter',
+  chef: 'role.chef',
 };
 
 const menuItems: NavItem[] = [
-  { path: '/dashboard', icon: 'DS', label: '老板仪表板', roles: ['super_admin'] },
-  { path: '/pos', icon: 'POS', label: 'POS 收银', roles: ['store_manager', 'cashier'] },
-  { path: '/waiter', icon: 'WT', label: '服务生点餐', roles: ['store_manager', 'waiter'] },
-  { path: '/kitchen', icon: 'KDS', label: '厨房显示', roles: ['store_manager', 'chef'] },
+  { path: '/dashboard', icon: 'DS', labelKey: 'nav.ownerDashboard', roles: ['super_admin'] },
+  { path: '/pos', icon: 'POS', labelKey: 'nav.pos', roles: ['store_manager', 'cashier'] },
+  { path: '/waiter', icon: 'WT', labelKey: 'nav.waiter', roles: ['store_manager', 'waiter'] },
+  { path: '/kitchen', icon: 'KDS', labelKey: 'nav.kitchen', roles: ['store_manager', 'chef'] },
   {
     path: '/inventory',
     icon: 'ST',
-    label: '库存管理',
+    labelKey: 'nav.inventory',
     roles: ['store_manager'],
     children: [
-      { path: '/inventory', icon: 'IT', label: '物品管理' },
-      { path: '/inventory/menu', icon: 'MN', label: '菜品管理' },
-      { path: '/inventory/warehouse', icon: 'WH', label: '仓库盘点' },
-      { path: '/inventory/fridge', icon: 'FR', label: '冰箱盘点' },
+      { path: '/inventory', icon: 'IT', labelKey: 'nav.inventory.items' },
+      { path: '/inventory/menu', icon: 'MN', labelKey: 'nav.inventory.menu' },
+      { path: '/inventory/purchase', icon: 'PO', labelKey: 'nav.inventory.purchase' },
+      { path: '/inventory/warehouse', icon: 'WH', labelKey: 'nav.inventory.warehouse' },
+      { path: '/inventory/fridge', icon: 'FR', labelKey: 'nav.inventory.fridge' },
     ],
   },
   {
     path: '/employees',
     icon: 'HR',
-    label: '员工管理',
+    labelKey: 'nav.employees',
     roles: ['store_manager'],
     children: [
-      { path: '/employees', icon: 'EP', label: '员工档案' },
-      { path: '/employees/attendance', icon: 'AT', label: 'Asistencia' },
-      { path: '/employees/loans', icon: 'LN', label: '借款管理' },
-      { path: '/employees/salary', icon: 'PY', label: '工资结算' },
+      { path: '/employees', icon: 'EP', labelKey: 'nav.employees.profile' },
+      { path: '/employees/attendance', icon: 'AT', labelKey: 'nav.employees.attendance' },
+      { path: '/employees/attendance-records', icon: 'AR', labelKey: 'nav.employees.attendanceRecords' },
+      { path: '/employees/loans', icon: 'LN', labelKey: 'nav.employees.loans' },
+      { path: '/employees/salary', icon: 'PY', labelKey: 'nav.employees.salary' },
     ],
   },
   {
     path: '/manager',
     icon: 'MG',
-    label: '店长管理',
+    labelKey: 'nav.manager',
     roles: ['store_manager'],
     children: [
-      { path: '/manager/expense-records', icon: 'EX', label: '开支记录' },
-      { path: '/manager/shift-handover', icon: 'SH', label: '交班对账' },
-      { path: '/manager/order-history', icon: 'OH', label: '历史订单' },
-      { path: '/manager/financial-reports', icon: 'FR', label: '财务报表' },
-      { path: '/manager', icon: 'DA', label: '数据概览' },
+      { path: '/manager/expense-records', icon: 'EX', labelKey: 'nav.manager.expenses' },
+      { path: '/manager/shift-handover', icon: 'SH', labelKey: 'nav.manager.shift' },
+      { path: '/manager/order-history', icon: 'OH', labelKey: 'nav.manager.orders' },
+      { path: '/manager/financial-reports', icon: 'FR', labelKey: 'nav.manager.finance' },
+      { path: '/manager', icon: 'DA', labelKey: 'nav.manager.overview' },
     ],
   },
-  { path: '/suppliers', icon: 'SP', label: '供应商管理', roles: ['store_manager'] },
-  { path: '/customers', icon: 'CU', label: '客户管理', roles: ['store_manager'] },
+  { path: '/suppliers', icon: 'SP', labelKey: 'nav.suppliers', roles: ['store_manager'] },
+  {
+    path: '/customers',
+    icon: 'CU',
+    labelKey: 'nav.customers',
+    roles: ['store_manager'],
+    children: [
+      { path: '/customers', icon: 'CR', labelKey: 'nav.customers.records' },
+      { path: '/customers/promotion', icon: 'RW', labelKey: 'nav.customers.promotion' },
+      { path: '/customers/promotion/settings', icon: 'PS', labelKey: 'nav.customers.promotionSettings' },
+    ],
+  },
   {
     path: '/settings',
     icon: 'SE',
-    label: '系统设置',
+    labelKey: 'nav.settings',
     roles: ['super_admin'],
     children: [
-      { path: '/settings/stores', icon: 'BR', label: '分店管理' },
-      { path: '/settings/exchange-rate', icon: 'FX', label: '汇率设置' },
-      { path: '/settings/permissions', icon: 'PM', label: '权限管理' },
-      { path: '/settings/backup', icon: 'BK', label: '数据备份' },
+      { path: '/settings/stores', icon: 'BR', labelKey: 'nav.settings.stores' },
+      { path: '/settings/exchange-rate', icon: 'FX', labelKey: 'nav.settings.exchange' },
+      { path: '/settings/permissions', icon: 'PM', labelKey: 'nav.settings.permissions' },
+      { path: '/settings/backup', icon: 'BK', labelKey: 'nav.settings.backup' },
     ],
   },
 ];
 
+export const getPermissionIdForPath = (path: string): string => {
+  if (path === '/settings') return 'settings';
+  if (path === '/settings/exchange-rate') return 'settings:exchange';
+  if (path === '/inventory') return 'inventory:items';
+  if (path === '/employees') return 'employees:profile';
+  if (path === '/manager') return 'manager:overview';
+  if (path === '/manager/expense-records') return 'manager:expenses';
+  if (path === '/manager/shift-handover') return 'manager:handover';
+  if (path === '/manager/order-history') return 'manager:orders';
+  if (path === '/manager/financial-reports') return 'manager:reports';
+  if (path === '/suppliers') return 'suppliers:manage';
+  if (path === '/customers') return 'customers:manage';
+  if (path === '/customers/promotion/settings') return 'customers:promotion-settings';
+  if (path === '/customers/promotion') return 'customers:promotion';
+  return path.replace('/', '').replace('/', ':');
+};
+
+export const getAccessibleMenuItems = (role: UserRole): NavItem[] => menuItems.flatMap(item => {
+  const children = item.children?.filter(child =>
+    canAccessPermission(role, getPermissionIdForPath(child.path))
+  );
+  const canOpenParent = canAccessPermission(role, getPermissionIdForPath(item.path));
+  return canOpenParent || (children && children.length > 0)
+    ? [{ ...item, children }]
+    : [];
+});
+
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, switchStore } = useAuth();
+  const { language, setLanguage, t } = useI18n();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showFullscreenMenu, setShowFullscreenMenu] = useState(false);
   const [isNarrowViewport, setIsNarrowViewport] = useState(false);
@@ -103,22 +147,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return () => media.removeEventListener('change', update);
   }, []);
 
-  const filteredMenuItems = user ? menuItems.filter(item => {
-    const permissionId = item.path === '/settings'
-      ? 'settings'
-      : item.path === '/inventory'
-        ? 'inventory:items'
-        : item.path === '/employees'
-          ? 'employees:profile'
-          : item.path === '/manager'
-            ? 'manager:overview'
-            : item.path === '/suppliers'
-              ? 'suppliers:manage'
-              : item.path === '/customers'
-                ? 'customers:manage'
-                : item.path.replace('/', '').replace('/', ':');
-    return canAccessPermission(user.role, permissionId);
-  }) : [];
+  const filteredMenuItems = user ? getAccessibleMenuItems(user.role) : [];
+
+  const getMenuTargetPath = (item: NavItem): string => {
+    if (user && canAccessPermission(user.role, getPermissionIdForPath(item.path))) {
+      return item.path;
+    }
+    return item.children?.[0]?.path || item.path;
+  };
 
   const shouldHideSidebar = location.pathname === '/pos' || location.pathname === '/kitchen' || location.pathname === '/waiter';
   const shouldUseFullscreenMenu = shouldHideSidebar || isNarrowViewport;
@@ -187,7 +223,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             alignItems: 'center',
             justifyContent: 'center',
           }}
-          title="切换功能菜单"
+          title={t('layout.switchMenu')}
         >
           ☰
         </button>
@@ -224,7 +260,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.05rem', color: colors.textPrimary }}>功能菜单</h2>
+                <h2 style={{ margin: 0, fontSize: '1.05rem', color: colors.textPrimary }}>{t('layout.menu')}</h2>
                 <div style={{ color: colors.textSecondary, fontSize: font.caption, marginTop: '0.25rem' }}>
                   {user?.storeName || 'Restaurant POS'}
                 </div>
@@ -241,7 +277,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   color: colors.textSecondary,
                   fontSize: '1.15rem',
                 }}
-                aria-label="关闭"
+                aria-label={t('layout.close')}
               >
                 ×
               </button>
@@ -253,7 +289,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 return (
                   <button
                     key={item.path}
-                    onClick={() => navigateAndClose(item.path)}
+                    onClick={() => navigateAndClose(getMenuTargetPath(item))}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -270,7 +306,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     }}
                   >
                     {renderIcon(item.icon, isActive)}
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </button>
                 );
               })}
@@ -294,7 +330,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   cursor: 'pointer',
                 }}
               >
-                退出登录
+                {t('layout.logout')}
               </button>
             </div>
           </div>
@@ -330,7 +366,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     height: '2.45rem',
                     borderRadius: radii.md,
                   }}
-                  title={isNarrowViewport ? '打开菜单' : sidebarCollapsed ? '展开菜单' : '收起菜单'}
+                  title={isNarrowViewport ? t('layout.openMenu') : sidebarCollapsed ? t('layout.expandMenu') : t('layout.collapseMenu')}
                 >
                   {isNarrowViewport ? '☰' : sidebarCollapsed ? '→' : '←'}
                 </button>
@@ -366,11 +402,63 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+              {!isNarrowViewport && (
+                <select
+                  aria-label={t('language.label')}
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value as UiLanguage)}
+                  style={{
+                    height: '2.45rem',
+                    padding: '0 0.55rem',
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: radii.md,
+                    background: colors.surface,
+                    color: colors.textPrimary,
+                    fontSize: font.caption,
+                    fontWeight: 650,
+                  }}
+                >
+                  <option value="zh-CN">中文</option>
+                  <option value="es-NI">Español</option>
+                </select>
+              )}
+              {user?.role === 'multi_store_manager' && user.assignedStores && user.assignedStores.length > 0 && (
+                <select
+                  aria-label={t('layout.selectStore')}
+                  value={user.storeId || ''}
+                  onChange={(event) => {
+                    const target = user.assignedStores?.find(store => store.id === event.target.value);
+                    if (!target || target.id === user.storeId) return;
+                    try {
+                      switchStore(target.id, target.name);
+                      window.location.assign(location.pathname || '/manager');
+                    } catch (error) {
+                      alert(error instanceof Error ? error.message : t('layout.switchStoreError'));
+                    }
+                  }}
+                  style={{
+                    minWidth: isNarrowViewport ? '7.5rem' : '11rem',
+                    maxWidth: isNarrowViewport ? '9rem' : '15rem',
+                    height: '2.45rem',
+                    padding: '0 0.65rem',
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: radii.md,
+                    background: colors.surface,
+                    color: colors.textPrimary,
+                    fontSize: font.caption,
+                    fontWeight: 650,
+                  }}
+                >
+                  {user.assignedStores.map(store => (
+                    <option key={store.id} value={store.id}>{store.name}</option>
+                  ))}
+                </select>
+              )}
               {user && (
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: font.body, fontWeight: 700, color: colors.textPrimary }}>{user.username}</div>
                   <div style={{ fontSize: font.caption, color: colors.textSecondary }}>
-                    {roleLabel[user.role] || user.role}
+                    {roleLabelKey[user.role] ? t(roleLabelKey[user.role]) : user.role}
                   </div>
                 </div>
               )}
@@ -387,7 +475,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   backgroundColor: '#fff7f7',
                 }}
               >
-                退出
+                {t('layout.exit')}
               </button>
             </div>
           </div>
@@ -414,8 +502,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 return (
                   <div key={item.path} style={{ marginBottom: '0.35rem' }}>
                     <button
-                      onClick={() => navigate(item.path)}
-                      title={sidebarCollapsed ? item.label : ''}
+                      onClick={() => navigate(getMenuTargetPath(item))}
+                      title={sidebarCollapsed ? t(item.labelKey) : ''}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -435,7 +523,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                       }}
                     >
                       {renderIcon(item.icon, isActive)}
-                      {!sidebarCollapsed && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>}
+                      {!sidebarCollapsed && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(item.labelKey)}</span>}
                     </button>
 
                     {!sidebarCollapsed && item.children && (
@@ -463,7 +551,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                               }}
                             >
                               <span style={{ fontSize: '0.68rem', fontWeight: 800 }}>{child.icon}</span>
-                              <span>{child.label}</span>
+                              <span>{t(child.labelKey)}</span>
                             </button>
                           );
                         })}

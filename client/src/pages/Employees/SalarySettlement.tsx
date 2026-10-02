@@ -4,7 +4,16 @@ import { getLocalDateString } from '../../utils/exchangeRate'; // 濠碘槅鍋�
 import { smartAddDocument, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
 import { getSingleSalaryDefaultPeriod } from '../../utils/employeeRecords';
+import {
+  calculatePeriodBaseSalary,
+  calculateLoanSettlement,
+  getSettledSalaryRecordsForRange,
+  getDailySalaryForDate,
+  resolveMonthlySalary,
+  roundSalaryAmount,
+} from '../../utils/employeeSalary';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface Employee {
   id: string;
@@ -15,6 +24,7 @@ interface Employee {
   hireDate: string;
   status: 'active' | 'inactive';
   dailyRate: number;
+  monthlySalary?: number;
   overtimeRate: number;
 }
 
@@ -35,6 +45,8 @@ interface AttendanceRecord {
 interface SalaryRecord {
   id: string;
   employeeId: string;
+  employeeName?: string;
+  employeePosition?: string;
   month: string;
   startDate: string;
   endDate: string;
@@ -105,6 +117,18 @@ interface SalarySettlementProps {
   setCashFlowRecords: React.Dispatch<React.SetStateAction<CashFlowRecord[]>>;
 }
 
+interface SalaryPreviewItem {
+  employee: Employee;
+  salaryRecord: SalaryRecord;
+}
+
+interface SalarySettlementPreview {
+  mode: 'single' | 'batch';
+  items: SalaryPreviewItem[];
+}
+
+const formatSalaryAmount = (value: number): string => roundSalaryAmount(value).toFixed(0);
+
 const SalarySettlement: React.FC<SalarySettlementProps> = ({
   employees,
   attendanceRecords,
@@ -117,6 +141,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   cashFlowRecords,
   setCashFlowRecords,
 }) => {
+  const { t } = useI18n();
   const [settlementMode, setSettlementMode] = useState<'single' | 'batch'>('single');
   const [salaryHistoryStartDate, setSalaryHistoryStartDate] = useState(getLocalDateString(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000)));
   const [salaryHistoryEndDate, setSalaryHistoryEndDate] = useState(getLocalDateString());
@@ -131,6 +156,8 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   const [dynamicBenefits, setDynamicBenefits] = useState<Record<string, number>>({});
   const [dynamicSubsidy, setDynamicSubsidy] = useState<Record<string, number>>({});
   const [dynamicSocialSecurity, setDynamicSocialSecurity] = useState<Record<string, number>>({});
+  const [settlementPreview, setSettlementPreview] = useState<SalarySettlementPreview | null>(null);
+  const [isConfirmingSettlement, setIsConfirmingSettlement] = useState(false);
 
 
 
@@ -215,8 +242,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     const leaveDays = attendances.filter(r => r.status === 'leave').length;
     
     // 闂佽姘﹂～澶愬箖閸洖纾块柟娈垮枤缁€濠囨煛閸愩劎澧曠紒顐㈢Ч閺屾洘寰勯崼婵嗩瀴闂?= 闂傚倷绀侀幖顐﹀疮閵娾晛纾块柟缁㈠枛閽?闂?(婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨鏇氶檷娴滆銇勯弮鍥棄缂佸墎鍋ら弻宥夊传閸曨偀鍋撻悷鎵虫灁?+ 婵犵數鍋炲娆撳触鐎ｎ喖鍨傞柤鎼佹涧椤曢亶鏌涘☉鍗炴灈缂佸墎鍋ら弻宥夊传閸曨偀鍋撻悷鎵虫灁?
-    const paidDays = workDays + restDays;
-    const basePay = employee.dailyRate * paidDays;
+    const basePay = calculatePeriodBaseSalary(employee, attendances, startDate, endDate);
     
     let overtimeHours = 0;
     attendances.filter(r => r.status === 'normal').forEach(r => {
@@ -225,16 +251,16 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       }
     });
     
-    const overtimePay = overtimeHours * employee.overtimeRate;
+    const overtimePay = roundSalaryAmount(overtimeHours * employee.overtimeRate);
 
     // 婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎殿噮鍋婃俊鑸靛緞婵犲嫷妲烽梻渚€娼ч…顓㈡嚈瑜版帒纾婚柟鎯х摠婵挳鏌ｉ敐鍛伇闁绘劖娲熷铏圭矙鐠恒劎鐤勯梺绋块閸熷潡鍩㈤幘璇茬闁绘鏁搁悞鍧楁椤愩垺澶勯柟鍛婃倐閹偛煤椤忓懐鍘梺绯曞墲濞叉绮婃导瀛樺癄闁绘柨鍚嬮崑锝夋煙闁箑骞楃紓宥嗗灴閺岀喖鏌ㄧ€ｎ亶妫嗙紓渚囧枛閻楁挸鐣烽敐澶娢ㄧ憸蹇涱敊?
-    const benefits = monthBenefits !== undefined ? monthBenefits : 0;
-    const subsidy = monthSubsidy !== undefined ? monthSubsidy : 0;
+    const benefits = roundSalaryAmount(monthBenefits !== undefined ? monthBenefits : 0);
+    const subsidy = roundSalaryAmount(monthSubsidy !== undefined ? monthSubsidy : 0);
 
     // 缂傚倸鍊风拋鏌ュ磻閹剧粯鐓曟繛鍡楃Т閸斻倗绱掗悩杈╃煓闁哄被鍔岄埥澶娾枎閹烘埈妫熸俊鐐€愰弫顏堝炊瑜嶉崵鎴濃攽閻樿宸ラ悗姘煎墴璺〒姘ｅ亾闁哄本鐩顒傛嫚閹绘帩娼婄紓鍌欑窔椤ゅ倿宕ｉ崘銊ф殾婵°倕鎳庡敮闂侀潧鐗嗗ú銈夊疾閳哄懏鈷戦柛娑橈工缁楁岸鏌ｉ悢鏉戔偓鏍崲濞戙垹鐐婃い鎺嶇娴犳椽姊洪棃娑辩劸闁告柨娴风槐娆愮節濮橆厾鍘遍棅顐㈡搐椤戝懘宕濆鑸电厓鐟滄粓宕滃☉銏犖ラ悗锝庡墯椤洘绻濋棃娑卞剰閻熸瑱绠撻弻銊╁即濡も偓娴滈箖姊洪崜鑼帥闁搞劏娉涢锝夋偩鐏炴儳鏋傞梺鍛婃处閸嬪棝濡堕敃鍌涒拺闁告稑锕﹂幊鍕煕閵娿儯鍋㈢€殿喖顭峰畷鎺戭煥閸涱厽娈梺鑽ゅТ濞测晝浜稿▎鎾崇劦妞ゆ帒鍊搁崢瀵糕偓瑙勬礃閿曘垹鐣峰鈧幊鐘活敆娴ｅ湱妲?
     let socialSecurityEmployee = 0;
     if (monthSocialSecurity !== undefined) {
-      socialSecurityEmployee = monthSocialSecurity;
+      socialSecurityEmployee = roundSalaryAmount(monthSocialSecurity);
     } else if (periodType === 'second_half') {
       // 婵犵數鍋為崹鍫曞箰閹间緡鏁勯柛娑卞幘閺嗭箓鏌熼悧鍫熺凡閻庢艾顦甸弻娑㈩敃閿濆洨鐓傞梺鑽ゅ櫏閸撶喖寮婚敓鐘查唶妞ゆ劧绱曢崙瑙勭節閳封偓閸曨厾鐓夐悗瑙勬礃缁诲牊淇婇幖浣肝╃憸蹇涙倷閺囥垺鈷戠紒瀣硶缁犵偤鏌涙惔銈呭惞婵″弶鍔曢埞鎴﹀炊閼稿吀绮繝纰樻閸ㄩ亶顢栧▎鎾宠Е闁搞儜鈧Σ?闂傚倷鐒︾€笛呯矙閹达附鍋嬮柛鈩冾樅閸濆嫷鐓ラ柛鏇ㄥ幐閺嬫牠姊洪崨濠勭畵閻庢凹鍙冨畷浼村川椤栨浜鹃悷娆忓閸嬬娀鏌涙惔銏㈠弨濠碘剝鎸冲畷鎺戭潩閸忚偐顩梻浣稿閸嬪懐鍒掕箛娑樺偍妞ゆ帒鍊甸崑鎾舵喆閸曨厽鎲欓柣蹇撶箲閻熴倗鑺卞ú顏呪拻闁稿本鑹鹃銉╂煕婵炑冩噺椤?
       socialSecurityEmployee = 0;
@@ -248,8 +274,8 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     // 闂傚倷绀侀崥瀣磿閹惰棄搴婇柤鑹扮堪娴滃綊鏌涢妷顔煎缂佲偓閸儲鐓冮悶娑掆偓鍏呭缂傚倸鍊哥粔鐢稿垂閸喚鏆﹂柟鎵閸嬪嫰鏌涢幘鏉戠祷闁?
     const remainingLoan = getRemainingLoan(employee.id);
     // 闂傚倷鑳堕…鍫ユ晝閿曞倸绐楅柟浼村亰閺佸嫭绻涢崱妯诲碍缂佺姰鍎甸弻銊モ攽閸♀晜效闂佺粯绻勯崰鏍蓟閿熺姴閱囨慨姗嗗厸婢规洖鈹戦悩顔肩伇闁糕晜鐗犻幆宀勵敊閻愵剙顏搁梺缁樻煥椤ㄥ酣宕崨瀛樼厪濠㈣泛鐗嗘俊鍧楁煏閸偄浜伴柡?0%
-    const maxLoanDeduction = basePay * 0.3;
-    const loanRepayment = Math.min(remainingLoan, maxLoanDeduction);
+    const payableBeforeLoan = basePay + overtimePay + benefits + subsidy - socialSecurity.employee;
+    const loanRepayment = calculateLoanSettlement(remainingLoan, payableBeforeLoan);
 
     // 闂備浇顕ф绋匡耿闁秴纾婚柕鍫濇媼閻庤埖銇勯弽顐粶缂佲偓閸℃稒鐓熸俊銈傚亾闁绘妫濊矾濞达綀銆€閸嬫挾鎲撮崟顒€浠╅梺绋块椤曨厾鍒?= 闂佽姘﹂～澶愬箖閸洖纾块柟娈垮枤缁€濠囨煛閸愩劎澧曠紒顐㈢Ч閺屾洘寰勯崼婵嗩瀴闂?+ 闂傚倷绀侀幉鈥愁潖缂佹ɑ鍙忛柣銈庡灛娴滆銇勯弮鍌氫壕閻?+ 缂傚倸鍊风粈渚€宕愰崫銉﹀床闁圭増婢橀弰?+ 闂備浇宕甸崑鐐电矙韫囨稑纾块柟缁㈠枛缁€?- 闂傚倷鑳堕…鍫ユ晝閿曞倸绐楅柟浼村亰閺佸嫭绻涢崱妯诲碍缂佺姰鍎甸弻銊モ攽閸♀晜效闂?- 缂傚倸鍊风拋鏌ュ磻閹剧粯鐓曟繛鍡楃Т閸斻倗绱?
     const grossSalary = basePay + overtimePay + benefits + subsidy;
@@ -259,21 +285,23 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     return {
       id: getSalaryRecordId(employee.id, startDate, endDate),
       employeeId: employee.id,
+      employeeName: employee.name,
+      employeePosition: employee.position,
       month: startDate.slice(0, 7),
       startDate,
       endDate,
       periodType,
       baseSalary: basePay,
       overtimeHours,
-      overtimePay: Math.round(overtimePay * 100) / 100,
+      overtimePay,
       benefits,
       subsidy,
       socialSecurityEmployee: socialSecurity.employee,
       socialSecurityCompany: socialSecurity.company,
       loanAmount: remainingLoan,
-      loanRepayment: Math.round(loanRepayment * 100) / 100,
-      remainingLoan: Math.round((remainingLoan - loanRepayment) * 100) / 100,
-      actualSalary: Math.round(actualSalary * 100) / 100,
+      loanRepayment,
+      remainingLoan: Math.max(0, roundSalaryAmount(remainingLoan - loanRepayment)),
+      actualSalary: Math.max(0, roundSalaryAmount(actualSalary)),
       paidDate: getLocalDateString(),
       status: 'paid',
       notes: `Total ${totalDays} days | Work ${workDays} | Rest ${restDays} | Absent ${absentDays} | Leave ${leaveDays}`,
@@ -281,27 +309,70 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   };
 
   // 婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪炊瑜忛、鍛存⒑閸濆嫭澶勭€光偓閹间礁鍚归悗锝庡枟閻撴洘绻涢幋鐑嗕痪妞ゅ繐鎳庨閬嶆煙闁箑鏋ょ痪鎯с偢閺岀喖骞嗚椤ｆ娊鏌?
+  const hasExistingSalary = (employeeId: string, startDate: string, endDate: string) =>
+    salaryRecords.some(record =>
+      record.employeeId === employeeId &&
+      record.startDate === startDate &&
+      record.endDate === endDate
+    );
+
+  const buildSalaryPreviewItem = (
+    employee: Employee,
+    startDate: string,
+    endDate: string
+  ): SalaryPreviewItem => {
+    const startDay = Number(startDate.slice(8, 10));
+    const periodType: 'first_half' | 'second_half' = startDay <= 15 ? 'first_half' : 'second_half';
+    return {
+      employee,
+      salaryRecord: calculateSalary(
+        employee,
+        startDate,
+        endDate,
+        periodType,
+        dynamicBenefits[employee.id] || 0,
+        dynamicSubsidy[employee.id] || 0,
+        dynamicSocialSecurity[employee.id] || 0
+      ),
+    };
+  };
+
+  const openSingleSettlementPreview = (employeeId: string, period: string) => {
+    const employee = employees.find(item => item.id === employeeId);
+    if (!employee) return;
+
+    const [startDate, endDate] = period.split('_');
+    if (!startDate || !endDate || startDate > endDate) {
+      alert(t('salary.alert.invalidDate'));
+      return;
+    }
+    if (hasExistingSalary(employeeId, startDate, endDate)) {
+      alert(`${t('salary.alert.alreadyClosedPrefix')} ${startDate} - ${endDate}${t('salary.alert.alreadyClosedSuffix')}`);
+      return;
+    }
+
+    setSettlementPreview({
+      mode: 'single',
+      items: [buildSalaryPreviewItem(employee, startDate, endDate)],
+    });
+  };
+
   const handleSingleSettlement = async (employeeId: string, period: string, options: { showSlip?: boolean } = {}): Promise<SalaryRecord | null> => {
     const employee = employees.find(e => e.id === employeeId);
     if (!employee) return null;
 
     const [startDate, endDate] = period.split('_');
     if (!startDate || !endDate) {
-      alert('Formato de fecha invalido');
+      alert(t('salary.alert.invalidDate'));
       return null;
     }
 
-    const existingSalary = salaryRecords.find(record =>
-      record.employeeId === employeeId &&
-      record.startDate === startDate &&
-      record.endDate === endDate
-    );
-    if (existingSalary) {
-      alert(`Este empleado ya tiene salario cerrado entre ${startDate} y ${endDate}`);
+    if (hasExistingSalary(employeeId, startDate, endDate)) {
+      alert(`${t('salary.alert.alreadyClosedPrefix')} ${startDate} - ${endDate}${t('salary.alert.alreadyClosedSuffix')}`);
       return null;
     }
 
-    const startDay = new Date(startDate).getDate();
+    const startDay = Number(startDate.slice(8, 10));
     const periodType: 'first_half' | 'second_half' = startDay <= 15 ? 'first_half' : 'second_half';
 
     // 闂傚倷绀侀崥瀣磿閹惰棄搴婇柤鑹扮堪娴滃綊鏌涢妷顔煎缂佲偓婢舵劖鐓忓┑鐘茬箺閸氬倿鏌涚€ｎ偅灏伴柟宄版嚇閹儳鐣濋埀顒勬倷閺囥垺鈷戠紒瀣硶缁犵偤鏌涙惔鈥虫毐闁崇粯鎹囬獮瀣偐閻㈢數鍔归梻濠庡亜濞诧箓骞愰幖浣瑰€挎繛宸簼閻撳繘鏌涢埄鍐╃缂佷椒鍗抽幐濠囨偄閸忕厧浠梺褰掑亰閸樼晫绱為幋锔界厵闂佸灝顑呴ˉ瀣磼椤旇偐澧︾€规洩缍佹俊鐤槾妞?
@@ -312,9 +383,15 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     const salaryRecord = calculateSalary(employee, startDate, endDate, periodType, monthBenefits, monthSubsidy, monthSocialSecurity);
     
     // 婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪炊瑜忛敍娆撴⒑缂佹ɑ鐓ュ鐟帮躬瀹曟洟濡烽埡鍌滃幍缂佺偓婢橀ˇ杈╃矓椤旂晫绠?
-    const activeLoans = getActiveLoansForEmployee(employeeId);
+    const activeLoans = getActiveLoansForEmployee(employeeId)
+      .slice()
+      .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.id).localeCompare(String(b.id)));
 
-    const maxDeduction = salaryRecord.baseSalary * 0.3;
+    const grossSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy;
+    const maxDeduction = calculateLoanSettlement(
+      activeLoans.reduce((sum, loan) => sum + loan.remainingAmount, 0),
+      grossSalary - salaryRecord.socialSecurityEmployee
+    );
     let totalDeduction = 0;
     const loansToDeduct: Array<{ loanId: string; amount: number }> = [];
 
@@ -343,8 +420,8 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
 
     // 闂傚倷绀侀幖顐⒚洪妶澶嬪仱闁靛ň鏅涢拑鐔封攽閻樺弶澶勯悗鍨戦妵鍕疀閹炬潙绐涢梺闈涚墱閸嬪﹪骞冪憴鍕閻熸瑥瀚崙锛勭磽?
     salaryRecord.loanRepayment = totalDeduction;
-    salaryRecord.remainingLoan = activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0) - totalDeduction;
-    salaryRecord.actualSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy - salaryRecord.socialSecurityEmployee - totalDeduction;
+    salaryRecord.remainingLoan = Math.max(0, roundSalaryAmount(activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0) - totalDeduction));
+    salaryRecord.actualSalary = Math.max(0, roundSalaryAmount(grossSalary - salaryRecord.socialSecurityEmployee - totalDeduction));
     
 
     // 濠碘槅鍋撶徊浠嬪疮椤栫偛鏋?闂傚倷绀侀幉锟犳嚌妤ｅ啫瀚夋い鎺戝閺佸棝鏌ｉ幇顒佹儓缂佲偓閸℃绠鹃柟瀵稿剱閻掔晫绱掗幉瀣洭闁逞屽墯椤旀牠宕伴幒妤€纾婚柟鍓х帛閻撴盯鏌嶈閸撶喖銆佸☉妯锋斀闁归偊鍓氶弳顏堟煟閻斿摜鐭屽褎顨呯叅闁冲搫鍟～鏇熺箾閸℃ê濮夋い鈺冨厴楠炴牕菐椤掆偓閳ь剚鐗犲畷鏇熷緞婵炵偓顫嶉梺鍦亾濞兼瑩宕悜妯镐簻闁靛牆鎳庨埀顒€娼￠悰顔碱吋婢跺娅滄繝銏ｆ硾椤戝洩銇愰幋锔解拺? 婵犵數鍋犻幓顏嗙礊閳ь剚绻涙径瀣鐎?dataManager
@@ -356,6 +433,9 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       categoryId: 'employee_salary',
       categoryName: 'Employee Salary',
       amount: salaryRecord.actualSalary,
+      profitAmount: salaryRecord.actualSalary + totalDeduction,
+      cashAmount: salaryRecord.actualSalary,
+      loanRepayment: totalDeduction,
       description: `Salary settlement - ${employee.name} (${salaryRecord.startDate} - ${salaryRecord.endDate})`,
       employeeId: employee.id,
       employeeName: employee.name,
@@ -386,7 +466,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       }
     } catch (error) {
       console.error('Failed to save salary settlement:', error);
-      alert('No se pudo guardar el cierre de salario. Revise la red e intente otra vez');
+      alert(t('salary.alert.saveFailed'));
       return null;
     }
 
@@ -404,47 +484,90 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   };
 
   // 闂傚倷绀佺紞濠傤焽瑜忕槐鐐寸節閸パ囨７闂佹儳绻愬﹢杈╁婵傚憡鐓欓柟顖嗗喚鏆㈤梺?
-  const handleBatchSettlement = async () => {
-    const { startDate, endDate, periodType } = batchPeriod;
+  const openBatchSettlementPreview = () => {
+    const { startDate, endDate } = batchPeriod;
 
-    if (!startDate || !endDate) {
-                        alert('Seleccione el rango de fechas');
+    if (!startDate || !endDate || startDate > endDate) {
+      alert(t('salary.alert.invalidDate'));
       return;
     }
 
     const activeEmployees = employees.filter(e => e.status === 'active');
     if (activeEmployees.length === 0) {
-      alert('No hay empleados activos');
+      alert(t('salary.alert.noActiveEmployees'));
       return;
     }
 
-    const periodLabel = periodType === 'first_half' ? 'Primera quincena' : 'Segunda quincena';
-    const confirmMessage =
-      'Confirmar cierre de salario para ' + activeEmployees.length + ' empleados?' +
-      '\n\nPeriodo: ' + startDate + ' - ' + endDate +
-      '\nTipo: ' + periodLabel;
-    if (!window.confirm(confirmMessage)) {
+    const unsettledEmployees = activeEmployees.filter(employee =>
+      !hasExistingSalary(employee.id, startDate, endDate)
+    );
+    if (unsettledEmployees.length === 0) {
+      alert(`${t('salary.alert.alreadyClosedPrefix')} ${startDate} - ${endDate}${t('salary.alert.alreadyClosedSuffix')}`);
       return;
     }
 
+    setSettlementPreview({
+      mode: 'batch',
+      items: unsettledEmployees.map(employee => buildSalaryPreviewItem(employee, startDate, endDate)),
+    });
+  };
+
+  const confirmSettlementPreview = async () => {
+    if (!settlementPreview || isConfirmingSettlement) return;
+
+    const preview = settlementPreview;
+    setIsConfirmingSettlement(true);
     let successCount = 0;
-    for (const emp of activeEmployees) {
-      try {
-        const period = startDate + '_' + endDate;
-        const result = await handleSingleSettlement(emp.id, period, { showSlip: false });
-        if (result) successCount++;
-      } catch (error) {
-        console.error('Salary settlement failed for ' + emp.name, error);
+    let singleResult: SalaryRecord | null = null;
+    try {
+      for (const item of preview.items) {
+        try {
+          const period = `${item.salaryRecord.startDate}_${item.salaryRecord.endDate}`;
+          const result = await handleSingleSettlement(item.employee.id, period, { showSlip: false });
+          if (result) {
+            successCount++;
+            singleResult = result;
+          }
+        } catch (error) {
+          console.error('Salary settlement failed for ' + item.employee.name, error);
+        }
       }
-    }
 
-    alert('Cierre de salario terminado.\n\nExitosos: ' + successCount);
+      if (successCount > 0) {
+        setSettlementPreview(null);
+        if (preview.mode === 'single' && singleResult) {
+          showSalarySlip(singleResult, preview.items[0].employee);
+        } else {
+          alert(t('salary.alert.batchComplete') + '\n\n' + t('salary.alert.successCount') + ': ' + successCount);
+        }
+      }
+    } finally {
+      setIsConfirmingSettlement(false);
+    }
+  };
+
+  const resolveSalaryEmployee = (salaryRecord: SalaryRecord): Employee => {
+    const currentEmployee = employees.find(employee => employee.id === salaryRecord.employeeId);
+    if (currentEmployee) return currentEmployee;
+
+    return {
+      id: salaryRecord.employeeId,
+      name: salaryRecord.employeeName || `Empleado ${salaryRecord.employeeId}`,
+      phone: '',
+      position: salaryRecord.employeePosition || '-',
+      department: '',
+      hireDate: '',
+      status: 'inactive',
+      dailyRate: 0,
+      monthlySalary: 0,
+      overtimeRate: 0,
+    };
   };
 
   const printSalarySlip = (salaryRecord: SalaryRecord, employee: Employee) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('Permita ventanas emergentes para imprimir');
+      alert(t('salary.alert.allowPopup'));
       return;
     }
 
@@ -486,21 +609,21 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
         <h3>Ingresos</h3>
         <table>
           <tr><th>Concepto</th><th class="amount">Monto (C$)</th></tr>
-          <tr><td>Salario base</td><td class="amount">${salaryRecord.baseSalary.toFixed(2)}</td></tr>
-          <tr><td>Horas extra (${salaryRecord.overtimeHours.toFixed(1)}h)</td><td class="amount">${salaryRecord.overtimePay.toFixed(2)}</td></tr>
-          <tr><td>Beneficios</td><td class="amount">${salaryRecord.benefits.toFixed(2)}</td></tr>
-          <tr><td>Subsidio</td><td class="amount">${salaryRecord.subsidy.toFixed(2)}</td></tr>
-          <tr class="total-row"><td>Total ingresos</td><td class="amount">${grossSalary.toFixed(2)}</td></tr>
+          <tr><td>Salario base</td><td class="amount">${formatSalaryAmount(salaryRecord.baseSalary)}</td></tr>
+          <tr><td>Horas extra (${salaryRecord.overtimeHours.toFixed(1)}h)</td><td class="amount">${formatSalaryAmount(salaryRecord.overtimePay)}</td></tr>
+          <tr><td>Beneficios</td><td class="amount">${formatSalaryAmount(salaryRecord.benefits)}</td></tr>
+          <tr><td>Subsidio</td><td class="amount">${formatSalaryAmount(salaryRecord.subsidy)}</td></tr>
+          <tr class="total-row"><td>Total ingresos</td><td class="amount">${formatSalaryAmount(grossSalary)}</td></tr>
         </table>
         <h3>Deducciones</h3>
         <table>
           <tr><th>Concepto</th><th class="amount">Monto (C$)</th></tr>
-          <tr><td>Seguro social</td><td class="amount">${salaryRecord.socialSecurityEmployee.toFixed(2)}</td></tr>
-          <tr><td>Deduccion prestamo</td><td class="amount">${salaryRecord.loanRepayment.toFixed(2)}</td></tr>
-          <tr class="total-row"><td>Total deducciones</td><td class="amount">${totalDeductions.toFixed(2)}</td></tr>
+          <tr><td>Seguro social</td><td class="amount">${formatSalaryAmount(salaryRecord.socialSecurityEmployee)}</td></tr>
+          <tr><td>Deduccion prestamo</td><td class="amount">${formatSalaryAmount(salaryRecord.loanRepayment)}</td></tr>
+          <tr class="total-row"><td>Total deducciones</td><td class="amount">${formatSalaryAmount(totalDeductions)}</td></tr>
         </table>
         <h3>Neto a pagar</h3>
-        <table><tr class="total-row" style="font-size: 18px;"><td>Salario neto</td><td class="amount" style="color: #10b981;">C$ ${salaryRecord.actualSalary.toFixed(2)}</td></tr></table>
+        <table><tr class="total-row" style="font-size: 18px;"><td>Salario neto</td><td class="amount" style="color: #10b981;">C$ ${formatSalaryAmount(salaryRecord.actualSalary)}</td></tr></table>
         <div class="signature">
           <div class="signature-item"><div>Firma empleado</div><div class="signature-line"></div></div>
           <div class="signature-item"><div>Revision</div><div class="signature-line"></div></div>
@@ -520,14 +643,14 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
   const showSalarySlip = (salaryRecord: SalaryRecord, employee: Employee) => {
     const grossSalary = salaryRecord.baseSalary + salaryRecord.overtimePay + salaryRecord.benefits + salaryRecord.subsidy;
     const result = window.confirm(
-      `Cierre de salario terminado.\n\n` +
-      `Empleado: ${employee.name}\n` +
-      `Periodo: ${salaryRecord.startDate} - ${salaryRecord.endDate}\n\n` +
-      `Ingresos: C$ ${grossSalary.toFixed(2)}\n` +
-      `Seguro social: C$ ${salaryRecord.socialSecurityEmployee.toFixed(2)}\n` +
-      `Deduccion prestamo: C$ ${salaryRecord.loanRepayment.toFixed(2)}\n\n` +
-      `Neto a pagar: C$ ${salaryRecord.actualSalary.toFixed(2)}\n\n` +
-      `Desea imprimir el comprobante?`
+      `${t('salary.dialog.complete')}\n\n` +
+      `${t('salary.employee')}: ${employee.name}\n` +
+      `${t('salary.period')}: ${salaryRecord.startDate} - ${salaryRecord.endDate}\n\n` +
+      `${t('salary.dialog.income')}: C$ ${formatSalaryAmount(grossSalary)}\n` +
+      `${t('salary.socialSecurity')}: C$ ${formatSalaryAmount(salaryRecord.socialSecurityEmployee)}\n` +
+      `${t('salary.dialog.loanDeduction')}: C$ ${formatSalaryAmount(salaryRecord.loanRepayment)}\n\n` +
+      `${t('salary.dialog.netPay')}: C$ ${formatSalaryAmount(salaryRecord.actualSalary)}\n\n` +
+      t('salary.dialog.printQuestion')
     );
 
     if (result) {
@@ -535,10 +658,10 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     }
   };
 
-  const printBatchSummary = (records: SalaryRecord[]) => {
+  const printBatchSummary = (records: SalaryRecord[], startDate: string, endDate: string) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('Permita ventanas emergentes para imprimir');
+      alert(t('salary.alert.allowPopup'));
       return;
     }
 
@@ -571,7 +694,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       <body>
         <div class="header">
           <div class="title">Resumen de salarios</div>
-          <div class="period">${records[0]?.startDate || ''} - ${records[0]?.endDate || ''}</div>
+          <div class="period">${startDate} - ${endDate}</div>
         </div>
         <table>
           <thead>
@@ -581,20 +704,20 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
           </thead>
           <tbody>
             ${records.map(record => {
-              const emp = employees.find(e => e.id === record.employeeId);
+               const emp = resolveSalaryEmployee(record);
               return `<tr>
-                <td>${emp?.name || '-'}</td>
-                <td>${emp?.position || '-'}</td>
-                <td class="amount">${record.baseSalary.toFixed(2)}</td>
-                <td class="amount">${record.overtimePay.toFixed(2)}</td>
-                <td class="amount">${record.benefits.toFixed(2)}</td>
-                <td class="amount">${record.subsidy.toFixed(2)}</td>
-                <td class="amount">${record.socialSecurityEmployee.toFixed(2)}</td>
-                <td class="amount">${record.loanRepayment.toFixed(2)}</td>
-                <td class="amount">${record.actualSalary.toFixed(2)}</td>
+                 <td>${emp.name}</td>
+                 <td>${emp.position}</td>
+                 <td class="amount">${formatSalaryAmount(record.baseSalary)}</td>
+                 <td class="amount">${formatSalaryAmount(record.overtimePay)}</td>
+                 <td class="amount">${formatSalaryAmount(record.benefits)}</td>
+                 <td class="amount">${formatSalaryAmount(record.subsidy)}</td>
+                 <td class="amount">${formatSalaryAmount(record.socialSecurityEmployee)}</td>
+                 <td class="amount">${formatSalaryAmount(record.loanRepayment)}</td>
+                 <td class="amount">${formatSalaryAmount(record.actualSalary)}</td>
               </tr>`;
             }).join('')}
-            <tr class="total-row"><td colspan="2">Total</td><td class="amount">${totalBaseSalary.toFixed(2)}</td><td class="amount">${totalOvertimePay.toFixed(2)}</td><td class="amount">${totalBenefits.toFixed(2)}</td><td class="amount">${totalSubsidy.toFixed(2)}</td><td class="amount">${totalSocialSecurity.toFixed(2)}</td><td class="amount">${totalLoanRepayment.toFixed(2)}</td><td class="amount">${totalActualSalary.toFixed(2)}</td></tr>
+            <tr class="total-row"><td colspan="2">Total</td><td class="amount">${formatSalaryAmount(totalBaseSalary)}</td><td class="amount">${formatSalaryAmount(totalOvertimePay)}</td><td class="amount">${formatSalaryAmount(totalBenefits)}</td><td class="amount">${formatSalaryAmount(totalSubsidy)}</td><td class="amount">${formatSalaryAmount(totalSocialSecurity)}</td><td class="amount">${formatSalaryAmount(totalLoanRepayment)}</td><td class="amount">${formatSalaryAmount(totalActualSalary)}</td></tr>
           </tbody>
         </table>
         <div style="margin-top: 20px; text-align: right; font-size: 12px; color: #666;">Impreso: ${new Date().toLocaleString('es-NI')}</div>
@@ -668,14 +791,27 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
     },
   };
 
-  const filteredSalaryRecords = salaryRecords.filter(record => record.endDate >= salaryHistoryStartDate && record.startDate <= salaryHistoryEndDate);
+  const positionLabels: Record<string, string> = {
+    '收银员': t('employee.position.cashier'),
+    '服务员': t('employee.position.waiter'),
+    '厨师': t('employee.position.chef'),
+    '帮厨': t('employee.position.kitchenAssistant'),
+    '店长': t('employee.position.manager'),
+    '副店长': t('employee.position.assistantManager'),
+  };
+
+  const filteredSalaryRecords = getSettledSalaryRecordsForRange(
+    salaryRecords,
+    salaryHistoryStartDate,
+    salaryHistoryEndDate
+  );
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: '1rem', flexShrink: 0 }}>
-        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>Cierre de salarios</h2>
+        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>{t('salary.title')}</h2>
         <p style={{ color: colors.textSecondary, marginTop: '0.35rem', marginBottom: 0, fontSize: font.body }}>
-          Calculo de salarios, prestamos y cierre por rango de fechas.
+          {t('salary.subtitle')}
         </p>
       </div>
 
@@ -689,7 +825,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               flex: 1,
             }}
           >
-            Cierre individual
+            {t('salary.mode.single')}
           </button>
           <button
             onClick={() => setSettlementMode('batch')}
@@ -698,7 +834,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               flex: 1,
             }}
           >
-            Cierre masivo
+            {t('salary.mode.batch')}
           </button>
         </div>
       </div>
@@ -708,7 +844,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       {/* 闂傚倷绀侀幉锟犮€冮崱妞曟椽骞嬪顑嫬绶炵€光偓閳ь剛澹曟總鍛婄厵闁诡垎鍐炬殺闂?*/}
       {settlementMode === 'single' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Seleccionar empleado y rango</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>{t('salary.single.title')}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '0.85rem' }}>
             {employees.filter(e => e.status === 'active').map((emp) => {
               const activeLoans = getActiveLoansForEmployee(emp.id);
@@ -724,18 +860,18 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                 }}>
                   <div style={{ fontWeight: 750, marginBottom: '0.35rem', color: colors.textPrimary }}>{emp.name}</div>
                   <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.5rem' }}>
-                    {emp.position} - Dia C$ {(emp.dailyRate || 0).toFixed(2)}
+                    {positionLabels[emp.position] || emp.position} - {t('salary.dailyRate')} C$ {resolveMonthlySalary(emp).toFixed(0)} · {t('salary.calculatedDailyRate')} C$ {getDailySalaryForDate(emp, defaultPeriod.endDate).toFixed(2)}
                   </div>
                   {totalLoan > 0 && (
                     <div style={{ fontSize: font.caption, color: colors.amber, marginBottom: '0.75rem' }}>
-                      Prestamo pendiente: C$ {totalLoan.toFixed(2)}
+                      {t('salary.pendingLoan')}: C$ {totalLoan.toFixed(2)}
                     </div>
                   )}
                   
                   {/* 闂傚倷绀侀幉锟犲蓟閿濆绀夌€广儱顦悞鍨亜閹达絽鍔甸柛蹇撴湰閵囧嫰鍩￠崒娑樺攭閻庤娲樺畝鎼佸春閻愬瓨鍎熼柟鎯у帠婢规洘绻涙潏鍓у埌濠㈣鐟﹀鍕沪閹屼紩闂備礁鎼ˇ浼村垂閸撲讲鍋撳鍐茬毢缂佽鲸甯￠崺鈧い鎺戝閻鏌曟竟顖氭媼閸熷秹姊洪崫鍕垫Ц闁绘锕獮鎰板箹娴ｅ摜鐓?*/}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                     <div>
-                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Beneficios</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>{t('salary.benefits')}</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -745,7 +881,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Subsidio</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>{t('salary.subsidy')}</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -755,7 +891,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       />
                     </div>
                     <div>
-                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Seguro social</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>{t('salary.socialSecurity')}</div>
                       <input
                         type="number"
                         placeholder="0.00"
@@ -767,7 +903,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                   </div>
                   
                   <div style={{ marginBottom: '0.75rem' }}>
-                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>Rango de pago</div>
+                        <div style={{ fontSize: font.caption, color: colors.textSecondary, marginBottom: '0.25rem' }}>{t('salary.paymentRange')}</div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <input
                         type="date"
@@ -790,10 +926,10 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       const startDate = (document.getElementById(`start-${emp.id}`) as HTMLInputElement)?.value;
                       const endDate = (document.getElementById(`end-${emp.id}`) as HTMLInputElement)?.value;
                       if (!startDate || !endDate) {
-                        alert('Seleccione el rango de fechas');
+                        alert(t('salary.alert.selectDateRange'));
                         return;
                       }
-                      handleSingleSettlement(emp.id, `${startDate}_${endDate}`);
+                      openSingleSettlementPreview(emp.id, `${startDate}_${endDate}`);
                     }}
                     style={{
                       width: '100%',
@@ -807,7 +943,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                       fontSize: font.body,
                     }}
                   >
-                    Cerrar salario
+                    {t('salary.preview.open')}
                   </button>
                 </div>
               );
@@ -819,11 +955,11 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
       {/* 闂傚倷绀佺紞濠傤焽瑜忕槐鐐寸節閸パ囨７闂佹儳绻愬﹢杈╁婵傚憡鐓欓柟顖嗗喚鏆㈤梺?*/}
       {settlementMode === 'batch' && (
         <div style={styles.card}>
-          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Cierre masivo de salarios</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>{t('salary.batch.title')}</h3>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Fecha inicio</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>{t('salary.startDate')}</label>
               <input
                 type="date"
                 value={batchPeriod.startDate}
@@ -832,7 +968,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Fecha fin</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>{t('salary.endDate')}</label>
               <input
                 type="date"
                 value={batchPeriod.endDate}
@@ -841,37 +977,24 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
               />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>Tipo</label>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 700, fontSize: font.body, color: colors.textPrimary }}>{t('salary.type')}</label>
               <select
                 value={batchPeriod.periodType}
                 onChange={(e) => setBatchPeriod({ ...batchPeriod, periodType: e.target.value as 'first_half' | 'second_half' })}
                 style={styles.select}
               >
-                <option value="first_half">Primera quincena</option>
-                <option value="second_half">Segunda quincena</option>
+                <option value="first_half">{t('salary.firstHalf')}</option>
+                <option value="second_half">{t('salary.secondHalf')}</option>
               </select>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: '1rem' }}>
             <button
-              onClick={handleBatchSettlement}
+              onClick={openBatchSettlementPreview}
               style={{ ...styles.btn(colors.success), flex: 1 }}
             >
-              Iniciar cierre masivo
-            </button>
-            <button
-              onClick={() => {
-                const recentRecords = salaryRecords.slice(-employees.length);
-                if (recentRecords.length > 0) {
-                  printBatchSummary(recentRecords);
-                } else {
-                  alert('No hay registros de salario para imprimir');
-                }
-              }}
-              style={{ ...styles.btn(colors.blue), flex: 1 }}
-            >
-              Imprimir resumen
+              {t('salary.preview.batchOpen')}
             </button>
           </div>
         </div>
@@ -879,7 +1002,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
 
       {/* 闂傚倷娴囨慨銈夋偋椤掍胶顩查柨婵嗘川閻牊銇勯幇鍓佺暠闁稿被鍔戦弻娑㈠焺閸愮偓鐣堕梺鑺ュ灥椤︾敻骞冪憴鍕閻熸瑥瀚崙锛勭磽?*/}
       <div style={styles.card}>
-          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>Historial de salarios</h3>
+          <h3 style={{ fontSize: font.section, fontWeight: 750, marginBottom: '0.85rem', color: colors.textPrimary }}>{t('salary.history.title')}</h3>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
           <input
             type="date"
@@ -894,49 +1017,61 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
             onChange={(e) => setSalaryHistoryEndDate(e.target.value)}
             style={styles.input}
           />
+          <button
+            onClick={() => {
+              if (filteredSalaryRecords.length === 0) {
+                alert(t('salary.alert.noRecordsToPrint'));
+                return;
+              }
+              printBatchSummary(filteredSalaryRecords, salaryHistoryStartDate, salaryHistoryEndDate);
+            }}
+            style={styles.btn(colors.blue)}
+          >
+            {t('salary.batch.printSummary')}
+          </button>
         </div>
         {filteredSalaryRecords.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
-            Sin registros de salario
+            {t('salary.history.empty')}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>Empleado</th>
-                  <th style={styles.th}>Periodo</th>
-                  <th style={styles.th}>Base</th>
-                  <th style={styles.th}>Extra</th>
-                  <th style={styles.th}>Beneficios</th>
-                  <th style={styles.th}>Subsidio</th>
-                  <th style={styles.th}>Seguro</th>
-                  <th style={styles.th}>Prestamo</th>
-                  <th style={styles.th}>Neto</th>
-                  <th style={styles.th}>Accion</th>
+                  <th style={styles.th}>{t('salary.employee')}</th>
+                  <th style={styles.th}>{t('salary.period')}</th>
+                  <th style={styles.th}>{t('salary.base')}</th>
+                  <th style={styles.th}>{t('salary.overtime')}</th>
+                  <th style={styles.th}>{t('salary.benefits')}</th>
+                  <th style={styles.th}>{t('salary.subsidy')}</th>
+                  <th style={styles.th}>{t('salary.insurance')}</th>
+                  <th style={styles.th}>{t('salary.loan')}</th>
+                  <th style={styles.th}>{t('salary.net')}</th>
+                  <th style={styles.th}>{t('salary.action')}</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSalaryRecords.slice().reverse().map((record) => {
-                  const emp = employees.find(e => e.id === record.employeeId);
+                  const emp = resolveSalaryEmployee(record);
                   return (
                     <tr key={record.id}>
-                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || '-'}</td>
+                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp.name}</td>
                       <td style={styles.td}>{record.startDate} - {record.endDate}</td>
-                      <td style={styles.td}>C$ {record.baseSalary.toFixed(2)}</td>
-                      <td style={styles.td}>C$ {record.overtimePay.toFixed(2)}</td>
-                      <td style={styles.td}>C$ {record.benefits.toFixed(2)}</td>
-                      <td style={styles.td}>C$ {record.subsidy.toFixed(2)}</td>
-                      <td style={{ ...styles.td, color: colors.danger }}>C$ {record.socialSecurityEmployee.toFixed(2)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(record.baseSalary)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(record.overtimePay)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(record.benefits)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(record.subsidy)}</td>
+                      <td style={{ ...styles.td, color: colors.danger }}>C$ {formatSalaryAmount(record.socialSecurityEmployee)}</td>
                       <td style={{ ...styles.td, color: colors.amber, fontWeight: '600' }}>
-                        C$ {record.loanRepayment.toFixed(2)}
+                        C$ {formatSalaryAmount(record.loanRepayment)}
                       </td>
                       <td style={{ ...styles.td, fontWeight: 'bold', color: colors.success }}>
-                        C$ {record.actualSalary.toFixed(2)}
+                        C$ {formatSalaryAmount(record.actualSalary)}
                       </td>
                       <td style={styles.td}>
                         <button
-                          onClick={() => emp && printSalarySlip(record, emp)}
+                          onClick={() => printSalarySlip(record, emp)}
                           style={{
                             padding: '0.25rem 0.5rem',
                             backgroundColor: colors.blue,
@@ -947,7 +1082,7 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
                             fontSize: '0.75rem',
                           }}
                         >
-                          Imprimir
+                          {t('salary.print')}
                         </button>
                       </td>
                     </tr>
@@ -959,6 +1094,112 @@ const SalarySettlement: React.FC<SalarySettlementProps> = ({
         )}
       </div>
       </div>
+      {settlementPreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="salary-preview-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1rem',
+            background: 'rgba(15, 23, 42, 0.48)',
+          }}
+        >
+          <div style={{
+            width: 'min(100%, 980px)',
+            maxHeight: '88vh',
+            display: 'flex',
+            flexDirection: 'column',
+            background: colors.surface,
+            borderRadius: radii.lg,
+            boxShadow: shadows.lift,
+            overflow: 'hidden',
+          }}>
+            <div style={{ padding: '1rem 1.2rem', borderBottom: `1px solid ${colors.border}` }}>
+              <h3 id="salary-preview-title" style={{ margin: 0, fontSize: font.section, color: colors.textPrimary }}>
+                {t('salary.preview.title')}
+              </h3>
+              <div style={{ marginTop: '0.35rem', color: colors.textSecondary, fontSize: font.body }}>
+                {settlementPreview.items[0].salaryRecord.startDate} - {settlementPreview.items[0].salaryRecord.endDate}
+                {' · '}{settlementPreview.mode === 'single'
+                  ? settlementPreview.items[0].employee.name
+                  : `${settlementPreview.items.length} ${t('salary.preview.people')}`}
+              </div>
+            </div>
+
+            <div style={{ overflow: 'auto', padding: '0 1.2rem' }}>
+              <table style={{ ...styles.table, minWidth: '820px' }}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>{t('salary.employee')}</th>
+                    <th style={styles.th}>{t('salary.base')}</th>
+                    <th style={styles.th}>{t('salary.overtime')}</th>
+                    <th style={styles.th}>{t('salary.benefits')}</th>
+                    <th style={styles.th}>{t('salary.subsidy')}</th>
+                    <th style={styles.th}>{t('salary.insurance')}</th>
+                    <th style={styles.th}>{t('salary.loan')}</th>
+                    <th style={styles.th}>{t('salary.net')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settlementPreview.items.map(({ employee, salaryRecord }) => (
+                    <tr key={employee.id}>
+                      <td style={{ ...styles.td, fontWeight: 700 }}>{employee.name}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(salaryRecord.baseSalary)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(salaryRecord.overtimePay)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(salaryRecord.benefits)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(salaryRecord.subsidy)}</td>
+                      <td style={styles.td}>C$ {formatSalaryAmount(salaryRecord.socialSecurityEmployee)}</td>
+                      <td style={{ ...styles.td, color: colors.amber }}>C$ {formatSalaryAmount(salaryRecord.loanRepayment)}</td>
+                      <td style={{ ...styles.td, color: colors.success, fontWeight: 700 }}>C$ {formatSalaryAmount(salaryRecord.actualSalary)}</td>
+                    </tr>
+                  ))}
+                  {settlementPreview.items.length > 1 && (
+                    <tr>
+                      <td style={{ ...styles.td, fontWeight: 700 }}>{t('salary.preview.total')}</td>
+                      {(['baseSalary', 'overtimePay', 'benefits', 'subsidy', 'socialSecurityEmployee', 'loanRepayment', 'actualSalary'] as const).map(field => (
+                        <td key={field} style={{ ...styles.td, fontWeight: 700 }}>
+                          C$ {formatSalaryAmount(settlementPreview.items.reduce((sum, item) => sum + item.salaryRecord[field], 0))}
+                        </td>
+                      ))}
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '0.75rem',
+              padding: '1rem 1.2rem',
+              borderTop: `1px solid ${colors.border}`,
+            }}>
+              <button
+                type="button"
+                disabled={isConfirmingSettlement}
+                onClick={() => setSettlementPreview(null)}
+                style={{ ...styles.btn(colors.textSecondary), opacity: isConfirmingSettlement ? 0.6 : 1 }}
+              >
+                {t('salary.preview.cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={isConfirmingSettlement}
+                onClick={confirmSettlementPreview}
+                style={{ ...styles.btn(colors.success), opacity: isConfirmingSettlement ? 0.6 : 1 }}
+              >
+                {isConfirmingSettlement ? t('salary.preview.saving') : t('salary.preview.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

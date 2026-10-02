@@ -4,6 +4,7 @@ import { smartAddDocument } from '../../services/smartSyncService';
 import { getVisibleLoanRecords } from '../../utils/employeeLoans';
 import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface Employee {
   id: string;
@@ -14,6 +15,7 @@ interface Employee {
   hireDate: string;
   status: 'active' | 'inactive';
   dailyRate: number;
+  monthlySalary?: number;
   overtimeRate: number;
 }
 
@@ -73,6 +75,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   cashFlowRecords,
   setCashFlowRecords,
 }) => {
+  const { t } = useI18n();
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [loanAmountInput, setLoanAmountInput] = useState('');
   const [loanFormData, setLoanFormData] = useState<Partial<LoanRecord>>({
@@ -102,7 +105,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   const handleAddLoan = async () => {
     const loanAmount = Number(loanFormData.amount || 0);
     if (!loanFormData.employeeId || loanAmount <= 0) {
-      alert('请填写完整信息');
+      alert(t('loan.alert.required'));
       return;
     }
 
@@ -134,6 +137,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       categoryId: 'employee_loan', // 员工借款分类
       categoryName: '员工借款',
       amount: loanAmount,
+      profitAmount: 0,
+      cashAmount: loanAmount,
       description: `员工借款 - ${employee?.name}`,
       employeeId: loanFormData.employeeId,
       employeeName: employee?.name,
@@ -155,7 +160,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       });
     } catch (error) {
       console.error('❌ 保存借款记录失败:', error);
-      alert('保存借款失败，请检查网络后重试');
+      alert(t('loan.alert.saveFailed'));
       return;
     }
 
@@ -172,7 +177,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     });
     setLoanAmountInput('');
     
-    alert(`✅ 借款成功！\n\n员工：${employee?.name}\n金额：C$ ${loanAmount.toFixed(2)}\n\n⚠️ 该借款已从当天营业额中扣除，并将在薪资结算时自动扣回。`);
+    alert(`${t('loan.alert.success')}\n\n${t('loan.employee')}：${employee?.name}\n${t('loan.amount')}：C$ ${loanAmount.toFixed(2)}\n\n${t('loan.alert.deductedNote')}`);
   };
 
   const styles = {
@@ -280,13 +285,21 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   };
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
+  const positionLabels: Record<string, string> = {
+    '收银员': t('employee.position.cashier'),
+    '服务员': t('employee.position.waiter'),
+    '厨师': t('employee.position.chef'),
+    '帮厨': t('employee.position.kitchenAssistant'),
+    '店长': t('employee.position.manager'),
+    '副店长': t('employee.position.assistantManager'),
+  };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '0.75rem', flexWrap: 'wrap' }}>
-        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>💸 借款管理</h2>
+        <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>💸 {t('loan.title')}</h2>
         <button onClick={() => setShowLoanModal(true)} style={styles.btn(colors.amber)}>
-          ➕ 新增借款
+          ➕ {t('loan.add')}
         </button>
       </div>
 
@@ -297,19 +310,19 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
           <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.amber }}>
             {activeLoans.length}
           </div>
-          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>活跃借款笔数</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>{t('loan.stat.activeCount')}</div>
         </div>
         <div style={{ ...styles.statCard(colors.danger), textAlign: 'center' }}>
           <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.danger }}>
             C$ {activeLoans.reduce((sum, l) => sum + l.amount, 0).toFixed(2)}
           </div>
-          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>借款总额</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>{t('loan.stat.totalAmount')}</div>
         </div>
         <div style={{ ...styles.statCard(colors.blue), textAlign: 'center' }}>
           <div style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.blue }}>
             C$ {activeLoans.reduce((sum, l) => sum + l.remainingAmount, 0).toFixed(2)}
           </div>
-          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>未还总额</div>
+          <div style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.caption }}>{t('loan.stat.outstanding')}</div>
         </div>
       </div>
 
@@ -317,18 +330,18 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
         {activeLoans.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💰</div>
-            <div>暂无活跃借款</div>
+            <div>{t('loan.empty')}</div>
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>员工</th>
-                  <th style={styles.th}>借款日期</th>
-                  <th style={styles.th}>借款金额</th>
-                  <th style={styles.th}>剩余欠款</th>
-                  <th style={styles.th}>操作</th>
+                  <th style={styles.th}>{t('loan.employee')}</th>
+                  <th style={styles.th}>{t('loan.date')}</th>
+                  <th style={styles.th}>{t('loan.amount')}</th>
+                  <th style={styles.th}>{t('loan.remaining')}</th>
+                  <th style={styles.th}>{t('loan.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -336,7 +349,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                   const emp = employees.find(e => e.id === loan.employeeId);
                   return (
                     <tr key={loan.id}>
-                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || '未知'}</td>
+                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || t('loan.unknown')}</td>
                       <td style={styles.td}>{loan.date}</td>
                       <td style={{ ...styles.td, fontWeight: '600', color: colors.danger }}>
                         C$ {loan.amount.toFixed(2)}
@@ -346,7 +359,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                       </td>
                       <td style={styles.td}>
                         <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
-                          工资中扣除
+                          {t('loan.payrollDeduction')}
                         </span>
                       </td>
                     </tr>
@@ -361,25 +374,25 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       {showLoanModal && (
         <div style={styles.modal} onClick={() => setShowLoanModal(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: font.title, fontWeight: 750, marginBottom: '1.2rem', color: colors.textPrimary }}>💸 新增借款</h2>
+            <h2 style={{ fontSize: font.title, fontWeight: 750, marginBottom: '1.2rem', color: colors.textPrimary }}>💸 {t('loan.modalTitle')}</h2>
             
             <div style={styles.formGroup}>
-              <label style={styles.label}>选择员工 *</label>
+              <label style={styles.label}>{t('loan.selectEmployee')} *</label>
               <select
                 value={loanFormData.employeeId}
                 onChange={(e) => setLoanFormData({ ...loanFormData, employeeId: e.target.value })}
                 style={styles.select}
               >
-                <option value="">请选择员工</option>
+                <option value="">{t('loan.selectEmployeePlaceholder')}</option>
                 {employees.filter(e => e.status === 'active').map(emp => (
-                  <option key={emp.id} value={emp.id}>{emp.name} - {emp.position}</option>
+                  <option key={emp.id} value={emp.id}>{emp.name} - {positionLabels[emp.position] || emp.position}</option>
                 ))}
               </select>
             </div>
 
             <div style={styles.grid2}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>借款金额 (C$) *</label>
+                <label style={styles.label}>{t('loan.amountLabel')} *</label>
                 <input
                   type="number"
                   value={loanAmountInput}
@@ -394,7 +407,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>借款日期</label>
+                <label style={styles.label}>{t('loan.date')}</label>
                 <input
                   type="date"
                   value={loanFormData.date}
@@ -405,24 +418,24 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>备注</label>
+              <label style={styles.label}>{t('loan.notes')}</label>
               <textarea
                 value={loanFormData.notes || ''}
                 onChange={(e) => setLoanFormData({ ...loanFormData, notes: e.target.value })}
                 style={{ ...styles.input, minHeight: '80px', resize: 'vertical' }}
-                placeholder="选填"
+                placeholder={t('loan.optional')}
               />
             </div>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
               <button onClick={handleAddLoan} style={{ ...styles.btn(colors.amber), flex: 1 }}>
-                💾 确认借款
+                💾 {t('loan.confirm')}
               </button>
               <button
                 onClick={() => setShowLoanModal(false)}
                 style={{ ...styles.btn(colors.textSecondary), flex: 1 }}
               >
-                ❌ 取消
+                ❌ {t('employee.cancel')}
               </button>
             </div>
           </div>

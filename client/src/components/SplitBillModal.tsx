@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 
 interface OrderItem {
   id: string;
@@ -30,6 +31,7 @@ interface SplitBillModalProps {
 }
 
 const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfirm, initialSplitBills }) => {
+  const { t } = useI18n();
   const [splitCount, setSplitCount] = useState(2); // 默认拆分成2份
   const [splitBills, setSplitBills] = useState<SplitBill[]>(() => {
     // 如果有初始数据，使用初始数据
@@ -41,7 +43,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
     return [
       {
         id: 'bill-1',
-        customerName: '顾客 A',
+        customerName: `${t('pos.split.customer')} A`,
         items: [...items],
         subtotal: items.reduce((sum, item) => sum + item.subtotal, 0),
         paidAmount: 0,
@@ -49,7 +51,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
       },
       ...Array.from({ length: 1 }, (_, i) => ({
         id: `bill-${i + 2}`,
-        customerName: `顾客 ${String.fromCharCode(66 + i)}`,
+        customerName: `${t('pos.split.customer')} ${String.fromCharCode(66 + i)}`,
         items: [],
         subtotal: 0,
         paidAmount: 0,
@@ -96,7 +98,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
     const allItems = [...items];
     const newBills: SplitBill[] = Array.from({ length: splitCount }, (_, i) => ({
       id: `bill-${i + 1}`,
-      customerName: `顾客 ${String.fromCharCode(65 + i)}`,
+      customerName: `${t('pos.split.customer')} ${String.fromCharCode(65 + i)}`,
       items: [],
       subtotal: 0,
       paidAmount: 0,
@@ -126,7 +128,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
       const existingBill = splitBills[i];
       return existingBill || {
         id: `bill-${i + 1}`,
-        customerName: `顾客 ${String.fromCharCode(65 + i)}`,
+        customerName: `${t('pos.split.customer')} ${String.fromCharCode(65 + i)}`,
         items: [],
         subtotal: 0,
         paidAmount: 0,
@@ -193,7 +195,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
           backgroundColor: '#f9fafb'
         }}>
           <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#1f2937' }}>
-            🔀 账单拆分
+            🔀 {t('pos.split.title')}
           </h2>
           <button
             onClick={onClose}
@@ -221,7 +223,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
           }}>
             <div>
               <label style={{ fontSize: '0.9rem', color: '#6b7280', marginRight: '0.5rem' }}>
-                拆分份数：
+                {t('pos.split.count')}：
               </label>
               <select
                 value={splitCount}
@@ -234,7 +236,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                 }}
               >
                 {[2, 3, 4, 5, 6].map(n => (
-                  <option key={n} value={n}>{n} 份</option>
+                  <option key={n} value={n}>{n} {t('pos.split.portion')}</option>
                 ))}
               </select>
             </div>
@@ -252,11 +254,11 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                 fontWeight: '600'
               }}
             >
-              ⚖️ 平均分配
+              ⚖️ {t('pos.split.evenly')}
             </button>
 
             <div style={{ marginLeft: 'auto', fontSize: '1.1rem', fontWeight: 'bold', color: '#1f2937' }}>
-              总计：C${totalAmount.toFixed(2)}
+              {t('pos.common.total')}：C${totalAmount.toFixed(2)}
             </div>
           </div>
 
@@ -270,7 +272,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
               borderRadius: '0.5rem'
             }}>
               <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', color: '#92400e' }}>
-                📦 待分配商品 ({unassignedItems.length})
+                📦 {t('pos.split.unassigned')} ({unassignedItems.length})
               </h4>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                 {unassignedItems.map(item => (
@@ -311,7 +313,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                         marginTop: '0.25rem'
                       }}
                     >
-                      <option value="">分配到...</option>
+                      <option value="">{t('pos.split.assignTo')}</option>
                       {splitBills.map((bill, idx) => (
                         <option key={idx} value={idx}>
                           {bill.customerName}
@@ -378,7 +380,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                       padding: '2rem 0',
                       fontSize: '0.9rem'
                     }}>
-                      拖拽商品到此处
+                      {t('pos.split.empty')}
                     </div>
                   ) : (
                     bill.items.map(item => (
@@ -417,7 +419,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                               fontSize: '0.75rem'
                             }}
                           >
-                            <option value="">移动到...</option>
+                            <option value="">{t('pos.split.moveTo')}</option>
                             {splitBills.map((_, idx) => 
                               idx !== billIndex ? (
                                 <option key={idx} value={idx}>
@@ -456,7 +458,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                 fontWeight: '600'
               }}
             >
-              取消
+              {t('pos.common.cancel')}
             </button>
             <button
               onClick={() => onConfirm(splitBills)}
@@ -472,7 +474,7 @@ const SplitBillModal: React.FC<SplitBillModalProps> = ({ items, onClose, onConfi
                 fontWeight: '600'
               }}
             >
-              ✓ 确认拆分
+              ✓ {t('pos.split.confirm')}
             </button>
           </div>
         </div>

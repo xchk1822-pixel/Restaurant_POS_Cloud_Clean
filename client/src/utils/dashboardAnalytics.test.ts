@@ -103,6 +103,23 @@ describe('dashboardAnalytics', () => {
     });
   });
 
+  test('expense rankings exclude employee loans and use salary profit amount', () => {
+    const rankings = buildExpenseRankings([
+      { id: 'loan-1', amount: 300, categoryId: 'employee_loan', relatedType: 'loan' },
+      { id: 'salary-1', amount: 700, profitAmount: 1000, categoryId: 'employee_salary', relatedType: 'salary' },
+    ], [
+      { id: 'employee_loan', name: 'Loan' },
+      { id: 'employee_salary', name: 'Salary' },
+    ], [], {
+      scope: 'operating',
+      sortBy: 'amount',
+      topN: 10,
+    });
+
+    expect(rankings).toHaveLength(1);
+    expect(rankings[0]).toMatchObject({ label: 'Salary', amount: 1000 });
+  });
+
   test('includes beverage sales by stock item category when order item has no category', () => {
     const orders = [
       paidOrder({

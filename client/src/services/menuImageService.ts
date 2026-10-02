@@ -11,7 +11,7 @@ export interface MenuImageUploadResult {
   mediumSize: number;
 }
 
-const getCurrentStoreId = (): string => {
+const requireCurrentStoreId = (): string => {
   try {
     const rawUser = localStorage.getItem('current_user');
     if (rawUser) {
@@ -19,9 +19,9 @@ const getCurrentStoreId = (): string => {
       if (user?.storeId) return String(user.storeId);
     }
   } catch {
-    // Use fallback below.
+    // Reject below.
   }
-  return 'default';
+  throw new Error('Missing storeId; refusing menu image access');
 };
 
 const getSafeImageExtension = (fileName?: string, type?: string): string => {
@@ -77,7 +77,8 @@ export const uploadCachedMenuImage = async (
   menuId: string,
   imageUpdatedAt?: number
 ): Promise<Omit<MenuImageUploadResult, 'thumbSize' | 'mediumSize'>> => {
-  const cache = await getMenuImageCache(menuId);
+  const storeId = requireCurrentStoreId();
+  const cache = await getMenuImageCache(storeId, menuId);
   const cachedBlob = cache?.originalBlob || cache?.mediumBlob || cache?.thumbBlob;
   if (!cachedBlob) {
     throw new Error('没有找到本地缓存图片');
@@ -85,7 +86,7 @@ export const uploadCachedMenuImage = async (
 
   const uploadTime = imageUpdatedAt || cache.imageUpdatedAt || Date.now();
   const uploaded = await withUploadTimeout(uploadOriginalMenuImage(
-    getCurrentStoreId(),
+    storeId,
     menuId,
     cachedBlob,
     cache.originalName,
@@ -108,8 +109,9 @@ export const processAndUploadMenuImage = async (
     throw new Error('请选择图片文件');
   }
 
+  const storeId = requireCurrentStoreId();
   const imageUpdatedAt = Date.now();
-  await saveMenuImageCache(menuId, {
+  await saveMenuImageCache(storeId, menuId, {
     blob: file,
     dataUrl: await fileToDataUrl(file),
     type: file.type,
@@ -127,7 +129,7 @@ export const processAndUploadMenuImage = async (
 
   try {
     const uploaded = await withUploadTimeout(uploadOriginalMenuImage(
-      getCurrentStoreId(),
+      storeId,
       menuId,
       file,
       file.name,

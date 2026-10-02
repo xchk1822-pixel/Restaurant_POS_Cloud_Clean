@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import PurchaseManagement from './PurchaseManagement';
 import { useAppContext } from '../../contexts/AppContext';
-import { smartGetDocuments, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartGetDocumentsByDateRange, smartAddDocument, smartUpdateDocument, smartDeleteDocument, smartSetDocument } from '../../services/smartSyncService';
 import { dataService } from '../../services/DataService';
 import MenuImage from '../../components/MenuImage';
 import { processAndUploadMenuImage } from '../../services/menuImageService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { buildLowStockSuggestions, isInventoryItemLowStock } from '../../utils/reorderSuggestions';
+import { buildReplenishmentPurchaseDraft, type ReplenishmentPurchaseDraft } from '../../utils/purchaseReplenishment';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey } from '../../i18n/translations';
+import { useAuth } from '../../contexts/AuthContext';
+import { canAccessPermission } from '../../utils/permissions';
 
 // 本地类型定义（与AppContext保持一致）
 interface InventoryItem {
@@ -20,6 +26,8 @@ interface InventoryItem {
   salePrice?: number;
   tags: string[];
   location?: string;
+  preferredSupplierId?: string;
+  preferredSupplierName?: string;
   lastUpdated: Date;
   lastModified?: number;
 }
@@ -68,6 +76,9 @@ interface StockRecord {
   orderNumber?: string;
   source?: string;
   sourceId?: string;
+  locationType?: 'warehouse' | 'fridge';
+  fridgeId?: string;
+  fridgeName?: string;
 }
 
 const isLegacyDemoStockRecord = (record: Partial<StockRecord>): boolean => {
@@ -112,9 +123,20 @@ const normalizeStockRecordDate = (...values: any[]): Date => {
   return new Date();
 };
 
-const formatStockRecordTime = (record: StockRecord): string => {
+const formatStockRecordTime = (record: StockRecord, locale: string): string => {
   return normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date)
-    .toLocaleString('zh-CN');
+    .toLocaleString(locale);
+};
+
+const getManaguaDateKey = (value: any = new Date()): string => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Managua',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(normalizeStockRecordDate(value));
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 };
 
 const getStockRecordSignedQuantity = (record: StockRecord): number => {
@@ -138,30 +160,52 @@ const formatStockRecordQuantity = (record: StockRecord): string => {
   return `${signedQuantity > 0 ? '+' : ''}${signedQuantity}`;
 };
 
-const formatStockRecordReason = (record: StockRecord): string => {
+const formatStockRecordReason = (record: StockRecord, t: (key: TranslationKey) => string): string => {
   switch (record.reason) {
     case 'warehouse to fridge':
-      return '仓库调拨到冰箱';
+    case '仓库调拨到冰箱':
+      return t('inventory.record.reason.warehouseToFridge');
     case 'fridge to warehouse':
-      return '冰箱退回仓库';
+    case '冰箱退回仓库':
+      return t('inventory.record.reason.fridgeToWarehouse');
     case 'pos sale':
-      return record.orderNumber ? `销售出库 ${record.orderNumber}` : '销售出库';
+      return record.orderNumber ? `${t('inventory.record.reason.sale')} ${record.orderNumber}` : t('inventory.record.reason.sale');
     case 'purchase order':
-      return record.orderNumber ? `采购入库 ${record.orderNumber}` : '采购入库';
+      return record.orderNumber ? `${t('inventory.record.reason.purchase')} ${record.orderNumber}` : t('inventory.record.reason.purchase');
+    case 'purchase order deleted':
+      return record.orderNumber ? `${t('inventory.record.reason.purchaseDeleted')} ${record.orderNumber}` : t('inventory.record.reason.purchaseDeleted');
+    case 'deleted order stock restore':
+      return record.orderNumber ? `${t('inventory.record.reason.orderRestored')} ${record.orderNumber}` : t('inventory.record.reason.orderRestored');
     case 'warehouse stocktake':
-      return '仓库盘点调整';
+      return t('inventory.record.reason.warehouseStocktake');
     case 'fridge stocktake':
-      return '冰箱盘点调整';
+      return t('inventory.record.reason.fridgeStocktake');
     case 'inventory item edit':
-      return '物品编辑调整';
+      return t('inventory.record.reason.itemEdit');
     default:
       return record.reason || '-';
   }
 };
 
-const formatStockRecordOperator = (operator?: string): string => {
-  if (!operator || operator === 'system') return '系统操作';
-  if (operator === 'pos') return 'POS收银';
+const formatStockRecordLocation = (record: StockRecord, fridgeNamesById: Record<string, string>, t: (key: TranslationKey) => string): string => {
+  if (record.locationType === 'fridge') {
+    return record.fridgeName || fridgeNamesById[record.fridgeId || ''] || record.fridgeId || t('inventory.location.fridge');
+  }
+  if (record.locationType === 'warehouse') return t('inventory.location.warehouse');
+  return '-';
+};
+
+const formatStockRecordBalance = (record: StockRecord): string => {
+  const before = Number(record.beforeStock);
+  const after = Number(record.afterStock);
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return '-';
+  return `${before} → ${after}`;
+};
+
+const formatStockRecordOperator = (operator: string | undefined, t: (key: TranslationKey) => string): string => {
+  if (!operator || operator === 'system' || operator === '系统' || operator === '系统操作') return t('inventory.operator.system');
+  if (operator === 'pos') return t('inventory.operator.pos');
+  if (operator === '店长' || operator === 'manager') return t('inventory.operator.manager');
   return operator;
 };
 
@@ -181,6 +225,7 @@ const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem:
     reason: 'inventory item edit',
     source: 'inventory_item_edit',
     sourceId: updatedItem.id,
+    locationType: 'warehouse',
     date: new Date(now),
     createdAt: new Date(now),
     createdAtMs: now,
@@ -340,6 +385,8 @@ const ensureRequiredFridgeInventoryCategories = (categories: InventoryCategory[]
 };
 
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
+  const { t, language } = useI18n();
+  const { user } = useAuth();
   const {
     inventoryItems,
     setInventoryItems,
@@ -351,18 +398,28 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     setPurchaseOrders,
     suppliers,
     setSuppliers,
+    fridges,
     fridgeInventory,
     setFridgeInventory
   } = useAppContext();
   
-  const [activeTab, setActiveTab] = useState<'items' | 'menu' | 'purchase' | 'records'>(defaultTab);
+  const [activeTab, setActiveTab] = useState<'items' | 'menu' | 'purchase' | 'records' | 'reorder'>(defaultTab);
+  const isStandalonePurchase = defaultTab === 'purchase';
+  const canManageItems = Boolean(user && canAccessPermission(user.role, 'inventory:items'));
+  const canManagePurchases = Boolean(user && canAccessPermission(user.role, 'inventory:purchase'));
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [stockStatusFilter, setStockStatusFilter] = useState<'all' | 'negative' | 'low'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [reorderSearchTerm, setReorderSearchTerm] = useState('');
+  const [purchaseDraft, setPurchaseDraft] = useState<ReplenishmentPurchaseDraft | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInventorySummary, setShowInventorySummary] = useState(false);
   const [inventoryLastSyncedAt, setInventoryLastSyncedAt] = useState<Date | null>(null);
   const [isRefreshingInventory, setIsRefreshingInventory] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
   // 生成唯一条形码（13位EAN格式）
   const generateBarcode = () => {
@@ -494,6 +551,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
         minStock: Number(item.minStock) || 0,
         costPrice: Number(item.costPrice) || 0,
         salePrice: item.salePrice === undefined ? undefined : Number(item.salePrice) || 0,
+        preferredSupplierId: String(item.preferredSupplierId || ''),
+        preferredSupplierName: String(item.preferredSupplierName || ''),
         lastUpdated: item.lastUpdated ? new Date(item.lastUpdated) : new Date()
       })) as InventoryItem[];
 
@@ -514,11 +573,11 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       setInventoryLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新库存数据失败:', error);
-      alert('刷新库存数据失败，请检查网络后重试');
+      alert(t('inventory.alert.refreshFailed'));
     } finally {
       setIsRefreshingInventory(false);
     }
-  }, [getInventoryCategoryStorageKey, setInventoryItems]);
+  }, [getInventoryCategoryStorageKey, setInventoryItems, t]);
 
   const saveInventoryCategorySnapshot = React.useCallback((nextCategories: InventoryCategory[]) => {
     const normalizedCategories = normalizeInventoryCategories(nextCategories);
@@ -568,6 +627,10 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   }, [saveInventoryCategorySnapshot, saveInventoryCategoryToCloud]);
 
   const stockRecordsStorageKey = dataService.getStoreKey('inventory_stock_records');
+  const initialStockRecordDate = getManaguaDateKey();
+  const [stockRecordStartDate, setStockRecordStartDate] = useState(initialStockRecordDate);
+  const [stockRecordEndDate, setStockRecordEndDate] = useState(initialStockRecordDate);
+  const [isLoadingStockRecords, setIsLoadingStockRecords] = useState(false);
 
   const [stockRecords, setStockRecords] = useState<StockRecord[]>(() => {
     try {
@@ -581,7 +644,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             ...record,
             date: normalizedDate
           };
-        }).filter((record: StockRecord) => !isLegacyDemoStockRecord(record));
+        }).filter((record: StockRecord) => (
+          !isLegacyDemoStockRecord(record) && getManaguaDateKey(record.date) === initialStockRecordDate
+        ));
       }
     } catch (error) {
       console.error('加载库存记录失败:', error);
@@ -589,37 +654,44 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     return [];
   });
   const [stockRecordSearchTerm, setStockRecordSearchTerm] = useState('');
+  const fridgeNamesById = React.useMemo(() => Object.fromEntries(
+    fridges.map(fridge => [fridge.id, fridge.name])
+  ), [fridges]);
+
+  const loadStockRecords = React.useCallback(async () => {
+    setIsLoadingStockRecords(true);
+    try {
+      const cloudRecords = await smartGetDocumentsByDateRange(
+        'inventory_stock_records',
+        'createdAtMs',
+        stockRecordStartDate,
+        stockRecordEndDate,
+        true,
+        'number-timestamp'
+      );
+      const sortedRecords = cloudRecords
+        .map((record: any) => {
+          const normalizedDate = normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date);
+          return { ...record, date: normalizedDate };
+        })
+        .filter((record: StockRecord) => !isLegacyDemoStockRecord(record))
+        .sort((a: StockRecord, b: StockRecord) => b.date.getTime() - a.date.getTime());
+      setStockRecords(sortedRecords);
+
+      const cached = JSON.parse(localStorage.getItem(stockRecordsStorageKey) || '[]');
+      const merged = new Map<string, any>(cached.map((record: any) => [record.id, record]));
+      sortedRecords.forEach(record => merged.set(record.id, record));
+      localStorage.setItem(stockRecordsStorageKey, JSON.stringify(Array.from(merged.values())));
+    } catch (error) {
+      console.error('加载云端库存记录失败:', error);
+    } finally {
+      setIsLoadingStockRecords(false);
+    }
+  }, [stockRecordEndDate, stockRecordStartDate, stockRecordsStorageKey]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadStockRecords = async () => {
-      try {
-        const cloudRecords = await smartGetDocuments('inventory_stock_records', true);
-        const sortedRecords = cloudRecords
-          .map((record: any) => {
-            const normalizedDate = normalizeStockRecordDate(record.createdAtMs, record.lastModified, record.createdAt, record.date);
-            return {
-              ...record,
-              date: normalizedDate
-            };
-          })
-          .filter((record: StockRecord) => !isLegacyDemoStockRecord(record))
-          .sort((a: StockRecord, b: StockRecord) => b.date.getTime() - a.date.getTime());
-        if (cancelled) return;
-        setStockRecords(sortedRecords);
-        localStorage.setItem(stockRecordsStorageKey, JSON.stringify(sortedRecords));
-      } catch (error) {
-        console.error('加载云端库存记录失败:', error);
-      }
-    };
-
-    loadStockRecords();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [stockRecordsStorageKey]);
+    void loadStockRecords();
+  }, [loadStockRecords]);
 
   const filteredStockRecords = React.useMemo(() => {
     const keyword = stockRecordSearchTerm.trim().toLowerCase();
@@ -633,17 +705,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
         record.source,
         record.sourceId,
         record.reason,
-        formatStockRecordReason(record),
+        formatStockRecordReason(record, t),
         record.operator,
-        formatStockRecordOperator(record.operator),
-        (record as any).locationType,
-        (record as any).fridgeId,
-        (record as any).fridgeName,
+        formatStockRecordOperator(record.operator, t),
+        record.locationType,
+        record.fridgeId,
+        record.fridgeName,
+        formatStockRecordLocation(record, fridgeNamesById, t),
       ].filter(Boolean).join(' ').toLowerCase();
 
       return searchableText.includes(keyword);
     });
-  }, [stockRecords, stockRecordSearchTerm]);
+  }, [fridgeNamesById, stockRecords, stockRecordSearchTerm, t]);
 
   // 过滤库存物品
   // 获取类别名称 - 从 inventoryCategories 中动态查找
@@ -677,9 +750,21 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const getTotalStock = (item: InventoryItem) => item.currentStock + getFridgeStock(item.id);
 
   // 检查总库存是否低于警戒线
-  const isLowStock = (item: InventoryItem) => getTotalStock(item) <= item.minStock;
+  const isLowStock = (item: InventoryItem) => isInventoryItemLowStock(item, getFridgeStock(item.id));
   const isNegativeStockItem = (item: InventoryItem) => item.currentStock < 0 || getFridgeStock(item.id) < 0 || getTotalStock(item) < 0;
   const negativeStockItems = inventoryItems.filter(isNegativeStockItem);
+  const lowStockSuggestions = buildLowStockSuggestions({
+    inventoryItems,
+    fridgeInventory,
+    suppliers,
+    purchaseOrders,
+  });
+  const filteredReorderSuggestions = lowStockSuggestions.filter(suggestion => {
+    const keyword = reorderSearchTerm.trim().toLowerCase();
+    return !keyword || [suggestion.itemName, suggestion.supplierName]
+      .some(value => value.toLowerCase().includes(keyword));
+  });
+  const reorderEstimatedAmount = filteredReorderSuggestions.reduce((sum, suggestion) => sum + suggestion.estimatedAmount, 0);
 
   const filteredItems = inventoryItems.filter(item => {
     const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
@@ -693,14 +778,14 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
   // 模拟扫码功能
   const handleScanBarcode = () => {
-    const barcode = prompt('请扫描或输入条形码：');
+    const barcode = prompt(t('inventory.barcode.prompt'));
     if (barcode) {
       setSearchTerm(barcode);
       const found = inventoryItems.find(item => item.barcode === barcode);
       if (found) {
-        alert(`找到商品：${found.name}\n条形码：${found.barcode}\n总库存：${getTotalStock(found)} ${found.unit}\n仓库：${found.currentStock} ${found.unit}\n冰箱：${getFridgeStock(found.id)} ${found.unit}`);
-      } else {
-        alert('未找到该商品');
+      alert(`${t('inventory.barcode.found')}: ${found.name}\n${t('inventory.field.barcode')}: ${found.barcode}\n${t('inventory.table.totalStock')}: ${getTotalStock(found)} ${found.unit}\n${t('inventory.location.warehouse')}: ${found.currentStock} ${found.unit}\n${t('inventory.location.fridge')}: ${getFridgeStock(found.id)} ${found.unit}`);
+    } else {
+      alert(t('inventory.barcode.notFound'));
       }
     }
   };
@@ -708,33 +793,38 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   return (
     <div style={inventoryPageStyle}>
       {/* 顶部标签和统计 */}
+      {!isStandalonePurchase && (
       <div style={inventoryShellStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: activeTab === 'items' ? '0.65rem' : 0, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: activeTab === 'items' || activeTab === 'reorder' ? '0.65rem' : 0, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setActiveTab('items')}
-              style={getInventoryTabStyle(activeTab === 'items')}
-            >
-              📦 库存物品
-            </button>
-            <button
-              onClick={() => setActiveTab('purchase')}
-              style={getInventoryTabStyle(activeTab === 'purchase')}
-            >
-              🛒 采购入库
-            </button>
+            {canManageItems && (
+              <button
+                onClick={() => setActiveTab('items')}
+                style={getInventoryTabStyle(activeTab === 'items')}
+              >
+              📦 {t('inventory.tab.items')}
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('records')}
               style={getInventoryTabStyle(activeTab === 'records')}
             >
-              📊 出入库记录
+            📊 {t('inventory.tab.records')}
             </button>
+            {canManagePurchases && (
+              <button
+                onClick={() => setActiveTab('reorder')}
+                style={getInventoryTabStyle(activeTab === 'reorder')}
+              >
+              {t('inventory.tab.reorder')} {lowStockSuggestions.length > 0 ? `(${lowStockSuggestions.length})` : ''}
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {inventoryLastSyncedAt && (
               <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
-                最后同步 {inventoryLastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+                {t('inventory.lastSync')} {inventoryLastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
               </span>
             )}
             <button
@@ -747,13 +837,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 cursor: isRefreshingInventory ? 'not-allowed' : 'pointer',
               }}
             >
-              {isRefreshingInventory ? '同步中...' : '刷新库存'}
+              {isRefreshingInventory ? t('inventory.syncing') : t('inventory.refresh')}
             </button>
             <button
               onClick={handleScanBarcode}
               style={inventoryActionButtonStyle}
             >
-              📷 扫码
+              📷 {t('inventory.scan')}
             </button>
             <button
               onClick={() => {
@@ -766,7 +856,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               }}
               style={inventoryPrimaryButtonStyle}
             >
-              ➕ 添加物品
+              ➕ {t('inventory.addItem')}
             </button>
           </div>
         </div>
@@ -776,7 +866,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(150px, 190px) minmax(150px, 190px) auto', gap: '0.55rem', alignItems: 'center', backgroundColor: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.55rem' }}>
             <input
               type="text"
-              placeholder="搜索商品名称或条形码..."
+              placeholder={t('inventory.search.items')}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
@@ -791,7 +881,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 ...inventoryInputStyle,
               }}
             >
-              <option value="all">全部类别</option>
+              <option value="all">{t('inventory.filter.allCategories')}</option>
               {inventoryCategories.map(cat => (
                 <option key={cat.key} value={cat.key}>{cat.icon} {cat.name}</option>
               ))}
@@ -803,19 +893,34 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 ...inventoryInputStyle,
               }}
             >
-              <option value="all">全部状态</option>
-              <option value="negative">负库存</option>
-              <option value="low">低库存</option>
+              <option value="all">{t('inventory.filter.allStatuses')}</option>
+              <option value="negative">{t('inventory.status.negative')}</option>
+              <option value="low">{t('inventory.status.low')}</option>
             </select>
             <button
               onClick={() => setShowInventoryCategoryModal(true)}
               style={inventoryActionButtonStyle}
             >
-              🏷️ 类别管理
+              🏷️ {t('inventory.category.manage')}
             </button>
           </div>
         )}
+        {activeTab === 'reorder' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.55rem', alignItems: 'center', backgroundColor: colors.surfaceMuted, border: `1px solid ${colors.border}`, borderRadius: radii.md, padding: '0.55rem' }}>
+            <input
+              type="text"
+              placeholder={t('inventory.search.reorder')}
+              value={reorderSearchTerm}
+              onChange={(event) => setReorderSearchTerm(event.target.value)}
+              style={{ ...inventoryInputStyle, flex: '1 1 240px', minWidth: 0 }}
+            />
+            <span style={{ color: colors.textSecondary, fontSize: font.caption, flex: '0 1 auto' }}>
+              {t('inventory.reorder.rule')}
+            </span>
+          </div>
+        )}
       </div>
+      )}
 
       {/* 库存物品列表 */}
       {activeTab === 'items' && (
@@ -892,13 +997,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: 0 }}>
                     <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1f2937', whiteSpace: 'nowrap' }}>
-                      库存总货值 C$ {totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {t('inventory.summary.totalValue')} C$ {totalValue.toLocaleString(language === 'es-NI' ? 'es-NI' : 'zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                      仓库 C$ {warehouseValue.toFixed(2)} / 冰箱 C$ {fridgeValue.toFixed(2)}
+                  {t('inventory.location.warehouse')} C$ {warehouseValue.toFixed(2)} / {t('inventory.location.fridge')} C$ {fridgeValue.toFixed(2)}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: lowStockItems.length > 0 ? '#dc2626' : '#059669', whiteSpace: 'nowrap', fontWeight: '600' }}>
-                      {lowStockItems.length > 0 ? `低库存 ${lowStockItems.length} 种` : '库存正常'}
+                  {lowStockItems.length > 0 ? `${t('inventory.status.low')} ${lowStockItems.length}` : t('inventory.status.normal')}
                     </div>
                   </div>
                   <button
@@ -915,7 +1020,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       flexShrink: 0
                     }}
                   >
-                    展开统计
+                {t('inventory.summary.expand')}
                   </button>
                 </div>
               );
@@ -940,17 +1045,17 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   alignItems: 'center'
                 }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.25rem' }}>💰 库存总货值（仓库 + 冰箱）</div>
+                  <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.25rem' }}>💰 {t('inventory.summary.totalValueDetail')}</div>
                     <div style={{ fontSize: '1.35rem', fontWeight: 'bold', color: '#3b82f6' }}>
                       C$ {totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                      仓库: C$ {warehouseValue.toFixed(2)} | 冰箱: C$ {fridgeValue.toFixed(2)}
+                    {t('inventory.location.warehouse')}: C$ {warehouseValue.toFixed(2)} | {t('inventory.location.fridge')}: C$ {fridgeValue.toFixed(2)}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>物品种类</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#374151' }}>{inventoryItems.length} 种</div>
+                  <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('inventory.summary.itemTypes')}</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#374151' }}>{inventoryItems.length}</div>
                     <button
                       onClick={() => setShowInventorySummary(false)}
                       style={{
@@ -965,7 +1070,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         fontWeight: '700'
                       }}
                     >
-                      收起统计
+                  {t('inventory.summary.collapse')}
                     </button>
                   </div>
                 </div>
@@ -991,7 +1096,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         C$ {data.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                        {data.quantity.toLocaleString()} 单位
+                        {data.quantity.toLocaleString()} {t('inventory.summary.units')}
                       </div>
                     </div>
                   ))}
@@ -1010,9 +1115,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     marginBottom: lowStockItems.length > 0 ? '0.75rem' : 0
                   }}>
                     <div>
-                      <span style={{ fontWeight: '700', color: '#be123c' }}>负库存</span>
+                    <span style={{ fontWeight: '700', color: '#be123c' }}>{t('inventory.status.negative')}</span>
                       <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: '#9f1239' }}>
-                        {negativeStockItems.length} 种物品库存为负，需要盘点修正
+                    {negativeStockItems.length} {t('inventory.negative.description')}
                       </span>
                     </div>
                     <button
@@ -1028,7 +1133,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         fontSize: '0.8rem'
                       }}
                     >
-                      查看负库存
+                    {t('inventory.negative.view')}
                     </button>
                   </div>
                 )}
@@ -1044,13 +1149,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     alignItems: 'center'
                   }}>
                     <div>
-                      <span style={{ fontWeight: '600', color: '#dc2626' }}>⚠️ 低库存预警</span>
+                    <span style={{ fontWeight: '600', color: '#dc2626' }}>⚠️ {t('inventory.low.warning')}</span>
                       <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: '#991b1b' }}>
-                        {lowStockItems.length} 种物品库存不足
+                    {lowStockItems.length} {t('inventory.low.description')}
                       </span>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#991b1b' }}>当前货值</div>
+                  <div style={{ fontSize: '0.75rem', color: '#991b1b' }}>{t('inventory.low.currentValue')}</div>
                       <div style={{ fontSize: '1rem', fontWeight: '600', color: '#dc2626' }}>
                         C$ {lowStockValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
@@ -1073,7 +1178,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               flexShrink: 0
             }}>
               <div style={{ color: '#9f1239', fontWeight: 700 }}>
-                负库存 {negativeStockItems.length} 种，需要盘点修正
+                      {t('inventory.status.negative')} {negativeStockItems.length}，{t('inventory.negative.needStocktake')}
               </div>
               <button
                 onClick={() => setStockStatusFilter('negative')}
@@ -1088,7 +1193,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   fontSize: '0.8rem'
                 }}
               >
-                查看负库存
+                      {t('inventory.negative.view')}
               </button>
             </div>
           )}
@@ -1097,19 +1202,9 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>商品名称</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>类别</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>总库存</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>仓库</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>冰箱</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>警戒线</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>单位</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>进价</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>售价</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>利润</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>位置/标签</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'center', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>状态</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'center', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>操作</th>
+                  {[t('inventory.table.name'), t('inventory.table.category'), t('inventory.table.totalStock'), t('inventory.location.warehouse'), t('inventory.location.fridge'), t('inventory.table.minStock'), t('inventory.table.unit'), t('inventory.table.cost'), t('inventory.table.sale'), t('inventory.table.profit'), t('inventory.table.locationTags'), t('inventory.table.status'), t('inventory.table.actions')].map((title, index) => (
+                    <th key={title} style={{ padding: '0.75rem', textAlign: index >= 2 && index <= 9 ? 'right' : (index >= 11 ? 'center' : 'left'), borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{title}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -1156,7 +1251,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           C$ {(item.salePrice - item.costPrice).toFixed(2)}
                         </span>
                       ) : (
-                        <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>通过菜品计算</span>
+                          <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>{t('inventory.table.calculatedByMenu')}</span>
                       )}
                     </td>
                     <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>
@@ -1187,7 +1282,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontSize: '0.75rem',
                           fontWeight: '700'
                         }}>
-                          负库存
+                            {t('inventory.status.negative')}
                         </span>
                       ) : isLowStock(item) ? (
                         <span style={{
@@ -1198,7 +1293,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontSize: '0.75rem',
                           fontWeight: '600'
                         }}>
-                          ⚠️ 库存不足
+                            ⚠️ {t('inventory.status.low')}
                         </span>
                       ) : (
                         <span style={{
@@ -1209,7 +1304,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontSize: '0.75rem',
                           fontWeight: '600'
                         }}>
-                          ✓ 正常
+                            ✓ {t('inventory.status.normal')}
                         </span>
                       )}
                     </td>
@@ -1230,7 +1325,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontWeight: '600'
                         }}
                       >
-                        ✏️ 编辑
+                          ✏️ {t('pos.tables.editOne')}
                       </button>
                     </td>
                   </tr>
@@ -1238,6 +1333,79 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'reorder' && (
+        <div style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface, borderRadius: radii.lg, boxShadow: shadows.soft, border: `1px solid ${colors.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '0.8rem', borderBottom: `1px solid ${colors.border}`, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.55rem', backgroundColor: colors.surfaceMuted }}>
+            {[
+              [t('inventory.reorder.pendingItems'), `${filteredReorderSuggestions.length}`],
+              [t('inventory.reorder.linkedSuppliers'), `${filteredReorderSuggestions.filter(item => item.supplierSource !== 'unlinked').length}`],
+              [t('inventory.reorder.unlinkedSuppliers'), `${filteredReorderSuggestions.filter(item => item.supplierSource === 'unlinked').length}`],
+              [t('inventory.reorder.estimatedAmount'), `C$ ${reorderEstimatedAmount.toFixed(2)}`],
+            ].map(([label, value]) => (
+              <div key={label} style={{ padding: '0.7rem', backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: radii.md }}>
+                <div style={{ color: colors.textSecondary, fontSize: font.caption }}>{label}</div>
+                <div style={{ marginTop: '0.2rem', color: colors.textPrimary, fontSize: font.section, fontWeight: 700 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '980px' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: colors.surface }}>
+                <tr>
+                  {[t('inventory.reorder.item'), t('inventory.reorder.currentStock'), t('inventory.table.minStock'), t('inventory.reorder.targetStock'), t('inventory.reorder.suggestedPurchase'), t('inventory.reorder.supplier'), t('inventory.reorder.referenceCost'), t('inventory.reorder.estimatedAmount'), t('inventory.table.actions')].map((title, index) => (
+                    <th key={title} style={{ padding: '0.75rem', textAlign: index === 0 || index === 5 ? 'left' : index === 8 ? 'center' : 'right', borderBottom: `2px solid ${colors.border}`, fontSize: font.caption, fontWeight: 700 }}>{title}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredReorderSuggestions.map(suggestion => (
+                  <tr key={suggestion.itemId} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={{ padding: '0.75rem', fontWeight: 700 }}>{suggestion.itemName}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: suggestion.currentStock < 0 ? colors.danger : colors.textPrimary }}>{suggestion.currentStock.toLocaleString()} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>{suggestion.minStock.toLocaleString()} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.textSecondary }}>{suggestion.targetStock.toLocaleString()} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.teal, fontWeight: 800 }}>{suggestion.suggestedQuantity.toLocaleString()} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem' }}>
+                      <div style={{ color: suggestion.supplierSource === 'unlinked' ? colors.danger : colors.textPrimary, fontWeight: 650 }}>{suggestion.supplierName}</div>
+                      <div style={{ color: colors.textMuted, fontSize: font.caption, marginTop: 2 }}>
+                          {suggestion.supplierSource === 'preferred' ? t('inventory.reorder.preferredSupplier') : suggestion.supplierSource === 'latest-purchase' ? t('inventory.reorder.latestSupplier') : t('inventory.reorder.setSupplierHint')}
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>C$ {suggestion.estimatedUnitCost.toFixed(2)}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700 }}>C$ {suggestion.estimatedAmount.toFixed(2)}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      <button
+                        onClick={() => {
+                          const draft = buildReplenishmentPurchaseDraft(suggestion);
+                          if (draft) {
+                            setPurchaseDraft(draft);
+                            setActiveTab('purchase');
+                            return;
+                          }
+                          const inventoryItem = inventoryItems.find(row => row.id === suggestion.itemId);
+                          if (inventoryItem) {
+                            setEditingItem({ ...inventoryItem });
+                            setShowAddModal(true);
+                          }
+                        }}
+                        style={inventoryActionButtonStyle}
+                      >
+                        {suggestion.supplierSource === 'unlinked' ? t('inventory.reorder.linkSupplier') : t('inventory.reorder.createPurchase')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredReorderSuggestions.length === 0 && (
+              <div style={{ minHeight: 260, display: 'grid', placeItems: 'center', color: colors.textMuted }}>
+                {lowStockSuggestions.length === 0 ? t('inventory.reorder.empty') : t('inventory.reorder.noMatches')}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1436,7 +1604,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       )}
 
       {/* 采购入库管理 */}
-      {activeTab === 'purchase' && (
+      {activeTab === 'purchase' && canManagePurchases && (
         <PurchaseManagement
           suppliers={suppliers}
           setSuppliers={setSuppliers}
@@ -1445,6 +1613,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
           inventoryItems={inventoryItems}
           setInventoryItems={setInventoryItems}
           inventoryCategories={inventoryCategories}
+          initialDraft={purchaseDraft}
+          onInitialDraftConsumed={() => setPurchaseDraft(null)}
         />
       )}
 
@@ -1456,7 +1626,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               type="text"
               value={stockRecordSearchTerm}
               onChange={(event) => setStockRecordSearchTerm(event.target.value)}
-              placeholder="搜索商品、订单号、原因、操作员、冰箱"
+              placeholder={t('inventory.record.search')}
               style={{
                 flex: '1 1 320px',
                 padding: '0.65rem 0.8rem',
@@ -1466,35 +1636,53 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 outline: 'none'
               }}
             />
+            <input
+              type="date"
+              value={stockRecordStartDate}
+              max={stockRecordEndDate}
+              onChange={(event) => setStockRecordStartDate(event.target.value)}
+              aria-label={t('inventory.record.startDate')}
+              style={inventoryInputStyle}
+            />
+            <span style={{ color: colors.textSecondary }}>{t('inventory.record.to')}</span>
+            <input
+              type="date"
+              value={stockRecordEndDate}
+              min={stockRecordStartDate}
+              onChange={(event) => setStockRecordEndDate(event.target.value)}
+              aria-label={t('inventory.record.endDate')}
+              style={inventoryInputStyle}
+            />
+            <button type="button" onClick={() => void loadStockRecords()} disabled={isLoadingStockRecords} style={inventoryActionButtonStyle}>
+              {isLoadingStockRecords ? t('inventory.record.loading') : t('inventory.record.refresh')}
+            </button>
             <span style={{ color: '#6b7280', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-              显示 {filteredStockRecords.length} / {stockRecords.length} 条
+              {t('inventory.record.showing')} {filteredStockRecords.length} / {stockRecords.length}
             </span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>时间</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>商品</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'center', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>类型</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>数量</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>原因</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>操作员</th>
+                  {[t('inventory.record.time'), t('inventory.record.item'), t('inventory.record.location'), t('inventory.record.type'), t('inventory.record.quantity'), t('inventory.record.balance'), t('inventory.record.reason'), t('inventory.record.operator')].map((title, index) => (
+                    <th key={title} style={{ padding: '0.75rem', textAlign: index === 3 ? 'center' : (index === 4 || index === 5 ? 'right' : 'left'), borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{title}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {filteredStockRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
-                      暂无真实出入库记录
+                    <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
+                    {t('inventory.record.empty')}
                     </td>
                   </tr>
                 ) : filteredStockRecords.map(record => (
                   <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>
-                      {formatStockRecordTime(record)}
+                          {formatStockRecordTime(record, language === 'es-NI' ? 'es-NI' : 'zh-CN')}
                     </td>
                     <td style={{ padding: '0.75rem', fontWeight: '600' }}>{record.itemName}</td>
+                        <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordLocation(record, fridgeNamesById, t)}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                       <span style={{
                         padding: '0.25rem 0.5rem',
@@ -1504,14 +1692,17 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         fontSize: '0.75rem',
                         fontWeight: '600'
                       }}>
-                        {record.type === 'in' ? '📥 入库' : (record.type === 'out' ? '📤 出库' : (record.type === 'waste' ? '🗑️ 损耗' : '🔧 调整'))}
+                            {record.type === 'in' ? `📥 ${t('inventory.record.in')}` : (record.type === 'out' ? `📤 ${t('inventory.record.out')}` : (record.type === 'waste' ? `🗑️ ${t('inventory.record.waste')}` : `🔧 ${t('inventory.record.adjust')}`))}
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
                       {formatStockRecordQuantity(record)}
                     </td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordReason(record)}</td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>{formatStockRecordOperator(record.operator)}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                      {formatStockRecordBalance(record)}
+                    </td>
+                        <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordReason(record, t)}</td>
+                        <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>{formatStockRecordOperator(record.operator, t)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1543,21 +1734,21 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             overflow: 'auto'
           }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-              {editingItem.id ? '✏️ 编辑物品' : '➕ 添加库存物品'}
+              {editingItem.id ? `✏️ ${t('inventory.modal.editItem')}` : `➕ ${t('inventory.modal.addItem')}`}
             </h3>
             
             <div style={{ display: 'grid', gap: '1rem' }}>
               {/* 条形码 - 唯一标识 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  条形码（唯一ID）<span style={{ color: '#ef4444' }}>*</span>
+                  {t('inventory.field.barcodeUnique')}<span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input
                     type="text"
                     value={editingItem.barcode || ''}
                     onChange={(e) => setEditingItem({...editingItem, barcode: e.target.value})}
-                    placeholder="请输入或扫描条形码"
+                    placeholder={t('inventory.field.barcodePlaceholder')}
                     style={{
                       flex: 1,
                       padding: '0.6rem',
@@ -1583,25 +1774,25 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         fontWeight: '600'
                       }}
                     >
-                      🔄 重新生成
+                      🔄 {t('inventory.field.regenerate')}
                     </button>
                   )}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                  条形码是唯一标识，用于扫码识别和库存管理
+                  {t('inventory.field.barcodeHelp')}
                 </div>
               </div>
 
               {/* 商品名称 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  商品名称 <span style={{ color: '#ef4444' }}>*</span>
+                  {t('inventory.field.name')} <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
                   value={editingItem.name || ''}
                   onChange={(e) => setEditingItem({...editingItem, name: e.target.value})}
-                  placeholder="输入商品名称"
+                  placeholder={t('inventory.field.namePlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1616,7 +1807,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    类别 <span style={{ color: '#ef4444' }}>*</span>
+                    {t('inventory.table.category')} <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <select
                     value={editingItem.category}
@@ -1641,13 +1832,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    单位 <span style={{ color: '#ef4444' }}>*</span>
+                    {t('inventory.table.unit')} <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="text"
                     value={editingItem.unit || ''}
                     onChange={(e) => setEditingItem({...editingItem, unit: e.target.value})}
-                    placeholder="克、毫升、瓶、个等"
+                    placeholder={t('inventory.field.unitPlaceholder')}
                     style={{
                       width: '100%',
                       padding: '0.6rem',
@@ -1659,11 +1850,34 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </div>
               </div>
 
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
+                  {t('inventory.field.preferredSupplier')}
+                </label>
+                <select
+                  value={editingItem.preferredSupplierId || ''}
+                  onChange={(event) => {
+                    const supplier = suppliers.find(item => item.id === event.target.value);
+                    setEditingItem({
+                      ...editingItem,
+                      preferredSupplierId: supplier?.id || '',
+                      preferredSupplierName: supplier?.name || '',
+                    });
+                  }}
+                  style={{ width: '100%', padding: '0.6rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.9rem', backgroundColor: 'white' }}
+                >
+                  <option value="">{t('inventory.field.autoSupplier')}</option>
+                  {suppliers.filter(supplier => supplier.status !== 'inactive').map(supplier => (
+                    <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* 库存和警戒线 */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    初始库存
+                    {t('inventory.field.initialStock')}
                   </label>
                   <input
                     type="number"
@@ -1681,7 +1895,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    最低警戒线
+                    {t('inventory.field.minStock')}
                   </label>
                   <input
                     type="number"
@@ -1703,7 +1917,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    进价 (C$) <span style={{ color: '#ef4444' }}>*</span>
+                    {t('inventory.field.costPrice')} (C$) <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="number"
@@ -1720,19 +1934,19 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     }}
                   />
                   <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                    所有物品都需要填写进价
+                    {t('inventory.field.costHelp')}
                   </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    售价 (C$)
+                    {t('inventory.field.salePrice')} (C$)
                   </label>
                   <input
                     type="number"
                     step="0.01"
                     value={editingItem.salePrice || ''}
                     onChange={(e) => setEditingItem({...editingItem, salePrice: e.target.value ? parseFloat(e.target.value) : undefined})}
-                    placeholder="仅酒水饮料填写"
+                    placeholder={t('inventory.field.salePlaceholder')}
                     style={{
                       width: '100%',
                       padding: '0.6rem',
@@ -1742,7 +1956,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     }}
                   />
                   <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                    💡 食材原料留空，利润通过菜品计算
+                    💡 {t('inventory.field.saleHelp')}
                   </div>
                 </div>
               </div>
@@ -1756,7 +1970,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   textAlign: 'center'
                 }}>
                   <div style={{ fontSize: '0.85rem', color: '#374151' }}>
-                    单件利润：
+                    {t('inventory.field.unitProfit')}:
                     <span style={{
                       fontSize: '1.2rem',
                       fontWeight: 'bold',
@@ -1775,12 +1989,12 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   borderRadius: '0.375rem',
                   textAlign: 'center'
                 }}>
-                  <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.25rem' }}>💡 盈利计算说明</div>
+                  <div style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.25rem' }}>💡 {t('inventory.field.profitHelpTitle')}</div>
                   <div style={{ fontSize: '0.8rem', color: '#374151' }}>
-                    该物品为食材原料，不直接销售<br/>
-                    利润将通过菜品配方自动计算：<br/>
+                    {t('inventory.field.ingredientHelp')}<br/>
+                    {t('inventory.field.recipeProfitHelp')}<br/>
                     <span style={{ color: '#059669', fontWeight: '600' }}>
-                      菜品利润 = 菜品售价 - 所有原料成本
+                      {t('inventory.field.recipeProfitFormula')}
                     </span>
                   </div>
                 </div>
@@ -1789,7 +2003,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               {/* 标签管理 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  标签（用逗号分隔）
+                  {t('inventory.field.tags')}
                 </label>
                 <input
                   type="text"
@@ -1798,7 +2012,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     const tags = e.target.value.split(',').map(t => t.trim()).filter(t => t);
                     setEditingItem({...editingItem, tags});
                   }}
-                  placeholder="例如：畅销, 新品, 推荐"
+                  placeholder={t('inventory.field.tagsPlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1808,20 +2022,20 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   }}
                 />
                 <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                  当前标签：{(editingItem.tags || []).length > 0 ? (editingItem.tags || []).join('、') : '无'}
+                  {t('inventory.field.currentTags')}: {(editingItem.tags || []).length > 0 ? (editingItem.tags || []).join('、') : t('inventory.field.none')}
                 </div>
               </div>
 
               {/* 存放位置 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  存放位置
+                  {t('inventory.field.location')}
                 </label>
                 <input
                   type="text"
                   value={editingItem.location || ''}
                   onChange={(e) => setEditingItem({...editingItem, location: e.target.value})}
-                  placeholder="如：仓库A、冰箱B"
+                  placeholder={t('inventory.field.locationPlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -1840,7 +2054,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   const itemId = editingItem.id;
                   if (!itemId) return;
 
-                  if (!window.confirm(`\u786e\u5b9a\u8981\u5220\u9664\u7269\u54c1\u201c${editingItem.name}\u201d\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d\uff01`)) {
+                  if (!window.confirm(`${t('inventory.confirm.deleteItem')} “${editingItem.name}”? ${t('inventory.confirm.irreversible')}`)) {
                     return;
                   }
 
@@ -1855,7 +2069,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     await smartDeleteDocument('inventory_items', itemId);
                   } catch (error) {
                     console.error('\u5220\u9664\u5e93\u5b58\u7269\u54c1\u5931\u8d25:', error);
-                    alert('\u5220\u9664\u5e93\u5b58\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                    alert(t('inventory.alert.deleteFailed'));
                     return;
                   }
 
@@ -1871,7 +2085,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     category: 'ingredient',
                     unit: 'lb'
                   });
-                  alert('\u5220\u9664\u6210\u529f\uff01');
+                  alert(t('inventory.alert.deleteSuccess'));
                   }}
                   style={{
                     padding: '0.6rem 1.2rem',
@@ -1883,7 +2097,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     fontWeight: '600'
                   }}
                 >
-                  🗑️ 删除
+                  🗑️ {t('pos.tables.delete')}
                 </button>
               )}
               <button
@@ -1905,12 +2119,12 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   fontWeight: '600'
                 }}
               >
-                取消
+                {t('pos.common.cancel')}
               </button>
               <button
                 onClick={async () => {
                   if (!editingItem.barcode || !editingItem.name) {
-                    alert('请填写条形码和商品名称');
+                    alert(t('inventory.alert.requiredFields'));
                     return;
                   }
                   
@@ -1918,7 +2132,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   if (!editingItem.id) {
                     const duplicateBarcode = inventoryItems.find(item => item.barcode === editingItem.barcode);
                     if (duplicateBarcode) {
-                      alert(`❌ 条形码 ${editingItem.barcode} 已被使用！\n\n商品名称: ${duplicateBarcode.name}\n类别: ${duplicateBarcode.category}\n\n请使用不同的条形码或编辑现有商品。`);
+                      alert(`❌ ${t('inventory.alert.barcodeUsed')} ${editingItem.barcode}\n\n${t('inventory.field.name')}: ${duplicateBarcode.name}\n${t('inventory.table.category')}: ${duplicateBarcode.category}\n\n${t('inventory.alert.useDifferentBarcode')}`);
                       return;
                     }
                   }
@@ -1929,7 +2143,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       item.barcode === editingItem.barcode && item.id !== editingItem.id
                     );
                     if (duplicateBarcode) {
-                      alert(`❌ 条形码 ${editingItem.barcode} 已被其他商品使用！\n\n商品名称: ${duplicateBarcode.name}\n类别: ${duplicateBarcode.category}\n\n请使用不同的条形码。`);
+                      alert(`❌ ${t('inventory.alert.barcodeUsedByOther')} ${editingItem.barcode}\n\n${t('inventory.field.name')}: ${duplicateBarcode.name}\n${t('inventory.table.category')}: ${duplicateBarcode.category}\n\n${t('inventory.alert.useDifferentBarcodeOnly')}`);
                       return;
                     }
                   }
@@ -1942,11 +2156,11 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   );
                   if (duplicateName) {
                     const confirmDuplicate = window.confirm(
-                      `⚠️ 警告：同类别下已存在同名商品！\n\n` +
-                      `商品名称: ${duplicateName.name}\n` +
-                      `类别: ${duplicateName.category}\n` +
-                      `条形码: ${duplicateName.barcode}\n\n` +
-                      `是否继续添加？（建议修改名称或使用不同类别）`
+                      `⚠️ ${t('inventory.alert.duplicateName')}\n\n` +
+                      `${t('inventory.field.name')}: ${duplicateName.name}\n` +
+                      `${t('inventory.table.category')}: ${duplicateName.category}\n` +
+                      `${t('inventory.field.barcode')}: ${duplicateName.barcode}\n\n` +
+                      t('inventory.alert.continueDuplicate')
                     );
                     if (!confirmDuplicate) {
                       return;
@@ -1972,6 +2186,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       salePrice: editingItem.salePrice || 0,
                       tags: editingItem.tags || [],
                       location: editingItem.location,
+                      preferredSupplierId: editingItem.preferredSupplierId || '',
+                      preferredSupplierName: editingItem.preferredSupplierName || '',
                       lastUpdated: new Date(),
                       lastModified: now
                     };
@@ -2022,7 +2238,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       }
                     } catch (error) {
                       console.error('\u540c\u6b65\u7269\u54c1\u5931\u8d25:', error);
-                      alert('\u4fdd\u5b58\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                      alert(t('inventory.alert.saveFailed'));
                       return;
                     }
 
@@ -2042,7 +2258,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       });
                     }
 
-                    alert('\u4fee\u6539\u6210\u529f\uff01');
+                    alert(t('inventory.alert.updateSuccess'));
                   } else {
                     // 添加新物品
                     const now = Date.now();
@@ -2059,6 +2275,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       salePrice: editingItem.salePrice || 0,
                       tags: editingItem.tags || [],
                       location: editingItem.location,
+                      preferredSupplierId: editingItem.preferredSupplierId || '',
+                      preferredSupplierName: editingItem.preferredSupplierName || '',
                       lastUpdated: new Date(),
                       lastModified: now
                     };
@@ -2082,16 +2300,16 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       }
                     } catch (error) {
                       console.error('\u540c\u6b65\u65b0\u7269\u54c1\u5931\u8d25:', error);
-                      alert('\u6dfb\u52a0\u7269\u54c1\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+                      alert(t('inventory.alert.addFailed'));
                       return;
                     }
 
                     setInventoryItems([...inventoryItems, newItem]);
                     if (newMenuItem) {
                       setMenuItems([...menuItems, newMenuItem]);
-                      alert('\u6dfb\u52a0\u6210\u529f\uff01\u5df2\u81ea\u52a8\u540c\u6b65\u5230\u83dc\u5355');
+                      alert(t('inventory.alert.addedAndSynced'));
                     } else {
-                      alert('\u6dfb\u52a0\u6210\u529f\uff01');
+                      alert(t('inventory.alert.addSuccess'));
                     }
                   }
                   
@@ -2112,7 +2330,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   fontWeight: '600'
                 }}
               >
-                {editingItem.id ? '💾 保存修改' : '✅ 确认添加'}
+                {editingItem.id ? `💾 ${t('inventory.modal.saveChanges')}` : `✅ ${t('inventory.modal.confirmAdd')}`}
               </button>
             </div>
           </div>
@@ -2787,18 +3005,18 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             overflow: 'auto'
           }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-              🏷️ 库存类别管理
+              🏷️ {t('inventory.category.title')}
             </h3>
             
             {/* 添加新类别 */}
             <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.375rem' }}>
-              <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.75rem' }}>添加新类别</div>
+              <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.75rem' }}>{t('inventory.category.add')}</div>
               <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr auto', gap: '0.5rem' }}>
                 <input
                   type="text"
                   value={editingInventoryCategory.icon}
                   onChange={(e) => setEditingInventoryCategory({...editingInventoryCategory, icon: e.target.value})}
-                  placeholder="图标"
+                  placeholder={t('inventory.category.icon')}
                   style={{
                     padding: '0.5rem',
                     border: '1px solid #d1d5db',
@@ -2817,7 +3035,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       const key = name ? (editingInventoryCategory.key || `cat_${Date.now()}`) : '';
                       setEditingInventoryCategory({...editingInventoryCategory, name, key});
                     }}
-                    placeholder="类别名称"
+                    placeholder={t('inventory.category.name')}
                     style={{
                       flex: 1,
                       padding: '0.5rem',
@@ -2829,11 +3047,11 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   <button
                     onClick={async () => {
                       if (!editingInventoryCategory.name) {
-                        alert('请填写类别名称');
+                        alert(t('inventory.category.nameRequired'));
                         return;
                       }
                       if (inventoryCategories.find(c => c.key === editingInventoryCategory.key)) {
-                        alert('该类别已存在');
+                        alert(t('inventory.category.exists'));
                         return;
                       }
                       const newCategory = {
@@ -2846,7 +3064,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         await saveInventoryCategoryChange([...inventoryCategories, newCategory], newCategory);
                       } catch (error) {
                         console.error('保存库存类别失败:', error);
-                        alert('保存类别失败，请检查网络后重试');
+                        alert(t('inventory.category.saveFailed'));
                         return;
                       }
                       setEditingInventoryCategory({ key: '', name: '', icon: '📦' });
@@ -2871,7 +3089,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
             {/* 类别列表 */}
             <div>
               <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.75rem', color: '#374151' }}>
-                现有类别 ({inventoryCategories.length})
+                {t('inventory.category.existing')} ({inventoryCategories.length})
               </div>
               <div style={{ display: 'grid', gap: '0.5rem' }}>
                 {inventoryCategories.map((cat, idx) => (
@@ -2888,7 +3106,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       <span style={{ fontSize: '1.5rem' }}>{cat.icon}</span>
                       <div>
                         <div style={{ fontWeight: '600', fontSize: '0.95rem' }}>{cat.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>标识：{cat.key}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('inventory.category.key')}: {cat.key}</div>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -2901,7 +3119,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                             await saveInventoryCategoryOrder(nextCategories);
                           } catch (error) {
                             console.error('保存库存类别排序失败:', error);
-                            alert('保存类别排序失败，请检查网络后重试');
+                            alert(t('inventory.category.orderFailed'));
                           }
                         }}
                         disabled={idx <= 0}
@@ -2927,7 +3145,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                             await saveInventoryCategoryOrder(nextCategories);
                           } catch (error) {
                             console.error('保存库存类别排序失败:', error);
-                            alert('保存类别排序失败，请检查网络后重试');
+                            alert(t('inventory.category.orderFailed'));
                           }
                         }}
                         disabled={idx >= inventoryCategories.length - 1}
@@ -2946,8 +3164,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       </button>
                       <button
                         onClick={async () => {
-                          const newName = prompt('修改类别名称:', cat.name);
-                          const newIcon = prompt('修改图标（Emoji）:', cat.icon);
+                          const newName = prompt(t('inventory.category.editName'), cat.name);
+                          const newIcon = prompt(t('inventory.category.editIcon'), cat.icon);
                           if (newName && newIcon) {
                             const newCats = [...inventoryCategories];
                             const updatedCategory = { ...cat, id: cat.id || cat.key, name: newName, icon: newIcon, lastModified: Date.now() };
@@ -2956,7 +3174,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                               await saveInventoryCategoryChange(newCats, updatedCategory);
                             } catch (error) {
                               console.error('保存库存类别失败:', error);
-                              alert('保存类别失败，请检查网络后重试');
+                              alert(t('inventory.category.saveFailed'));
                             }
                           }
                         }}
@@ -2971,15 +3189,15 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontWeight: '600'
                         }}
                       >
-                        ✏️ 编辑
+                        ✏️ {t('pos.tables.editOne')}
                       </button>
                       <button
                         onClick={async () => {
                           if (inventoryCategories.length <= 1) {
-                            alert('至少需要保留一个类别');
+                            alert(t('inventory.category.keepOne'));
                             return;
                           }
-                          if (!window.confirm(`确定要删除类别“${cat.name}”吗？`)) {
+                          if (!window.confirm(`${t('inventory.category.deleteConfirm')} “${cat.name}”?`)) {
                             return;
                           }
                           const nextCategories = inventoryCategories.filter((_, i) => i !== idx);
@@ -2987,7 +3205,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                             await deleteInventoryCategoryFromCloud(nextCategories, cat);
                           } catch (error) {
                             console.error('删除库存类别失败:', error);
-                            alert('删除类别失败，请检查网络后重试');
+                            alert(t('inventory.category.deleteFailed'));
                             return;
                           }
                         }}
@@ -3002,7 +3220,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           fontWeight: '600'
                         }}
                       >
-                        🗑️ 删除
+                        🗑️ {t('pos.tables.delete')}
                       </button>
                     </div>
                   </div>
@@ -3026,7 +3244,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   fontWeight: '600'
                 }}
               >
-                关闭
+                {t('pos.common.close')}
               </button>
             </div>
           </div>

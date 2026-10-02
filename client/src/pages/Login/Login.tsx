@@ -4,11 +4,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import { firebaseLogin, createFirebaseUser } from '../../services/FirebaseAuthService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import logo from '../../logo.svg';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey, UiLanguage } from '../../i18n/translations';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { login } = useAuth();
+  const { language, setLanguage, t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -47,6 +50,8 @@ const Login: React.FC = () => {
         role: appUser.role,
         storeId: appUser.storeId,
         storeName: appUser.storeName,
+        storeIds: appUser.storeIds,
+        assignedStores: appUser.assignedStores,
       };
 
       login(loggedInUser);
@@ -59,6 +64,7 @@ const Login: React.FC = () => {
             navigate('/dashboard');
             break;
           case 'store_manager':
+          case 'multi_store_manager':
             navigate('/manager');
             break;
           case 'cashier':
@@ -76,7 +82,14 @@ const Login: React.FC = () => {
       }
     } catch (err: any) {
       console.error('登录失败:', err);
-      setError(err.message || '登录失败，请重试');
+      const errorKey: TranslationKey = err?.code === 'auth/invalid-credential'
+        ? 'login.errorInvalidCredentials'
+        : err?.code === 'auth/network-request-failed'
+          ? 'login.errorNetwork'
+          : err?.code === 'auth/too-many-requests'
+            ? 'login.errorTooManyRequests'
+            : 'login.errorGeneric';
+      setError(t(errorKey));
     } finally {
       setIsLoading(false);
     }
@@ -112,6 +125,8 @@ const Login: React.FC = () => {
             role: user.role,
             storeId: user.storeId,
             storeName: user.storeName,
+            storeIds: user.storeIds,
+            assignedStores: user.assignedStores,
           }
         );
         return migratedUser;
@@ -124,6 +139,8 @@ const Login: React.FC = () => {
           role: user.role,
           storeId: user.storeId,
           storeName: user.storeName,
+          storeIds: user.storeIds,
+          assignedStores: user.assignedStores,
         };
       }
     } catch (error) {
@@ -192,7 +209,7 @@ const Login: React.FC = () => {
             Restaurant POS
           </h1>
           <p style={{ marginTop: '1rem', maxWidth: '32rem', color: 'rgba(255,255,255,0.78)', fontSize: '1rem', lineHeight: 1.65 }}>
-            连锁餐厅运营管理系统。收银、厨房、库存、财务、员工和分店数据统一管理。
+            {t('login.tagline')}
           </p>
         </div>
         <div style={{
@@ -203,8 +220,8 @@ const Login: React.FC = () => {
           gap: '0.85rem',
           maxWidth: '34rem',
         }}>
-          {['POS 收银', '库存管理', '财务报表'].map(item => (
-            <div key={item} style={{
+          {(['login.feature.pos', 'login.feature.inventory', 'login.feature.finance'] as TranslationKey[]).map(key => (
+            <div key={key} style={{
               padding: '0.85rem',
               borderRadius: radii.lg,
               background: 'rgba(255,255,255,0.12)',
@@ -212,7 +229,7 @@ const Login: React.FC = () => {
               fontSize: font.body,
               fontWeight: 700,
             }}>
-              {item}
+              {t(key)}
             </div>
           ))}
         </div>
@@ -234,6 +251,35 @@ const Login: React.FC = () => {
           boxShadow: shadows.soft,
           border: `1px solid ${colors.border}`,
         }}>
+          <div
+            role="group"
+            aria-label={t('language.label')}
+            style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.35rem', marginBottom: '1rem' }}
+          >
+            {([
+              ['zh-CN', t('language.chinese')],
+              ['es-NI', t('language.spanish')],
+            ] as Array<[UiLanguage, string]>).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={language === value}
+                onClick={() => setLanguage(value)}
+                style={{
+                  minWidth: '5.25rem',
+                  padding: '0.5rem 0.75rem',
+                  borderRadius: radii.md,
+                  border: `1px solid ${language === value ? colors.teal : colors.border}`,
+                  background: language === value ? colors.tealSoft : colors.surface,
+                  color: language === value ? colors.teal : colors.textSecondary,
+                  fontWeight: language === value ? 750 : 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div>
             <div style={{
               display: 'inline-flex',
@@ -247,13 +293,13 @@ const Login: React.FC = () => {
               fontWeight: 750,
               marginBottom: '1rem',
             }}>
-              Secure access
+              {t('login.secureAccess')}
             </div>
             <h2 style={{ fontSize: '1.55rem', fontWeight: 800, color: colors.textPrimary, margin: 0 }}>
-              登录系统
+              {t('login.title')}
             </h2>
             <p style={{ marginTop: '0.45rem', fontSize: font.body, color: colors.textSecondary }}>
-              请输入门店账号继续操作。
+              {t('login.subtitle')}
             </p>
           </div>
 
@@ -275,13 +321,13 @@ const Login: React.FC = () => {
 
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', fontSize: font.body, fontWeight: 700, color: colors.textPrimary, marginBottom: '0.45rem' }}>
-                用户名
+                {t('login.username')}
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="例如：admin 或 zeng"
+                placeholder={t('login.usernamePlaceholder')}
                 required
                 style={{
                   width: '100%',
@@ -298,13 +344,13 @@ const Login: React.FC = () => {
 
             <div style={{ marginBottom: '1.35rem' }}>
               <label style={{ display: 'block', fontSize: font.body, fontWeight: 700, color: colors.textPrimary, marginBottom: '0.45rem' }}>
-                密码
+                {t('login.password')}
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="请输入密码"
+                placeholder={t('login.passwordPlaceholder')}
                 required
                 style={{
                   width: '100%',
@@ -335,7 +381,7 @@ const Login: React.FC = () => {
                 boxShadow: isLoading ? 'none' : '0 12px 24px rgba(15, 118, 110, 0.22)',
               }}
             >
-              {isLoading ? '登录中...' : '登录系统'}
+              {isLoading ? t('login.submitting') : t('login.submit')}
             </button>
 
             <div style={{
@@ -348,9 +394,9 @@ const Login: React.FC = () => {
               lineHeight: 1.55,
               border: `1px solid ${colors.border}`,
             }}>
-              <div style={{ fontWeight: 750, color: colors.textPrimary, marginBottom: '0.35rem' }}>账号说明</div>
-              <div>老板账号用于查看分店数据；店长账号进入门店经营管理。</div>
-              <div style={{ marginTop: '0.35rem' }}>如需新建门店账号，请在老板后台的分店和权限管理中维护。</div>
+              <div style={{ fontWeight: 750, color: colors.textPrimary, marginBottom: '0.35rem' }}>{t('login.accountHelpTitle')}</div>
+              <div>{t('login.accountHelpLine1')}</div>
+              <div style={{ marginTop: '0.35rem' }}>{t('login.accountHelpLine2')}</div>
             </div>
           </form>
         </div>

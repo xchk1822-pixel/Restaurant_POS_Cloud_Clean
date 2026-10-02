@@ -1,9 +1,11 @@
 import {
+  buildProvisionalOrderNumber,
   hasNewerCloudOrders,
   getPosOrderCardColor,
   getPosOrderStatusText,
   getPosLifecycleSnapshot,
   isDisplayablePosOrder,
+  isProvisionalOrderNumber,
   mergeOrdersByVersion,
   reconcileTableStatusFromOrders,
   type PosLifecycleOrder,
@@ -41,6 +43,14 @@ const baseTable = (overrides: Partial<PosLifecycleTable> = {}): PosLifecycleTabl
 });
 
 describe('POS lifecycle merge rules', () => {
+  test('offline order numbers are unique provisional values, never formal daily numbers', () => {
+    const orderNumber = buildProvisionalOrderNumber('0713', 'TERM9A2B', 4);
+
+    expect(orderNumber).toBe('OFF-0713-TERM9A2B-004');
+    expect(isProvisionalOrderNumber(orderNumber)).toBe(true);
+    expect(isProvisionalOrderNumber('0713004')).toBe(false);
+  });
+
   test('cloud completed state overrides a stale paid local order even when local timestamp is newer', () => {
     const localOrder = baseOrder({
       status: 'served',
@@ -80,6 +90,10 @@ describe('POS lifecycle merge rules', () => {
 
     expect(merged.status).toBe('cancelled');
     expect(isDisplayablePosOrder(merged)).toBe(true);
+  });
+
+  test('deleted POS orders are not displayable in the active order list', () => {
+    expect(isDisplayablePosOrder(baseOrder({ isDeleted: true } as Partial<PosLifecycleOrder>))).toBe(false);
   });
 
   test('local completed order is not regressed by an older unpaid cloud snapshot', () => {
@@ -125,6 +139,43 @@ describe('POS lifecycle merge rules', () => {
       completedAt: localOrder.completedAt,
       stockDeducted: true,
     });
+  });
+
+  test('completed order cannot be replaced by a later cancelled snapshot', () => {
+    const localOrder = baseOrder({
+      status: 'completed',
+      paymentStatus: 'paid',
+      completedAt: new Date('2026-06-30T10:15:00-06:00'),
+      clearedAt: new Date('2026-06-30T10:15:00-06:00'),
+      lastModified: 5000,
+    });
+    const cloudOrder = baseOrder({
+      status: 'cancelled',
+      cancelledAt: new Date('2026-06-30T10:20:00-06:00'),
+      lastModified: 6000,
+    } as Partial<PosLifecycleOrder>);
+
+    expect(hasNewerCloudOrders([cloudOrder], [localOrder])).toBe(false);
+    expect(mergeOrdersByVersion([localOrder], [cloudOrder])[0].status).toBe('completed');
+  });
+
+  test('cancelled order cannot be replaced by a later completed snapshot', () => {
+    const localOrder = baseOrder({
+      status: 'cancelled',
+      cancelReason: 'Cliente cancelo',
+      cancelledAt: new Date('2026-06-30T10:15:00-06:00'),
+      lastModified: 5000,
+    } as Partial<PosLifecycleOrder>);
+    const cloudOrder = baseOrder({
+      status: 'completed',
+      paymentStatus: 'paid',
+      completedAt: new Date('2026-06-30T10:20:00-06:00'),
+      clearedAt: new Date('2026-06-30T10:20:00-06:00'),
+      lastModified: 6000,
+    });
+
+    expect(hasNewerCloudOrders([cloudOrder], [localOrder])).toBe(false);
+    expect(mergeOrdersByVersion([localOrder], [cloudOrder])[0].status).toBe('cancelled');
   });
 
   test('table status follows unpaid, paid, completed, and cancelled order states', () => {

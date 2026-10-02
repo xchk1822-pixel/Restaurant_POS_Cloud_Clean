@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { smartSetDocument } from '../../services/smartSyncService';
 import { useAuth } from '../../contexts/AuthContext';
+import { useI18n } from '../../i18n/I18nContext';
+import { resolveMonthlySalary } from '../../utils/employeeSalary';
 
 interface Employee {
   id: string;
@@ -12,6 +14,7 @@ interface Employee {
   hireDate: string;
   status: 'active' | 'inactive';
   dailyRate: number;
+  monthlySalary?: number;
   overtimeRate: number;
 }
 
@@ -33,14 +36,17 @@ interface AttendanceManagementProps {
   employees: Employee[];
   attendanceRecords: AttendanceRecord[];
   setAttendanceRecords: React.Dispatch<React.SetStateAction<AttendanceRecord[]>>;
+  view: 'checkin' | 'records';
 }
 
 const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   employees,
   attendanceRecords,
   setAttendanceRecords,
+  view,
 }) => {
   const { user } = useAuth();
+  const { t } = useI18n();
   const getCurrentMonthAttendanceDefaultRange = useCallback((records: AttendanceRecord[] = attendanceRecords) => {
     const today = getLocalDateString();
     const monthPrefix = today.slice(0, 8);
@@ -60,7 +66,6 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   }, [attendanceRecords]);
   const attendanceDefaultRange = getCurrentMonthAttendanceDefaultRange();
   const attendanceRangeTouchedRef = useRef(false);
-  const [activeTab, setActiveTab] = useState<'checkin' | 'records'>('checkin');
   const [selectedDate, setSelectedDate] = useState(getLocalDateString());
   const [printStartDate, setPrintStartDate] = useState(attendanceDefaultRange.startDate);
   const [printEndDate, setPrintEndDate] = useState(getLocalDateString());
@@ -72,7 +77,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     status: 'normal' as AttendanceRecord['status'],
     notes: ''
   });
-  const canRepairAttendance = user?.role === 'store_manager' || user?.role === 'super_admin';
+  const canRepairAttendance = user?.role === 'store_manager' || user?.role === 'multi_store_manager' || user?.role === 'super_admin';
   const attendanceActionLocksRef = useRef<Set<string>>(new Set());
   const [attendanceActionKeys, setAttendanceActionKeys] = useState<Set<string>>(new Set());
 
@@ -133,17 +138,17 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     let recordToSave: AttendanceRecord;
     if (existingRecord) {
       if (type === 'in' && existingRecord.checkIn) {
-        alert('Entrada ya marcada');
+        alert(t('attendance.alert.alreadyIn'));
         return;
       }
 
       if (type === 'out') {
         if (!existingRecord.checkIn) {
-          alert('Primero marque entrada');
+          alert(t('attendance.alert.markInFirst'));
           return;
         }
         if (existingRecord.checkOut) {
-          alert('Salida ya marcada');
+          alert(t('attendance.alert.alreadyOut'));
           return;
         }
         recordToSave = {
@@ -165,7 +170,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       );
     } else {
       if (type === 'out') {
-        alert('Primero marque entrada');
+        alert(t('attendance.alert.markInFirst'));
         return;
       }
       recordToSave = {
@@ -179,7 +184,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       updatedRecords = [...attendanceRecords, recordToSave];
     }
 
-    const actionKey = `${employeeId}-${attendanceDate}-${type}`;
+    const actionKey = `${employeeId}-${attendanceDate}`;
     if (!lockAttendanceAction(actionKey)) {
       return;
     }
@@ -189,7 +194,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       setAttendanceRecords(updatedRecords);
     } catch (error) {
       console.error('Guardar asistencia fallo:', error);
-      alert('Guardar asistencia fallo, revise la red e intente otra vez');
+      alert(t('attendance.alert.saveFailed'));
     } finally {
       unlockAttendanceAction(actionKey);
     }
@@ -204,7 +209,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
 
   const openRepairAttendance = (employeeId: string) => {
     if (!canRepairAttendance) {
-      alert('Solo gerente puede corregir asistencia');
+      alert(t('attendance.alert.managerOnly'));
       return;
     }
 
@@ -224,12 +229,12 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
 
   const saveAttendanceRepair = async () => {
     if (!canRepairAttendance) {
-      alert('Solo gerente puede corregir asistencia');
+      alert(t('attendance.alert.managerOnly'));
       return;
     }
 
     if (!repairForm.employeeId || !repairForm.date) {
-      alert('Seleccione empleado y fecha');
+      alert(t('attendance.alert.selectEmployeeDate'));
       return;
     }
 
@@ -262,13 +267,13 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       });
     } catch (error) {
       console.error('Guardar correccion de asistencia fallo:', error);
-      alert('Guardar correccion fallo, revise la red e intente otra vez');
+      alert(t('attendance.alert.repairFailed'));
     }
   };
 
   const handleQuickMark = async (employeeId: string, status: 'rest' | 'absent') => {
     const today = selectedDate;
-    const actionKey = `${employeeId}-${today}-${status}`;
+    const actionKey = `${employeeId}-${today}`;
     if (!lockAttendanceAction(actionKey)) {
       return;
     }
@@ -306,7 +311,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       setAttendanceRecords(updatedRecords);
     } catch (error) {
       console.error('Guardar asistencia fallo:', error);
-      alert('Guardar asistencia fallo, revise la red e intente otra vez');
+      alert(t('attendance.alert.saveFailed'));
     } finally {
       unlockAttendanceAction(actionKey);
     }
@@ -316,19 +321,20 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   const printEmployeeAttendance = (employeeId: string) => {
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
+    const employeeName = String(emp.name || '').trim() || `Empleado ${employeeId}`;
 
     const employeeRecords = attendanceRecords
       .filter(r => r.employeeId === employeeId && r.date >= printStartDate && r.date <= printEndDate)
       .sort((a, b) => a.date.localeCompare(b.date));
     
     if (employeeRecords.length === 0) {
-      alert('Este empleado no tiene registros de asistencia');
+      alert(t('attendance.alert.noRecords'));
       return;
     }
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('Permita las ventanas emergentes para imprimir el registro de asistencia');
+      alert(t('attendance.alert.allowPopup'));
       return;
     }
 
@@ -341,12 +347,13 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     const absentDays = printableRecords.filter(r => r.status === 'absent').length;
     const leaveDays = printableRecords.filter(r => r.status === 'leave').length;
     const totalWorkHours = printableRecords.reduce((sum, r) => sum + r.workHours, 0);
+    const totalOvertimeHours = printableRecords.reduce((sum, r) => sum + Math.max((r.workHours || 0) - 9, 0), 0);
 
     const content = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Registro de asistencia - ${emp.name}</title>
+        <title>Registro de asistencia - ${employeeName}</title>
         <style>
           @page { size: A4 portrait; margin: 9mm; }
           * { box-sizing: border-box; }
@@ -360,7 +367,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
           .info-row:last-child { margin-bottom: 0; }
           .info-label { font-weight: bold; color: #4b5563; }
           .info-value { color: #333; }
-          .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 8px; }
+          .stats { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 8px; }
           .stat-box { background: #f3f4f6; padding: 6px 4px; border-radius: 5px; text-align: center; border: 1px solid #e5e7eb; }
           .stat-label { font-size: 9px; color: #6b7280; margin-bottom: 2px; }
           .stat-value { font-size: 14px; font-weight: bold; color: #1f2937; line-height: 1.1; }
@@ -369,11 +376,12 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
           table { width: 100%; border-collapse: collapse; font-size: 10.5px; table-layout: fixed; }
           th, td { padding: 4px 5px; text-align: left; border: 1px solid #e5e7eb; line-height: 1.2; height: 21px; }
           th { background-color: #f3f4f6; font-weight: bold; color: #374151; }
-          th:nth-child(1), td:nth-child(1) { width: 26%; }
+          th:nth-child(1), td:nth-child(1) { width: 22%; }
           th:nth-child(2), td:nth-child(2),
-          th:nth-child(3), td:nth-child(3) { width: 18%; }
-          th:nth-child(4), td:nth-child(4) { width: 18%; }
-          th:nth-child(5), td:nth-child(5) { width: 20%; }
+          th:nth-child(3), td:nth-child(3) { width: 15%; }
+          th:nth-child(4), td:nth-child(4),
+          th:nth-child(5), td:nth-child(5) { width: 14%; }
+          th:nth-child(6), td:nth-child(6) { width: 20%; }
           .status-normal { color: #10b981; font-weight: 600; }
           .status-late { color: #f59e0b; font-weight: 600; }
           .status-absent { color: #ef4444; font-weight: 600; }
@@ -394,21 +402,21 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
         <div class="print-sheet">
           <div class="header">
             <div class="title">Registro de Asistencia</div>
-            <div class="subtitle">${emp.name} - ${emp.position}</div>
+            <div class="subtitle">${employeeName} - ${emp.position || '-'}</div>
           </div>
 
           <div class="info-section">
             <div class="info-row">
               <span class="info-label">Empleado:</span>
-              <span class="info-value">${emp.name}</span>
+              <span class="info-value">${employeeName}</span>
               <span class="info-label">Puesto:</span>
               <span class="info-value">${emp.position}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Area:</span>
               <span class="info-value">${emp.department || '-'}</span>
-              <span class="info-label">Salario dia:</span>
-              <span class="info-value">C$ ${emp.dailyRate.toFixed(2)}</span>
+              <span class="info-label">Salario mensual:</span>
+              <span class="info-value">C$ ${resolveMonthlySalary(emp).toFixed(0)}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Periodo:</span>
@@ -443,6 +451,10 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
               <div class="stat-label">Horas</div>
               <div class="stat-value" style="color: #3b82f6;">${totalWorkHours.toFixed(1)}h</div>
             </div>
+            <div class="stat-box">
+              <div class="stat-label">Horas extra</div>
+              <div class="stat-value" style="color: #7c3aed;">${totalOvertimeHours.toFixed(1)}h</div>
+            </div>
           </div>
 
           <div class="section-title">
@@ -456,6 +468,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                 <th>Entrada</th>
                 <th>Salida</th>
                 <th>Horas</th>
+                <th>Extra</th>
                 <th>Estado</th>
               </tr>
             </thead>
@@ -487,6 +500,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                     <td>${record.checkIn || '-'}</td>
                     <td>${record.checkOut || '-'}</td>
                     <td>${record.workHours > 0 ? record.workHours.toFixed(1) + 'h' : '-'}</td>
+                    <td>${record.workHours > 9 ? (record.workHours - 9).toFixed(1) + 'h' : '-'}</td>
                     <td class="${statusClass}">${statusText}</td>
                   </tr>
                 `;
@@ -522,6 +536,15 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
     setTimeout(() => {
       printWindow.print();
     }, 250);
+  };
+
+  const positionLabels: Record<string, string> = {
+    '收银员': t('employee.position.cashier'),
+    '服务员': t('employee.position.waiter'),
+    '厨师': t('employee.position.chef'),
+    '帮厨': t('employee.position.kitchenAssistant'),
+    '店长': t('employee.position.manager'),
+    '副店长': t('employee.position.assistantManager'),
   };
 
   const styles = {
@@ -589,26 +612,11 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   return (
     <div style={styles.container}>
       {/* Tab鍒囨崲 */}
-      <div style={styles.tabs}>
-        <button
-          onClick={() => setActiveTab('checkin')}
-          style={styles.tab(activeTab === 'checkin')}
-        >
-          Marcar asistencia
-        </button>
-        <button
-          onClick={() => setActiveTab('records')}
-          style={styles.tab(activeTab === 'records')}
-        >
-          Registro
-        </button>
-      </div>
-
       {/* 蹇€熸墦鍗?*/}
-      {activeTab === 'checkin' && (
+      {view === 'checkin' && (
         <div style={styles.card}>
           <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>Marcar asistencia</h2>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0 }}>{t('attendance.markTitle')}</h2>
             <input
               type="date"
               value={selectedDate}
@@ -627,11 +635,11 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
               const todayRecord = attendanceRecords.find(
                 r => r.employeeId === emp.id && r.date === selectedDate
               );
-              const checkInPending = isAttendanceActionPending(`${emp.id}-${selectedDate}-in`);
-              const checkOutPending = isAttendanceActionPending(`${emp.id}-${selectedDate}-out`);
-              const restPending = isAttendanceActionPending(`${emp.id}-${selectedDate}-rest`);
-              const absentPending = isAttendanceActionPending(`${emp.id}-${selectedDate}-absent`);
-              const quickMarkLocked = Boolean(todayRecord) || restPending || absentPending;
+              const attendanceActionPending = isAttendanceActionPending(`${emp.id}-${selectedDate}`);
+              const dayClosedByStatus = todayRecord?.status === 'rest' || todayRecord?.status === 'absent';
+              const checkInLocked = Boolean(todayRecord) || attendanceActionPending;
+              const checkOutLocked = dayClosedByStatus || !todayRecord?.checkIn || Boolean(todayRecord?.checkOut) || attendanceActionPending;
+              const quickMarkLocked = Boolean(todayRecord) || attendanceActionPending;
               return (
                 <div key={emp.id} style={{
                   padding: '1rem',
@@ -641,44 +649,44 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                 }}>
                   <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>{emp.name}</div>
                   <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-                    {emp.position}
+                    {positionLabels[emp.position] || emp.position}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     {/* 鎵撳崱鎸夐挳 */}
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button
                         onClick={() => handleCheckIn(emp.id, 'in')}
-                        disabled={!!todayRecord?.checkIn || checkInPending}
+                        disabled={checkInLocked}
                         style={{
                           flex: 1,
                           padding: '0.5rem',
-                          background: todayRecord?.checkIn || checkInPending ? '#9ca3af' : '#3b82f6',
+                          background: checkInLocked ? '#9ca3af' : '#3b82f6',
                           color: 'white',
                           border: 'none',
                           borderRadius: '0.5rem',
-                          cursor: todayRecord?.checkIn || checkInPending ? 'not-allowed' : 'pointer',
+                          cursor: checkInLocked ? 'not-allowed' : 'pointer',
                           fontWeight: '600',
                           fontSize: '0.75rem',
                         }}
                       >
-                        {todayRecord?.checkIn ? 'Entrada marcada' : 'Marcar entrada'}
+                        {todayRecord?.checkIn ? t('attendance.markedIn') : t('attendance.markIn')}
                       </button>
                       <button
                         onClick={() => handleCheckIn(emp.id, 'out')}
-                        disabled={!todayRecord?.checkIn || !!todayRecord?.checkOut || checkOutPending}
+                        disabled={checkOutLocked}
                         style={{
                           flex: 1,
                           padding: '0.5rem',
-                          background: !todayRecord?.checkIn || checkOutPending ? '#9ca3af' : todayRecord?.checkOut ? '#10b981' : '#f59e0b',
+                          background: dayClosedByStatus || !todayRecord?.checkIn || attendanceActionPending ? '#9ca3af' : todayRecord?.checkOut ? '#10b981' : '#f59e0b',
                           color: 'white',
                           border: 'none',
                           borderRadius: '0.5rem',
-                          cursor: (!todayRecord?.checkIn || todayRecord?.checkOut || checkOutPending) ? 'not-allowed' : 'pointer',
+                          cursor: checkOutLocked ? 'not-allowed' : 'pointer',
                           fontWeight: '600',
                           fontSize: '0.75rem',
                         }}
                       >
-                        {todayRecord?.checkOut ? 'Salida marcada' : 'Marcar salida'}
+                        {todayRecord?.checkOut ? t('attendance.markedOut') : t('attendance.markOut')}
                       </button>
                     </div>
                     
@@ -690,8 +698,8 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                         style={{
                           flex: 1,
                           padding: '0.4rem',
-                          background: todayRecord?.status === 'rest' || restPending ? '#8b5cf6' : '#e5e7eb',
-                          color: todayRecord?.status === 'rest' || restPending ? 'white' : '#374151',
+                          background: todayRecord?.status === 'rest' ? '#8b5cf6' : '#e5e7eb',
+                          color: todayRecord?.status === 'rest' ? 'white' : '#374151',
                           border: 'none',
                           borderRadius: '0.375rem',
                           cursor: quickMarkLocked ? 'not-allowed' : 'pointer',
@@ -699,7 +707,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                           fontSize: '0.7rem',
                         }}
                       >
-                        Descanso
+                        {t('attendance.status.rest')}
                       </button>
                       <button
                         onClick={() => handleQuickMark(emp.id, 'absent')}
@@ -707,8 +715,8 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                         style={{
                           flex: 1,
                           padding: '0.4rem',
-                          background: todayRecord?.status === 'absent' || absentPending ? '#ef4444' : '#e5e7eb',
-                          color: todayRecord?.status === 'absent' || absentPending ? 'white' : '#374151',
+                          background: todayRecord?.status === 'absent' ? '#ef4444' : '#e5e7eb',
+                          color: todayRecord?.status === 'absent' ? 'white' : '#374151',
                           border: 'none',
                           borderRadius: '0.375rem',
                           cursor: quickMarkLocked ? 'not-allowed' : 'pointer',
@@ -716,7 +724,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                           fontSize: '0.7rem',
                         }}
                       >
-                        Ausente
+                        {t('attendance.status.absent')}
                       </button>
                     </div>
                   </div>
@@ -728,9 +736,9 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       )}
 
       {/* 鑰冨嫟璁板綍 - 鎸夊憳宸ユ樉绀猴紝姣忎汉鍙墦鍗?*/}
-      {activeTab === 'records' && (
+      {view === 'records' && (
         <div style={styles.card}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '1.5rem' }}>Registro de asistencia</h2>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '1.5rem' }}>{t('attendance.recordsTitle')}</h2>
 
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
             <input
@@ -766,20 +774,20 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                     {emp.name}
                   </div>
                   <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem' }}>
-                    {emp.position}
+                    {positionLabels[emp.position] || emp.position}
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
                     <div style={{ textAlign: 'center', padding: '0.5rem', background: 'white', borderRadius: '0.5rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Dias</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('attendance.days')}</div>
                       <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937' }}>{totalDays}</div>
                     </div>
                     <div style={{ textAlign: 'center', padding: '0.5rem', background: 'white', borderRadius: '0.5rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Trabajo</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('attendance.workDays')}</div>
                       <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#10b981' }}>{workDays}</div>
                     </div>
                     <div style={{ textAlign: 'center', padding: '0.5rem', background: 'white', borderRadius: '0.5rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Descanso</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('attendance.status.rest')}</div>
                       <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#8b5cf6' }}>{restDays}</div>
                     </div>
                   </div>
@@ -803,7 +811,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                       gap: '0.5rem',
                     }}
                   >
-                    Imprimir asistencia
+                    {t('attendance.print')}
                   </button>
                   
                   {canRepairAttendance && (
@@ -822,13 +830,13 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                         fontSize: '0.875rem',
                       }}
                     >
-                      Corregir hora
+                      {t('attendance.repairTime')}
                     </button>
                   )}
 
                   {totalDays === 0 && (
                     <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#9ca3af', textAlign: 'center' }}>
-                      Sin registros de asistencia
+                      {t('attendance.noRecords')}
                     </div>
                   )}
                 </div>
@@ -856,10 +864,10 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
             width: 'min(480px, 100%)',
             boxShadow: '0 20px 40px rgba(15, 23, 42, 0.25)'
           }}>
-            <h3 style={{ marginTop: 0, marginBottom: '0.85rem', fontSize: '1.1rem' }}>Corregir asistencia</h3>
+            <h3 style={{ marginTop: 0, marginBottom: '0.85rem', fontSize: '1.1rem' }}>{t('attendance.repairTitle')}</h3>
             <div style={{ display: 'grid', gap: '0.75rem' }}>
               <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                Fecha
+                {t('attendance.date')}
                 <input
                   type="date"
                   value={repairForm.date}
@@ -869,7 +877,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                  Entrada
+                  {t('attendance.checkIn')}
                   <input
                     type="time"
                     value={repairForm.checkIn}
@@ -878,7 +886,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                   />
                 </label>
                 <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                  Salida
+                  {t('attendance.checkOut')}
                   <input
                     type="time"
                     value={repairForm.checkOut}
@@ -888,26 +896,26 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                 </label>
               </div>
               <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                Estado
+                {t('attendance.status')}
                 <select
                   value={repairForm.status}
                   onChange={(e) => setRepairForm({ ...repairForm, status: e.target.value as AttendanceRecord['status'] })}
                   style={{ padding: '0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
                 >
-                  <option value="normal">Normal</option>
-                  <option value="rest">Descanso</option>
-                  <option value="absent">Ausente</option>
-                  <option value="leave">Permiso</option>
-                  <option value="late">Tarde</option>
-                  <option value="early_leave">Salida temprano</option>
+                  <option value="normal">{t('attendance.status.normal')}</option>
+                  <option value="rest">{t('attendance.status.rest')}</option>
+                  <option value="absent">{t('attendance.status.absent')}</option>
+                  <option value="leave">{t('attendance.status.leave')}</option>
+                  <option value="late">{t('attendance.status.late')}</option>
+                  <option value="early_leave">{t('attendance.status.earlyLeave')}</option>
                 </select>
               </label>
               <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                Nota
+                {t('attendance.note')}
                 <input
                   value={repairForm.notes}
                   onChange={(e) => setRepairForm({ ...repairForm, notes: e.target.value })}
-                  placeholder="Motivo de correccion"
+                  placeholder={t('attendance.repairReason')}
                   style={{ padding: '0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
                 />
               </label>
@@ -917,13 +925,13 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                 onClick={() => setRepairForm({ employeeId: '', date: getLocalDateString(), checkIn: '', checkOut: '', status: 'normal', notes: '' })}
                 style={{ padding: '0.6rem 1rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', background: 'white', cursor: 'pointer' }}
               >
-                Cancelar
+                {t('employee.cancel')}
               </button>
               <button
                 onClick={saveAttendanceRepair}
                 style={{ padding: '0.6rem 1rem', border: 'none', borderRadius: '0.5rem', background: '#10b981', color: 'white', fontWeight: 700, cursor: 'pointer' }}
               >
-                Guardar
+                {t('employee.save')}
               </button>
             </div>
           </div>

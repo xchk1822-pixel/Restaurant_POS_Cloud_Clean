@@ -38,6 +38,16 @@ export const getLocalDateString = (date: Date = new Date()): string => {
 
 export const getTodayString = (): string => getLocalDateString();
 
+export const toLocalDateKey = (value: any): string => {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized;
+  }
+
+  const timestamp = toTimestampMillis(value);
+  return timestamp ? getLocalDateString(new Date(timestamp)) : '';
+};
+
 export const toTimestampMillis = (value: any): number => {
   if (!value) return 0;
 
@@ -61,6 +71,16 @@ export const toTimestampMillis = (value: any): number => {
 
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+};
+
+export const getInclusiveLocalDateKeys = (startDate: string, endDate: string): string[] => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return [];
+  const [from, to] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  const dates: string[] = [];
+  for (let time = toTimestampMillis(from); time <= toTimestampMillis(to); time += 86400000) {
+    dates.push(getLocalDateString(new Date(time)));
+  }
+  return dates;
 };
 
 export const parseLocalDateTime = (dateTimeStr: string): Date => {

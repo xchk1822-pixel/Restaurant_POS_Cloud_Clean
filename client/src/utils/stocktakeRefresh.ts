@@ -31,6 +31,40 @@ export const normalizeFridgeInventoryForRefresh = (records: any[]) => {
   }));
 };
 
+const toSafeText = (value: unknown, fallback = ''): string => {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : fallback;
+};
+
+const toSafeNumber = (value: unknown): number => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
+};
+
+export const buildFridgeStocktakeViewItems = (
+  records: any[],
+  inventoryItems: any[],
+  selectedFridge: string,
+  unknownItemName: string
+) => {
+  return records
+    .filter(record => record && record.fridgeId === selectedFridge && record.itemId)
+    .map(record => {
+      const inventoryItem = inventoryItems.find(item => item?.id === record.itemId);
+      return {
+        ...record,
+        fridgeId: toSafeText(record.fridgeId),
+        itemId: toSafeText(record.itemId),
+        quantity: toSafeNumber(record.quantity),
+        sortOrder: record.sortOrder === undefined ? undefined : toSafeNumber(record.sortOrder),
+        itemName: toSafeText(inventoryItem?.name, toSafeText(record.itemName, unknownItemName)),
+        unit: toSafeText(inventoryItem?.unit, toSafeText(record.unit)),
+        barcode: toSafeText(inventoryItem?.barcode, toSafeText(record.barcode)),
+      };
+    });
+};
+
 export const saveInventoryRefreshCache = (storeId: string | null | undefined, items: any[]) => {
   if (!storeId) {
     console.warn('Missing storeId; skipped inventory refresh cache write');
@@ -53,6 +87,21 @@ export const saveFridgeRefreshCache = (
 
   localStorage.setItem(`store_${storeId}_fridges`, JSON.stringify(fridges));
   localStorage.setItem(`store_${storeId}_fridge_inventory`, JSON.stringify(fridgeInventory));
+};
+
+export const saveFridgeItemOrderCache = (
+  storage: Pick<Storage, 'setItem'>,
+  storageKey: string,
+  itemOrder: string[]
+): boolean => {
+  try {
+    storage.setItem(storageKey, JSON.stringify(itemOrder));
+    return true;
+  } catch {
+    // Cloud sortOrder fields are authoritative; this optional cache must not
+    // unmount the stocktake page when browser storage is full.
+    return false;
+  }
 };
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -94,6 +143,34 @@ export const normalizeStocktakeHistoryForRefresh = (records: any[]) => {
     date: getStocktakeRecordDateKey(record),
     lastModified: Number(record.lastModified || 0) || getStocktakeTimestamp(record) || Date.now(),
   })));
+};
+
+export const buildFridgeStocktakeSubmissionId = ({
+  date,
+  fridgeId,
+  items,
+}: {
+  date: string;
+  fridgeId: string;
+  items: Array<{ itemId: string; systemStock: number; actualStock: number }>;
+}): string => {
+  const payload = [
+    date,
+    fridgeId,
+    ...items
+      .map(item => `${item.itemId}:${Number(item.systemStock) || 0}:${Number(item.actualStock) || 0}`)
+      .sort(),
+  ].join('|');
+  let hash = 2166136261;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash ^= payload.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const safeDate = date.replace(/[^0-9]/g, '');
+  const safeFridgeId = fridgeId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48) || 'fridge';
+  return `stocktake-${safeDate}-${safeFridgeId}-${(hash >>> 0).toString(36)}`;
 };
 
 export const buildFridgeStocktakeHistoryRecords = ({

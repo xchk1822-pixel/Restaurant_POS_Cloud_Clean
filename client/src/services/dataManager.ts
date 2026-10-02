@@ -69,6 +69,26 @@ const getCurrentStoreId = (): string | null => {
   }
 };
 
+const getFinancialSourceRevisionKey = (storeId: string): string =>
+  `store_${storeId}_financial_source_revision`;
+
+export const getFinancialSourceRevision = (storeId: string): number => {
+  try {
+    return Number(localStorage.getItem(getFinancialSourceRevisionKey(storeId))) || 0;
+  } catch {
+    return 0;
+  }
+};
+
+const markFinancialSourceChanged = (storeId: string | null): void => {
+  if (!storeId) return;
+  try {
+    localStorage.setItem(getFinancialSourceRevisionKey(storeId), String(Date.now()));
+  } catch {
+    // The in-memory data remains valid; a future uncached report load will recover.
+  }
+};
+
 const getStorageKey = (key: keyof DataStore): string | null => {
   const baseKey = STORAGE_KEY_BY_DATA_KEY[key];
   const storeId = getCurrentStoreId();
@@ -201,6 +221,10 @@ class DataManager {
 
       // 1. 更新缓存
       this.cache[key] = data;
+
+      if (key === 'expenses') {
+        markFinancialSourceChanged(getCurrentStoreId());
+      }
 
       if (persistLocal) {
         localStorage.setItem(storageKey, serializedData);

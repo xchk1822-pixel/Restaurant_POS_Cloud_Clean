@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { smartAddDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { dataManager } from '../../services/dataManager';
 import { filterActiveEmployees } from '../../utils/employeeRecords';
+import { resolveMonthlySalary } from '../../utils/employeeSalary';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface Employee {
   id: string;
@@ -13,6 +15,7 @@ interface Employee {
   hireDate: string;
   status: 'active' | 'inactive';
   dailyRate: number;
+  monthlySalary?: number;
   overtimeRate: number;
   avatar?: string;
   notes?: string;
@@ -24,6 +27,7 @@ interface EmployeeListProps {
 }
 
 const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) => {
+  const { t } = useI18n();
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [formData, setFormData] = useState<Partial<Employee>>({
@@ -33,13 +37,13 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     department: '',
     hireDate: new Date().toISOString().split('T')[0],
     status: 'active',
-    dailyRate: 0,
+    monthlySalary: 0,
     overtimeRate: 0,
   });
 
   const handleSaveEmployee = async () => {
     if (!formData.name || !formData.phone || !formData.position) {
-      alert('\u8bf7\u586b\u5199\u5fc5\u586b\u9879');
+      alert(t('employee.alert.required'));
       return;
     }
 
@@ -51,7 +55,8 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       department: formData.department || '',
       hireDate: formData.hireDate || new Date().toISOString().split('T')[0],
       status: formData.status || 'active',
-      dailyRate: formData.dailyRate || 0,
+      monthlySalary: formData.monthlySalary || 0,
+      dailyRate: (formData.monthlySalary || 0) / 30,
       overtimeRate: formData.overtimeRate || 0,
       notes: formData.notes,
     };
@@ -71,7 +76,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       }
     } catch (error) {
       console.error('sync employee to Firestore failed:', error);
-      alert('\u4fdd\u5b58\u5458\u5de5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u91cd\u8bd5');
+      alert(t('employee.alert.saveFailed'));
       return;
     }
     setEmployees(updatedEmployees);
@@ -88,13 +93,13 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       department: '',
       hireDate: new Date().toISOString().split('T')[0],
       status: 'active',
-      dailyRate: 0,
+      monthlySalary: 0,
       overtimeRate: 0,
     });
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!window.confirm('\u786e\u5b9a\u8981\u5220\u9664\u8be5\u5458\u5de5\u5417\uff1f')) return;
+    if (!window.confirm(t('employee.confirm.delete'))) return;
     
     // 🔥 先计算更新后的数据
     const employee = employees.find(emp => emp.id === id);
@@ -123,8 +128,22 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
       setEmployees(activeEmployees);
     } catch (error) {
       console.error('delete employee from Firestore failed:', error);
-      alert('\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5');
+      alert(t('employee.alert.deleteFailed'));
     }
+  };
+
+  const positionLabels: Record<string, string> = {
+    '收银员': t('employee.position.cashier'),
+    '服务员': t('employee.position.waiter'),
+    '厨师': t('employee.position.chef'),
+    '帮厨': t('employee.position.kitchenAssistant'),
+    '店长': t('employee.position.manager'),
+    '副店长': t('employee.position.assistantManager'),
+  };
+  const departmentLabels: Record<string, string> = {
+    '前厅': t('employee.department.front'),
+    '后厨': t('employee.department.kitchen'),
+    '管理': t('employee.department.management'),
   };
 
   const styles = {
@@ -248,9 +267,9 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
     <div style={styles.card}>
       <div style={styles.cardContent}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexShrink: 0, gap: '0.75rem', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>👥 员工列表</h2>
+          <h2 style={{ fontSize: font.section, fontWeight: 750, margin: 0, color: colors.textPrimary }}>👥 {t('employee.listTitle')}</h2>
           <button onClick={() => setShowAddEmployee(true)} style={styles.btn(colors.teal)}>
-            ➕ 添加员工
+            ➕ {t('employee.add')}
           </button>
         </div>
 
@@ -258,20 +277,20 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         {employees.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>👤</div>
-            <div>暂无员工数据</div>
+            <div>{t('employee.empty')}</div>
           </div>
         ) : (
           <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>姓名</th>
-                  <th style={styles.th}>电话</th>
-                  <th style={styles.th}>职位</th>
-                  <th style={styles.th}>部门</th>
-                  <th style={styles.th}>入职日期</th>
-                  <th style={styles.th}>基本工资</th>
-                  <th style={styles.th}>状态</th>
-                  <th style={styles.th}>操作</th>
+                  <th style={styles.th}>{t('employee.name')}</th>
+                  <th style={styles.th}>{t('employee.phone')}</th>
+                  <th style={styles.th}>{t('employee.position')}</th>
+                  <th style={styles.th}>{t('employee.department')}</th>
+                  <th style={styles.th}>{t('employee.hireDate')}</th>
+                  <th style={styles.th}>{t('employee.dailySalary')}</th>
+                  <th style={styles.th}>{t('employee.status')}</th>
+                  <th style={styles.th}>{t('employee.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -279,29 +298,31 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
                   <tr key={emp.id}>
                     <td style={{ ...styles.td, fontWeight: '600' }}>{emp.name}</td>
                     <td style={styles.td}>{emp.phone}</td>
-                    <td style={styles.td}>{emp.position}</td>
-                    <td style={styles.td}>{emp.department || '-'}</td>
+                    <td style={styles.td}>{positionLabels[emp.position] || emp.position}</td>
+                    <td style={styles.td}>{departmentLabels[emp.department] || emp.department || '-'}</td>
                     <td style={styles.td}>{emp.hireDate}</td>
-                    <td style={{ ...styles.td, fontWeight: '600' }}>C$ {(emp.dailyRate || 0).toFixed(2)}/天</td>
+                    <td style={{ ...styles.td, fontWeight: '600' }}>C$ {resolveMonthlySalary(emp).toFixed(0)} {t('employee.perDay')}</td>
                     <td style={styles.td}>
                       <span style={styles.badge(emp.status === 'active' ? colors.success : colors.textMuted)}>
-                        {emp.status === 'active' ? '在职' : '离职'}
+                        {emp.status === 'active' ? t('employee.statusActive') : t('employee.statusInactive')}
                       </span>
                     </td>
                     <td style={styles.td}>
                       <button
                         onClick={() => {
                           setEditingEmployee(emp);
-                          setFormData(emp);
+                          setFormData({ ...emp, monthlySalary: resolveMonthlySalary(emp) });
                           setShowAddEmployee(true);
                         }}
                         style={{ ...styles.btn(colors.amber), marginRight: '0.5rem', padding: '0.48rem 0.72rem' }}
+                        title={t('employee.edit')}
                       >
                         ✏️
                       </button>
                       <button
                         onClick={() => handleDeleteEmployee(emp.id)}
                         style={{ ...styles.btn(colors.danger), padding: '0.48rem 0.72rem' }}
+                        title={t('employee.delete')}
                       >
                         🗑️
                       </button>
@@ -319,65 +340,65 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
         <div style={styles.modal} onClick={() => setShowAddEmployee(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ fontSize: font.title, fontWeight: 750, marginBottom: '1.2rem', color: colors.textPrimary }}>
-              {editingEmployee ? '✏️ 编辑员工' : '➕ 添加员工'}
+              {editingEmployee ? `✏️ ${t('employee.edit')}` : `➕ ${t('employee.add')}`}
             </h2>
             
             <div style={styles.grid2}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>姓名 *</label>
+                <label style={styles.label}>{t('employee.name')} *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   style={styles.input}
-                  placeholder="请输入姓名"
+                  placeholder={t('employee.namePlaceholder')}
                 />
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>电话 *</label>
+                <label style={styles.label}>{t('employee.phone')} *</label>
                 <input
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   style={styles.input}
-                  placeholder="请输入电话"
+                  placeholder={t('employee.phonePlaceholder')}
                 />
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>职位 *</label>
+                <label style={styles.label}>{t('employee.position')} *</label>
                 <select
                   value={formData.position}
                   onChange={(e) => setFormData({ ...formData, position: e.target.value })}
                   style={styles.select}
                 >
-                  <option value="">请选择职位</option>
-                  <option value="收银员">收银员</option>
-                  <option value="服务员">服务员</option>
-                  <option value="厨师">厨师</option>
-                  <option value="帮厨">帮厨</option>
-                  <option value="店长">店长</option>
-                  <option value="副店长">副店长</option>
+                  <option value="">{t('employee.selectPosition')}</option>
+                  <option value="收银员">{t('employee.position.cashier')}</option>
+                  <option value="服务员">{t('employee.position.waiter')}</option>
+                  <option value="厨师">{t('employee.position.chef')}</option>
+                  <option value="帮厨">{t('employee.position.kitchenAssistant')}</option>
+                  <option value="店长">{t('employee.position.manager')}</option>
+                  <option value="副店长">{t('employee.position.assistantManager')}</option>
                 </select>
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>部门</label>
+                <label style={styles.label}>{t('employee.department')}</label>
                 <select
                   value={formData.department}
                   onChange={(e) => setFormData({ ...formData, department: e.target.value })}
                   style={styles.select}
                 >
-                  <option value="">请选择部门</option>
-                  <option value="前厅">前厅</option>
-                  <option value="后厨">后厨</option>
-                  <option value="管理">管理</option>
+                  <option value="">{t('employee.selectDepartment')}</option>
+                  <option value="前厅">{t('employee.department.front')}</option>
+                  <option value="后厨">{t('employee.department.kitchen')}</option>
+                  <option value="管理">{t('employee.department.management')}</option>
                 </select>
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>入职日期</label>
+                <label style={styles.label}>{t('employee.hireDate')}</label>
                 <input
                   type="date"
                   value={formData.hireDate}
@@ -388,22 +409,22 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
             </div>
 
             <h3 style={{ fontSize: font.section, fontWeight: 750, margin: '1.3rem 0 0.85rem 0', color: colors.textPrimary }}>
-              💰 薪资配置（每人不同）
+              💰 {t('employee.salaryConfig')}
             </h3>
             <div style={styles.grid2}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>日薪 (C$)</label>
+                <label style={styles.label}>{t('employee.dailyRate')} (C$)</label>
                 <input
                   type="number"
-                  value={formData.dailyRate || ''}
-                  onChange={(e) => setFormData({ ...formData, dailyRate: parseFloat(e.target.value) || 0 })}
+                  value={formData.monthlySalary || ''}
+                  onChange={(e) => setFormData({ ...formData, monthlySalary: parseFloat(e.target.value) || 0 })}
                   style={styles.input}
                   placeholder="0.00"
                 />
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>加班时薪 (C$)</label>
+                <label style={styles.label}>{t('employee.overtimeRate')} (C$)</label>
                 <input
                   type="number"
                   value={formData.overtimeRate || ''}
@@ -414,31 +435,31 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
               </div>
 
               <div style={styles.formGroup}>
-                <label style={styles.label}>状态</label>
+                <label style={styles.label}>{t('employee.status')}</label>
                 <select
                   value={formData.status}
                   onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
                   style={styles.select}
                 >
-                  <option value="active">在职</option>
-                  <option value="inactive">离职</option>
+                  <option value="active">{t('employee.statusActive')}</option>
+                  <option value="inactive">{t('employee.statusInactive')}</option>
                 </select>
               </div>
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>备注</label>
+              <label style={styles.label}>{t('employee.notes')}</label>
               <textarea
                 value={formData.notes || ''}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 style={{ ...styles.input, minHeight: '80px', resize: 'vertical' }}
-                placeholder="选填"
+                placeholder={t('employee.optional')}
               />
             </div>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
               <button onClick={handleSaveEmployee} style={{ ...styles.btn(colors.teal), flex: 1 }}>
-                💾 保存
+                💾 {t('employee.save')}
               </button>
               <button
                 onClick={() => {
@@ -447,7 +468,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, setEmployees }) 
                 }}
                 style={{ ...styles.btn(colors.textSecondary), flex: 1 }}
               >
-                ❌ 取消
+                ❌ {t('employee.cancel')}
               </button>
             </div>
           </div>

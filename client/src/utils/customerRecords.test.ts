@@ -1,4 +1,9 @@
-import { filterActiveCustomers } from './customerRecords';
+import {
+  buildCustomerIdFromPhone,
+  filterActiveCustomers,
+  isValidCustomerPhone,
+  normalizeCustomerPhone,
+} from './customerRecords';
 
 describe('customer record helpers', () => {
   test('filters deleted customers by deletion records and item flag', () => {
@@ -12,5 +17,13 @@ describe('customer record helpers', () => {
     const result = filterActiveCustomers(customers, deletions);
 
     expect(result.map(customer => customer.id)).toEqual(['active-1']);
+  });
+
+  test('normalizes Nicaragua phone numbers into one stable customer identity', () => {
+    expect(normalizeCustomerPhone('7542 4688')).toBe('50575424688');
+    expect(normalizeCustomerPhone('+505 7542-4688')).toBe('50575424688');
+    expect(buildCustomerIdFromPhone('7542-4688')).toBe('CUST-PHONE-50575424688');
+    expect(isValidCustomerPhone('7542 4688')).toBe(true);
+    expect(isValidCustomerPhone('123')).toBe(false);
   });
 });

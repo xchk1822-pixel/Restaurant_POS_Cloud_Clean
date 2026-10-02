@@ -14,6 +14,7 @@ const STORE_COLLECTIONS = [
   'inventory_items',
   'inventory_categories',
   'menu_items',
+  'menu_categories',
   'pos_orders',
   'order_counters',
   'pos_tables',

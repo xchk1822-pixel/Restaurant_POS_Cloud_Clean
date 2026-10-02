@@ -6,12 +6,20 @@ import MenuImage from '../../components/MenuImage';
 import { processAndUploadMenuImage } from '../../services/menuImageService';
 import { dataService } from '../../services/DataService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
 
 interface RecipeIngredient {
   itemId: string;
   itemName: string;
   quantity: number;
   unit: string;
+}
+
+interface InventoryCategoryOption {
+  key: string;
+  name: string;
+  icon: string;
+  sortOrder: number;
 }
 
 interface MenuItem {
@@ -93,6 +101,7 @@ const isValidIngredientQuantityInput = (value: string): boolean => {
 };
 
 const MenuManagement: React.FC = () => {
+  const { t, language } = useI18n();
   const { 
     menuItems, 
     setMenuItems,
@@ -119,6 +128,8 @@ const MenuManagement: React.FC = () => {
   const [menuSearchTerm, setMenuSearchTerm] = useState('');
   const [selectedMenuCategory, setSelectedMenuCategory] = useState('all');
   const [ingredientQuantityDrafts, setIngredientQuantityDrafts] = useState<Record<number, string>>({});
+  const [ingredientCategoryFilters, setIngredientCategoryFilters] = useState<Record<number, string>>({});
+  const [inventoryCategoryDefinitions, setInventoryCategoryDefinitions] = useState<InventoryCategoryOption[]>([]);
   const menuCategoryStorageKey = dataService.getStoreKey('menu_categories');
   
   // 从 localStorage 加载分类配置
@@ -138,6 +149,26 @@ const MenuManagement: React.FC = () => {
       console.error('加载分类配置失败:', error);
     }
   }, [categories.length, menuCategoryStorageKey, setCategories]);
+
+  useEffect(() => {
+    let active = true;
+    smartGetDocuments('inventory_categories').then(records => {
+      if (!active) return;
+      const definitions = records
+        .map((category, index) => ({
+          key: String(category.key || category.id || ''),
+          name: String(category.name || category.key || category.id || ''),
+          icon: String(category.icon || '📦'),
+          sortOrder: Number(category.sortOrder ?? index),
+        }))
+        .filter(category => category.key)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      setInventoryCategoryDefinitions(definitions);
+    }).catch(error => console.error('读取库存物品分类失败:', error));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const refreshMenuData = async () => {
     setIsRefreshing(true);
@@ -159,7 +190,7 @@ const MenuManagement: React.FC = () => {
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新菜品数据失败:', error);
-      alert('刷新菜品数据失败，请检查网络后重试');
+      alert(t('menu.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
@@ -215,23 +246,35 @@ const MenuManagement: React.FC = () => {
   const recipeIngredientInventoryItems = inventoryItems.filter(
     item => !directStockItemIds.has(item.id) || currentRecipeIngredientIds.has(item.id)
   );
+  const ingredientCategoryOptions = Array.from(new Set(
+    recipeIngredientInventoryItems.map(item => item.category).filter(Boolean)
+  ))
+    .map(key => {
+      const definition = inventoryCategoryDefinitions.find(category => category.key === key);
+      return {
+        key,
+        label: definition ? `${definition.icon} ${definition.name}` : key,
+        sortOrder: definition?.sortOrder ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label, 'es'));
 
   return (
     <div style={pageStyle}>
       {/* 标题栏 */}
       <div style={headerStyle}>
         <div>
-          <h2 style={{ margin: 0, fontSize: font.title, fontWeight: 750, letterSpacing: 0 }}>🍽️ 菜品管理</h2>
+          <h2 style={{ margin: 0, fontSize: font.title, fontWeight: 750, letterSpacing: 0 }}>🍽️ {t('menu.title')}</h2>
           <div style={{ marginTop: '0.35rem', fontSize: font.body, color: colors.textSecondary }}>
-            共 <span style={{ fontWeight: 750, color: colors.blue }}>{menuItems.length}</span> 个菜品 ·
-            可售 <span style={{ fontWeight: 750, color: colors.success }}>{menuItems.filter(m => m.available).length}</span> 个 ·
-            停售 <span style={{ fontWeight: 750, color: colors.danger }}>{menuItems.filter(m => !m.available).length}</span> 个
+            {t('menu.count.total')} <span style={{ fontWeight: 750, color: colors.blue }}>{menuItems.length}</span> ·
+            {t('menu.count.available')} <span style={{ fontWeight: 750, color: colors.success }}>{menuItems.filter(m => m.available).length}</span> ·
+            {t('menu.count.unavailable')} <span style={{ fontWeight: 750, color: colors.danger }}>{menuItems.filter(m => !m.available).length}</span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.55rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {lastSyncedAt && (
             <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
-              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              {t('menu.lastSync')} {lastSyncedAt.toLocaleTimeString(language === 'es-NI' ? 'es-NI' : 'zh-CN', { hour12: false })}
             </span>
           )}
           <button
@@ -244,7 +287,7 @@ const MenuManagement: React.FC = () => {
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
             }}
           >
-            {isRefreshing ? '同步中...' : '刷新菜品'}
+            {isRefreshing ? t('menu.syncing') : t('menu.refresh')}
           </button>
           <button
             onClick={() => setShowCategoryModal(true)}
@@ -254,13 +297,14 @@ const MenuManagement: React.FC = () => {
               borderColor: colors.tealSoft,
             }}
           >
-            🏷️ 分类管理
+            🏷️ {t('menu.category.manage')}
           </button>
           <button
             onClick={() => {
               setSelectedImageFile(null);
               setIsProcessingImage(false);
               setIngredientQuantityDrafts({});
+              setIngredientCategoryFilters({});
               setEditingMenu({
                 name: '',
                 price: 0,
@@ -275,7 +319,7 @@ const MenuManagement: React.FC = () => {
             }}
             style={primaryButtonStyle}
           >
-            ➕ 添加菜品
+            ➕ {t('menu.add')}
           </button>
         </div>
       </div>
@@ -295,7 +339,7 @@ const MenuManagement: React.FC = () => {
             type="text"
             value={menuSearchTerm}
             onChange={(e) => setMenuSearchTerm(e.target.value)}
-            placeholder="搜索菜品名称、分类或价格"
+            placeholder={t('menu.search')}
             style={inputStyle}
           />
           <select
@@ -303,7 +347,7 @@ const MenuManagement: React.FC = () => {
             onChange={(e) => setSelectedMenuCategory(e.target.value)}
             style={inputStyle}
           >
-            <option value="all">全部类别</option>
+            <option value="all">{t('menu.filter.allCategories')}</option>
             {menuCategoryOptions.map(categoryName => (
               <option key={categoryName} value={categoryName}>
                 {categoryName} ({menuItems.filter(menu => menu.category === categoryName).length})
@@ -312,7 +356,7 @@ const MenuManagement: React.FC = () => {
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span style={{ fontSize: font.caption, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
-              显示 {filteredMenuItems.length} / {menuItems.length}
+              {t('menu.showing')} {filteredMenuItems.length} / {menuItems.length}
             </span>
             {(menuSearchTerm || selectedMenuCategory !== 'all') && (
               <button
@@ -322,7 +366,7 @@ const MenuManagement: React.FC = () => {
                 }}
                 style={{ ...secondaryButtonStyle, padding: '0.5rem 0.75rem', fontSize: font.caption, whiteSpace: 'nowrap' }}
               >
-                清空
+                {t('menu.clear')}
               </button>
             )}
           </div>
@@ -331,12 +375,12 @@ const MenuManagement: React.FC = () => {
           {menuItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
               <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🍽️</div>
-              <p>暂无菜品，点击"添加菜品"开始创建</p>
+              <p>{t('menu.empty')}</p>
             </div>
           ) : filteredMenuItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
               <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔎</div>
-              <p>没有找到匹配的菜品</p>
+              <p>{t('menu.noMatch')}</p>
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.85rem' }}>
@@ -391,7 +435,7 @@ const MenuManagement: React.FC = () => {
                           fontSize: font.caption,
                           fontWeight: 700
                         }}>
-                          {menu.available ? '✓ 可售' : '✗ 停售'}
+                          {menu.available ? `✓ ${t('menu.status.available')}` : `✗ ${t('menu.status.unavailable')}`}
                         </span>
                       </div>
                     </div>
@@ -399,7 +443,7 @@ const MenuManagement: React.FC = () => {
                   
                   <div style={{ marginBottom: '0.75rem', paddingLeft: '90px' }}>
                     <div style={{ fontSize: font.caption, fontWeight: 700, marginBottom: '0.5rem', color: colors.textPrimary }}>
-                      配方原料：
+                      {t('menu.recipe.ingredients')}:
                     </div>
                     {menu.ingredients?.map((ing, idx) => (
                       <div key={idx} style={{ 
@@ -419,6 +463,12 @@ const MenuManagement: React.FC = () => {
                         setSelectedImageFile(null);
                         setIsProcessingImage(false);
                         setIngredientQuantityDrafts({});
+                        setIngredientCategoryFilters(Object.fromEntries(
+                          (menu.ingredients || []).map((ingredient, index) => [
+                            index,
+                            inventoryItems.find(item => item.id === ingredient.itemId)?.category || ''
+                          ])
+                        ));
                         setEditingMenu({ ...menu });
                         setShowMenuModal(true);
                       }}
@@ -434,7 +484,7 @@ const MenuManagement: React.FC = () => {
                         fontSize: '0.8rem'
                       }}
                     >
-                      ✏️ 编辑
+                      ✏️ {t('menu.edit')}
                     </button>
                     <button
                       onClick={async () => {
@@ -460,11 +510,11 @@ const MenuManagement: React.FC = () => {
                         fontSize: '0.8rem'
                       }}
                     >
-                      {menu.available ? '⏸️ 停售' : '▶️ 上架'}
+                      {menu.available ? `⏸️ ${t('menu.pause')}` : `▶️ ${t('menu.activate')}`}
                     </button>
                     <button
                       onClick={async () => {
-                        if (window.confirm(`确定要删除菜品 ${menu.name} 吗？`)) {
+                        if (window.confirm(`${t('menu.confirm.deleteItem')} ${menu.name}?`)) {
                           setMenuItems(menuItems.filter(m => m.id !== menu.id));
                           await smartDeleteDocument('menu_items', menu.id);
                         }
@@ -513,14 +563,14 @@ const MenuManagement: React.FC = () => {
             overflow: 'auto'
           }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-              {editingMenu.id ? '编辑菜品' : '添加菜品'}
+              {editingMenu.id ? t('menu.modal.edit') : t('menu.modal.add')}
             </h3>
             
             <div style={{ display: 'grid', gap: '1rem' }}>
               {/* 菜品图片上传 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  菜品图片
+                  {t('menu.image.label')}
                 </label>
                 <input
                   type="file"
@@ -555,13 +605,13 @@ const MenuManagement: React.FC = () => {
                     <>
                       <div style={{ fontSize: '2rem' }}>🖼️</div>
                       <div style={{ fontSize: '0.75rem', color: '#2563eb', marginTop: '0.4rem', textAlign: 'center' }}>
-                        保存时原图上传
+                        {t('menu.image.uploadOriginalOnSave')}
                       </div>
                     </>
                   ) : (editingMenu.imageThumbUrl || editingMenu.imageUrl || editingMenu.image || editingMenu.imageUpdatedAt || editingMenu.imageUploadPending) ? (
                     <MenuImage
                       menuId={editingMenu.id || 'new-menu'}
-                      name={editingMenu.name || '菜品'}
+                      name={editingMenu.name || t('menu.itemFallback')}
                       src={editingMenu.imageThumbUrl || editingMenu.imageUrl}
                       legacySrc={editingMenu.image}
                       cacheVersion={editingMenu.imageUpdatedAt}
@@ -575,7 +625,7 @@ const MenuManagement: React.FC = () => {
                   ) : (
                     <>
                       <div style={{ fontSize: '2.5rem' }}>📷</div>
-                      <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>点击上传</div>
+                      <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.5rem' }}>{t('menu.image.clickToUpload')}</div>
                     </>
                   )}
                 </label>
@@ -584,13 +634,13 @@ const MenuManagement: React.FC = () => {
               {/* 菜品名称 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  菜品名称 <span style={{ color: '#ef4444' }}>*</span>
+                  {t('menu.field.name')} <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
                   value={editingMenu.name || ''}
                   onChange={(e) => setEditingMenu({...editingMenu, name: e.target.value})}
-                  placeholder="输入菜品名称"
+                  placeholder={t('menu.field.namePlaceholder')}
                   style={{
                     width: '100%',
                     padding: '0.6rem',
@@ -605,7 +655,7 @@ const MenuManagement: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    分类 <span style={{ color: '#ef4444' }}>*</span>
+                    {t('menu.field.category')} <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <select
                     value={editingMenu.category}
@@ -625,7 +675,7 @@ const MenuManagement: React.FC = () => {
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    价格 (C$) <span style={{ color: '#ef4444' }}>*</span>
+                    {t('menu.field.price')} (C$) <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="number"
@@ -647,7 +697,7 @@ const MenuManagement: React.FC = () => {
               {/* 扣减方式 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  库存扣减方式 <span style={{ color: '#ef4444' }}>*</span>
+                  {t('menu.deduction.label')} <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                   <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem', border: editingMenu.type === 'recipe' ? '2px solid #3b82f6' : '1px solid #d1d5db', borderRadius: '0.375rem', flex: 1 }}>
@@ -658,8 +708,8 @@ const MenuManagement: React.FC = () => {
                       style={{ marginRight: '0.5rem' }}
                     />
                     <div>
-                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>📝 配方扣减</div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>需要配置原料清单</div>
+                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>📝 {t('menu.deduction.recipe')}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('menu.deduction.recipeHint')}</div>
                     </div>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem', border: editingMenu.type === 'direct' ? '2px solid #3b82f6' : '1px solid #d1d5db', borderRadius: '0.375rem', flex: 1 }}>
@@ -668,13 +718,14 @@ const MenuManagement: React.FC = () => {
                       checked={editingMenu.type === 'direct'}
                       onChange={() => {
                         setIngredientQuantityDrafts({});
+                        setIngredientCategoryFilters({});
                         setEditingMenu({...editingMenu, type: 'direct', ingredients: []});
                       }}
                       style={{ marginRight: '0.5rem' }}
                     />
                     <div>
-                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>📦 直接扣减</div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>关联单个库存物品</div>
+                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>📦 {t('menu.deduction.direct')}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('menu.deduction.directHint')}</div>
                     </div>
                   </label>
                 </div>
@@ -684,7 +735,7 @@ const MenuManagement: React.FC = () => {
               {editingMenu.type === 'direct' && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                    关联库存物品 <span style={{ color: '#ef4444' }}>*</span>
+                    {t('menu.direct.stockItem')} <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <select
                     value={editingMenu.stockItemId || ''}
@@ -697,9 +748,9 @@ const MenuManagement: React.FC = () => {
                       fontSize: '0.9rem'
                     }}
                   >
-                    <option value="">请选择库存物品</option>
+                    <option value="">{t('menu.direct.selectStockItem')}</option>
                     {directDeductionInventoryItems.map(item => (
-                      <option key={item.id} value={item.id}>{item.name} (当前库存: {item.currentStock} {item.unit})</option>
+                      <option key={item.id} value={item.id}>{item.name} ({t('menu.currentStock')}: {item.currentStock} {item.unit})</option>
                     ))}
                   </select>
                 </div>
@@ -708,15 +759,60 @@ const MenuManagement: React.FC = () => {
               {/* 配方原料 */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                  配方原料
+                  {t('menu.recipe.ingredients')}
                 </label>
                 <div style={{ display: 'grid', gap: '0.5rem' }}>
-                  {(editingMenu.ingredients || []).map((ing, idx) => (
-                    <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  {(editingMenu.ingredients || []).map((ing, idx) => {
+                    const selectedIngredientCategory = ingredientCategoryFilters[idx]
+                      ?? inventoryItems.find(item => item.id === ing.itemId)?.category
+                      ?? '';
+                    const categoryFilteredIngredientItems = recipeIngredientInventoryItems.filter(item =>
+                      !selectedIngredientCategory
+                      || item.category === selectedIngredientCategory
+                      || item.id === ing.itemId
+                    );
+
+                    return (
+                    <div key={idx} style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(145px, 0.95fr) minmax(200px, 1.7fr) minmax(80px, 0.65fr) minmax(75px, 0.65fr) auto',
+                      gap: '0.5rem',
+                      alignItems: 'center'
+                    }}>
                       <select
+                        aria-label={`${t('menu.ingredient')} ${idx + 1} ${t('menu.inventoryCategory')}`}
+                        value={selectedIngredientCategory}
+                        onChange={(e) => {
+                          const nextCategory = e.target.value;
+                          setIngredientCategoryFilters(prev => ({ ...prev, [idx]: nextCategory }));
+                          const selectedItem = inventoryItems.find(item => item.id === ing.itemId);
+                          if (nextCategory && selectedItem && selectedItem.category !== nextCategory) {
+                            const newIngredients = [...(editingMenu.ingredients || [])];
+                            newIngredients[idx] = { ...ing, itemId: '', itemName: '' };
+                            setEditingMenu({...editingMenu, ingredients: newIngredients});
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.5rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.25rem',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        <option value="">{t('menu.allInventoryCategories')}</option>
+                        {ingredientCategoryOptions.map(category => (
+                          <option key={category.key} value={category.key}>{category.label}</option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label={`${t('menu.ingredient')} ${idx + 1} ${t('menu.inventoryItem')}`}
                         value={ing.itemId}
                         onChange={(e) => {
                           const selectedItem = inventoryItems.find(item => item.id === e.target.value);
+                          if (selectedItem?.category) {
+                            setIngredientCategoryFilters(prev => ({ ...prev, [idx]: selectedItem.category }));
+                          }
                           const newIngredients = [...(editingMenu.ingredients || [])];
                           newIngredients[idx] = {
                             ...ing,
@@ -726,15 +822,15 @@ const MenuManagement: React.FC = () => {
                           setEditingMenu({...editingMenu, ingredients: newIngredients});
                         }}
                         style={{
-                          flex: 2,
+                          width: '100%',
                           padding: '0.5rem',
                           border: '1px solid #d1d5db',
                           borderRadius: '0.25rem',
                           fontSize: '0.85rem'
                         }}
                       >
-                        <option value="">选择物品</option>
-                        {recipeIngredientInventoryItems.map(item => (
+                        <option value="">{t('menu.selectItem')}</option>
+                        {categoryFilteredIngredientItems.map(item => (
                           <option key={item.id} value={item.id}>{item.name}</option>
                         ))}
                       </select>
@@ -762,7 +858,7 @@ const MenuManagement: React.FC = () => {
                         }}
                         placeholder="0.5"
                         style={{
-                          flex: 1,
+                          width: '100%',
                           padding: '0.5rem',
                           border: '1px solid #d1d5db',
                           borderRadius: '0.25rem',
@@ -777,9 +873,9 @@ const MenuManagement: React.FC = () => {
                           newIngredients[idx] = { ...ing, unit: e.target.value };
                           setEditingMenu({...editingMenu, ingredients: newIngredients});
                         }}
-                        placeholder="单位"
+                        placeholder={t('menu.unitPlaceholder')}
                         style={{
-                          flex: 1,
+                          width: '100%',
                           padding: '0.5rem',
                           border: '1px solid #d1d5db',
                           borderRadius: '0.25rem',
@@ -790,6 +886,12 @@ const MenuManagement: React.FC = () => {
                         onClick={() => {
                           const newIngredients = (editingMenu.ingredients || []).filter((_, i) => i !== idx);
                           setIngredientQuantityDrafts({});
+                          setIngredientCategoryFilters(Object.fromEntries(
+                            newIngredients.map((ingredient, index) => [
+                              index,
+                              inventoryItems.find(item => item.id === ingredient.itemId)?.category || ''
+                            ])
+                          ));
                           setEditingMenu({...editingMenu, ingredients: newIngredients});
                         }}
                         style={{
@@ -805,11 +907,13 @@ const MenuManagement: React.FC = () => {
                         🗑️
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                   <button
                     onClick={() => {
                       const newIngredients = [...(editingMenu.ingredients || []), { itemId: '', itemName: '', quantity: 0, unit: '磅' }];
                       setIngredientQuantityDrafts({});
+                      setIngredientCategoryFilters(prev => ({ ...prev, [newIngredients.length - 1]: '' }));
                       setEditingMenu({...editingMenu, ingredients: newIngredients});
                     }}
                     style={{
@@ -824,7 +928,7 @@ const MenuManagement: React.FC = () => {
                       fontSize: '0.85rem'
                     }}
                   >
-                    ➕ 添加原料
+                    ➕ {t('menu.addIngredient')}
                   </button>
                 </div>
               </div>
@@ -836,6 +940,7 @@ const MenuManagement: React.FC = () => {
                   setSelectedImageFile(null);
                   setIsProcessingImage(false);
                   setIngredientQuantityDrafts({});
+                  setIngredientCategoryFilters({});
                   setShowMenuModal(false);
                   setEditingMenu({
                     name: '',
@@ -857,25 +962,25 @@ const MenuManagement: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                取消
+                {t('menu.cancel')}
               </button>
               <button
                 disabled={isProcessingImage}
                 onClick={async () => {
                   if (!editingMenu.name || !editingMenu.price) {
-                    alert('请填写菜品名称和价格');
+                    alert(t('menu.alert.nameAndPriceRequired'));
                     return;
                   }
                   
                   // 直接扣减模式必须选择库存物品
                   if (editingMenu.type === 'direct' && !editingMenu.stockItemId) {
-                    alert('直接扣减模式必须选择关联的库存物品');
+                    alert(t('menu.alert.directItemRequired'));
                     return;
                   }
                   
                   // 配方模式必须有原料
                   if (editingMenu.type === 'recipe' && (!editingMenu.ingredients || editingMenu.ingredients.length === 0)) {
-                    alert('配方模式至少需要添加一个原料');
+                    alert(t('menu.alert.recipeIngredientRequired'));
                     return;
                   }
                   
@@ -887,7 +992,7 @@ const MenuManagement: React.FC = () => {
                     if (selectedImageFile) {
                       imageFields = await processAndUploadMenuImage(menuIdForSave, selectedImageFile);
                       if (imageFields.imageUploadPending) {
-                        alert('图片原图已保存在本机，但还没有上传到云端。当前终端可显示，其他终端需要等网络/权限恢复后自动同步。');
+                        alert(t('menu.alert.imagePending'));
                       }
                     }
 
@@ -927,6 +1032,7 @@ const MenuManagement: React.FC = () => {
                     setShowMenuModal(false);
                     setSelectedImageFile(null);
                     setIngredientQuantityDrafts({});
+                    setIngredientCategoryFilters({});
                     setEditingMenu({
                       name: '',
                       price: 0,
@@ -938,7 +1044,7 @@ const MenuManagement: React.FC = () => {
                     });
                   } catch (error: any) {
                     console.error('保存菜品失败:', error);
-                    alert(error?.message || '保存失败，请检查网络后重试');
+                    alert(error?.message || t('menu.alert.saveFailed'));
                   } finally {
                     setIsProcessingImage(false);
                   }                }}
@@ -952,7 +1058,7 @@ const MenuManagement: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                {isProcessingImage ? '图片上传中...' : '确认保存'}
+                {isProcessingImage ? t('menu.image.uploading') : t('menu.confirmSave')}
               </button>
             </div>
           </div>
@@ -982,24 +1088,24 @@ const MenuManagement: React.FC = () => {
             overflow: 'auto'
           }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-              🏷️ 菜品分类管理
+              🏷️ {t('menu.category.title')}
             </h3>
             
             {/* 添加新分类 */}
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.35rem', fontWeight: '600', fontSize: '0.9rem' }}>
-                添加新分类
+                {t('menu.category.add')}
               </label>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <input
                   type="text"
                   value={editingCategory.name}
                   onChange={(e) => setEditingCategory({ name: e.target.value })}
-                  placeholder="输入分类名称"
+                  placeholder={t('menu.category.namePlaceholder')}
                   onKeyDown={async (e) => {
                     if (e.key === 'Enter' && editingCategory.name.trim()) {
                       if (categories.includes(editingCategory.name.trim())) {
-                        alert('该分类已存在');
+                        alert(t('menu.category.exists'));
                         return;
                       }
                       await saveMenuCategories([...categories, editingCategory.name.trim()]);
@@ -1017,11 +1123,11 @@ const MenuManagement: React.FC = () => {
                 <button
                   onClick={async () => {
                     if (!editingCategory.name.trim()) {
-                      alert('请输入分类名称');
+                      alert(t('menu.category.nameRequired'));
                       return;
                     }
                     if (categories.includes(editingCategory.name.trim())) {
-                      alert('该分类已存在');
+                      alert(t('menu.category.exists'));
                       return;
                     }
                     await saveMenuCategories([...categories, editingCategory.name.trim()]);
@@ -1038,7 +1144,7 @@ const MenuManagement: React.FC = () => {
                     fontSize: '0.85rem'
                   }}
                 >
-                  ➕ 添加
+                  ➕ {t('menu.category.addAction')}
                 </button>
               </div>
             </div>
@@ -1046,7 +1152,7 @@ const MenuManagement: React.FC = () => {
             {/* 分类列表 */}
             <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '1rem' }}>
               <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.75rem', color: '#374151' }}>
-                现有分类 ({categories.length})
+                {t('menu.category.existing')} ({categories.length})
               </div>
               <div style={{ display: 'grid', gap: '0.5rem' }}>
                 {categories.map((cat, idx) => (
@@ -1066,10 +1172,10 @@ const MenuManagement: React.FC = () => {
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button
                         onClick={async () => {
-                          const newName = prompt('修改分类名称:', cat);
+                          const newName = prompt(t('menu.category.editName'), cat);
                           if (newName && newName.trim() && newName.trim() !== cat) {
                             if (categories.includes(newName.trim())) {
-                              alert('该分类名称已存在');
+                              alert(t('menu.category.exists'));
                               return;
                             }
                             const newCategories = [...categories];
@@ -1098,17 +1204,17 @@ const MenuManagement: React.FC = () => {
                           fontWeight: '600'
                         }}
                       >
-                        ✏️ 编辑
+                        ✏️ {t('menu.edit')}
                       </button>
                       <button
                         onClick={async () => {
                           const usedCount = menuItems.filter(m => m.category === cat).length;
                           if (usedCount > 0) {
-                            if (!window.confirm(`该分类下有 ${usedCount} 个菜品，删除后这些菜品将保留原分类名称。确定要删除吗？`)) {
+                            if (!window.confirm(`${t('menu.category.usedPrefix')} ${usedCount} ${t('menu.category.usedSuffix')}`)) {
                               return;
                             }
                           } else {
-                            if (!window.confirm(`确定要删除分类"${cat}"吗？`)) {
+                            if (!window.confirm(`${t('menu.category.deleteConfirm')} "${cat}"?`)) {
                               return;
                             }
                           }
@@ -1125,7 +1231,7 @@ const MenuManagement: React.FC = () => {
                           fontWeight: '600'
                         }}
                       >
-                        🗑️ 删除
+                        🗑️ {t('menu.delete')}
                       </button>
                     </div>
                   </div>
@@ -1149,7 +1255,7 @@ const MenuManagement: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                关闭
+                {t('menu.close')}
               </button>
             </div>
           </div>

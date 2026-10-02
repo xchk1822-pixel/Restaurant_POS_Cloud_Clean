@@ -18,6 +18,26 @@ describe('stock deduction planning', () => {
     expect(plan.warehouseDeductions).toEqual([{ itemId: 'cola', quantity: 1 }]);
   });
 
+  test('does not deduct warehouse stock when one fridge unit exactly covers one sold unit', () => {
+    const plan = buildStockDeductionPlan({
+      requests: [{ itemId: 'valle-limon', quantity: 1 }],
+      inventoryItems: [{ id: 'valle-limon', name: 'Valle limon500ML', currentStock: 12 }],
+      fridgeInventory: [
+        { id: 'fridge-2-valle-limon', fridgeId: 'fridge-2', itemId: 'valle-limon', quantity: 1 },
+      ],
+    });
+
+    expect(plan.fridgeDeductions).toEqual([
+      {
+        recordId: 'fridge-2-valle-limon',
+        fridgeId: 'fridge-2',
+        itemId: 'valle-limon',
+        quantity: 1,
+      },
+    ]);
+    expect(plan.warehouseDeductions).toEqual([]);
+  });
+
   test('allows warehouse stock to go negative when fridge plus warehouse cannot cover the sale', () => {
     const plan = buildStockDeductionPlan({
       requests: [{ itemId: 'tea', quantity: 8 }],
@@ -42,5 +62,13 @@ describe('stock deduction planning', () => {
     });
 
     expect(plan.warehouseDeductions).toEqual([{ itemId: 'box', quantity: 7 }]);
+  });
+
+  test('rejects a configured stock item that is missing instead of silently marking the order deducted', () => {
+    expect(() => buildStockDeductionPlan({
+      requests: [{ itemId: 'missing-item', quantity: 1 }],
+      inventoryItems: [],
+      fridgeInventory: [],
+    })).toThrow('missing-stock-item:missing-item');
   });
 });

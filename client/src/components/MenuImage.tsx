@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getMenuImageCache } from '../services/menuImageCache';
+import { getActiveMenuImageStoreId, getMenuImageCache } from '../services/menuImageCache';
 
 interface MenuImageProps {
   menuId: string;
@@ -22,6 +22,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
   style,
   placeholder
 }) => {
+  const storeId = getActiveMenuImageStoreId();
   const [cachedSrc, setCachedSrc] = useState<string | undefined>();
   const [remoteFailed, setRemoteFailed] = useState(false);
   const displaySrc = remoteFailed ? (cachedSrc || legacySrc) : (src || cachedSrc || legacySrc);
@@ -31,9 +32,9 @@ const MenuImage: React.FC<MenuImageProps> = ({
     setRemoteFailed(false);
     setCachedSrc(undefined);
 
-    if (!menuId) return;
+    if (!storeId || !menuId) return;
 
-    getMenuImageCache(menuId)
+    getMenuImageCache(storeId, menuId)
       .then(cache => {
         if (cancelled || !cache) return;
         const dataUrl = cache.originalDataUrl || (variant === 'medium' ? cache.mediumDataUrl : cache.thumbDataUrl);
@@ -46,7 +47,7 @@ const MenuImage: React.FC<MenuImageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [menuId, variant, cacheVersion]);
+  }, [storeId, menuId, variant, cacheVersion]);
 
   if (!displaySrc) {
     return <>{placeholder || null}</>;

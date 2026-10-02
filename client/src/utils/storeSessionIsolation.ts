@@ -1,11 +1,17 @@
 export const STORE_SESSION_CHANGED_EVENT = 'storeSessionChanged';
 
+export const shouldApplyStoreCacheReload = (
+  eventType: string | undefined,
+  hasStoredSnapshot: boolean
+): boolean => eventType !== 'dataSynced' || hasStoredSnapshot;
+
 export interface StoreSessionUser {
   id?: string;
   username?: string;
   role?: string;
   storeId?: string;
   storeName?: string;
+  storeIds?: string[];
 }
 
 const getStoreScope = (user: StoreSessionUser | null): string => {

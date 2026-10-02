@@ -1,10 +1,14 @@
 import {
   ESC_POS_FULL_CUT_HEX,
+  applyPrinterTarget,
   buildLocalPrintPayload,
+  buildStorePrinterConfigs,
+  buildStorePrintSettings,
   buildStoreReceiptProfile,
   buildThermalReceiptText,
   buildThermalReceiptHtml,
   buildKitchenTicketPayload,
+  routeKitchenItemsToPrinters,
 } from './receiptPrinter';
 
 const stripReceiptControls = (value: string) => value
@@ -91,6 +95,104 @@ describe('receipt printer helpers', () => {
     expect(fallback.nameLine1).not.toBe('BLUEFIELDS');
   });
 
+  test('normalizes store-scoped printer settings and preserves legacy defaults', () => {
+    expect(buildStorePrintSettings({})).toEqual({
+      receiptWidthMm: 80,
+      cashierEnabled: true,
+      kitchenEnabled: true,
+      cashierCut: true,
+      kitchenCut: true,
+      cashierFeedLines: 8,
+      kitchenFeedLines: 8,
+    });
+
+    expect(buildStorePrintSettings({
+      receiptPaperWidthMm: 58,
+      cashierPrintEnabled: false,
+      kitchenPrintEnabled: true,
+      receiptCutEnabled: false,
+      kitchenCutEnabled: false,
+      receiptFeedLines: 30,
+      kitchenFeedLines: 3.6,
+    })).toEqual({
+      receiptWidthMm: 58,
+      cashierEnabled: false,
+      kitchenEnabled: true,
+      cashierCut: false,
+      kitchenCut: false,
+      cashierFeedLines: 20,
+      kitchenFeedLines: 4,
+    });
+  });
+
+  test('normalizes dynamic branch printers without changing legacy settings', () => {
+    const printers = buildStorePrinterConfigs({
+      printers: [{
+        id: 'kitchen-1',
+        name: 'Cocina caliente',
+        role: 'kitchen',
+        transport: 'network',
+        host: '192.168.1.250',
+        port: 9100,
+        categories: ['Comida China', ' Sopas ', 'Comida China'],
+        feedLines: 30,
+      }],
+    });
+
+    expect(printers).toHaveLength(1);
+    expect(printers[0]).toMatchObject({
+      id: 'kitchen-1',
+      host: '192.168.1.250',
+      port: 9100,
+      widthMm: 80,
+      enabled: true,
+      feedLines: 20,
+      categories: ['Comida China', 'Sopas'],
+    });
+  });
+
+  test('routes kitchen items by menu category and falls unmatched items back once', () => {
+    const printers = buildStorePrinterConfigs({
+      printers: [
+        { id: 'hot', name: 'Cocina', role: 'kitchen', transport: 'network', host: '192.168.1.250', categories: ['Comida China'] },
+        { id: 'bar', name: 'Bar', role: 'bar', transport: 'network', host: '192.168.1.251', categories: ['Bebidas'] },
+      ],
+    });
+    const jobs = routeKitchenItemsToPrinters([
+      { name: 'Arroz', quantity: 1, category: 'comida china' },
+      { name: 'Tona', quantity: 2, category: 'Bebidas' },
+      { name: 'Especial', quantity: 1, category: 'Sin clasificar' },
+    ], printers);
+
+    expect(jobs).toHaveLength(2);
+    expect(jobs.find(job => job.printer?.id === 'hot')?.items.map(item => item.name)).toEqual(['Arroz', 'Especial']);
+    expect(jobs.find(job => job.printer?.id === 'bar')?.items.map(item => item.name)).toEqual(['Tona']);
+  });
+
+  test('does not fall back to a disabled configured kitchen printer', () => {
+    const printers = buildStorePrinterConfigs({
+      printers: [{ id: 'hot', name: 'Cocina', role: 'kitchen', transport: 'network', host: '192.168.1.250', enabled: false }],
+    });
+    expect(routeKitchenItemsToPrinters([{ name: 'Arroz', quantity: 1 }], printers)).toEqual([]);
+  });
+
+  test('applies a branch network printer target to a local bridge payload', () => {
+    const base = buildLocalPrintPayload({
+      role: 'kitchen', storeId: 'store-1', orderNumber: '0724001', html: '<pre>x</pre>', text: 'x',
+    });
+    const [printer] = buildStorePrinterConfigs({
+      printers: [{ id: 'p1', name: 'Cocina', role: 'kitchen', transport: 'network', host: '192.168.1.250', port: 9100 }],
+    });
+
+    expect(applyPrinterTarget(base, printer)).toMatchObject({
+      printerId: 'p1',
+      printerLabel: 'Cocina',
+      printerTransport: 'network',
+      printerHost: '192.168.1.250',
+      printerPort: 9100,
+    });
+  });
+
   test('builds clear raw receipt text with global darker printing and inset amount columns', () => {
     const profile = buildStoreReceiptProfile({
       receiptName: 'REST ANO NUEVO CHINO',
@@ -161,6 +263,23 @@ describe('receipt printer helpers', () => {
     expect(payload.cutCommandHex).toBe(ESC_POS_FULL_CUT_HEX);
     expect(payload.feedLines).toBe(8);
     expect(payload.text).not.toContain('\x1D\x56\x00');
+  });
+
+  test('applies branch feed and cut preferences to the bridge payload', () => {
+    const payload = buildLocalPrintPayload({
+      role: 'cashier',
+      storeId: 'store_2',
+      orderNumber: '0707005',
+      html: '<html>receipt</html>',
+      text: 'receipt text',
+      widthMm: 58,
+      cut: false,
+      feedLines: 5,
+    });
+
+    expect(payload.widthMm).toBe(58);
+    expect(payload.cut).toBe(false);
+    expect(payload.feedLines).toBe(5);
   });
 
   test('builds kitchen ticket payload for the kitchen printer role only', () => {

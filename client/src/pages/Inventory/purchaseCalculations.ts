@@ -9,5 +9,5 @@ export const calculatePurchaseLineSubtotal = (quantity: number, unitPrice: numbe
 };
 
 export const calculatePurchaseOrderTotal = (items: Array<{ subtotal: number }>): number => {
-  return roundPurchaseAmount(items.reduce((sum, item) => sum + (Number(item.subtotal) || 0), 0));
+  return Math.round(items.reduce((sum, item) => sum + (Number(item.subtotal) || 0), 0));
 };

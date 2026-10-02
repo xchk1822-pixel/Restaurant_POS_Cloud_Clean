@@ -2,6 +2,7 @@ import { getLocalDateString } from './exchangeRate';
 import { toTimestampMillis } from './localTime';
 import { getExpenseCategoryPath, normalizeExpenseCategories } from './expenseCategories';
 import { findExpensePurchaseOrder } from './expensePurchaseLink';
+import { isEmployeeLoanExpense } from './employeeLoans';
 
 export const isPurchaseRelatedExpense = (expense: any): boolean => {
   return expense?.relatedType === 'purchase' ||
@@ -14,6 +15,22 @@ const toMoneyNumber = (value: any): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const hasExplicitMoneyValue = (value: any): boolean =>
+  value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+
+export const getExpenseProfitAmount = (expense: any): number => {
+  if (isEmployeeLoanExpense(expense)) return 0;
+  return hasExplicitMoneyValue(expense?.profitAmount)
+    ? toMoneyNumber(expense.profitAmount)
+    : toMoneyNumber(expense?.amount);
+};
+
+export const getExpenseCashAmount = (expense: any): number => (
+  hasExplicitMoneyValue(expense?.cashAmount)
+    ? toMoneyNumber(expense.cashAmount)
+    : toMoneyNumber(expense?.amount)
+);
 
 const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -156,7 +173,7 @@ const buildExpenseDetailRows = (
   return [{
     ...baseDetail,
     description: String(expense?.description || expense?.note || expense?.supplierName || '-'),
-    amount: toMoneyNumber(expense?.amount),
+    amount: type === 'operating' ? getExpenseProfitAmount(expense) : toMoneyNumber(expense?.amount),
   }];
 };
 
@@ -166,7 +183,9 @@ export const buildDailyExpenseBreakdown = (
   categories: any[] = [],
   purchaseOrders: any[] = []
 ): { summaries: ExpenseReportSummary[]; details: ExpenseReportDetail[]; groups: ExpenseReportGroup[] } => {
-  const filteredExpenses = expenses.filter((expense: any) => getExpenseDateKey(expense) === date);
+  const filteredExpenses = expenses.filter((expense: any) =>
+    getExpenseDateKey(expense) === date && !isEmployeeLoanExpense(expense)
+  );
   const details = filteredExpenses
     .flatMap((expense: any): ExpenseReportDetail[] => {
       const type = getExpenseType(expense);
@@ -193,7 +212,9 @@ export const buildDailyExpenseBreakdown = (
     };
 
     current.count += 1;
-    current.amount += toMoneyNumber(expense?.amount);
+    current.amount += type === 'operating'
+      ? getExpenseProfitAmount(expense)
+      : toMoneyNumber(expense?.amount);
     summaryMap.set(key, current);
   });
 
@@ -215,21 +236,34 @@ export const calculateFinancialReportTotals = ({
   cardPayment,
   purchaseAmount,
   expenseAmount,
+  cashExpenseAmount,
   handoverAmount,
 }: {
   cashPayment: number;
   cardPayment: number;
   purchaseAmount: number;
   expenseAmount: number;
+  cashExpenseAmount?: number;
   handoverAmount?: number;
-}): { totalSales: number; profit: number; difference?: number } => {
+}): {
+  totalSales: number;
+  profit: number;
+  difference?: number;
+  expectedCashHandover: number;
+  fundingGap: number;
+} => {
   const cash = roundMoney(toMoneyNumber(cashPayment));
   const card = roundMoney(toMoneyNumber(cardPayment));
   const purchase = toMoneyNumber(purchaseAmount);
   const expense = toMoneyNumber(expenseAmount);
+  const cashExpense = cashExpenseAmount === undefined
+    ? expense
+    : toMoneyNumber(cashExpenseAmount);
   const totalSales = roundMoney(cash + card);
   const baseProfit = roundMoney(totalSales - purchase - expense);
-  const expectedCashHandover = roundMoney(cash - purchase - expense);
+  const rawExpectedCashHandover = roundMoney(cash - purchase - cashExpense);
+  const expectedCashHandover = Math.max(rawExpectedCashHandover, 0);
+  const fundingGap = Math.max(roundMoney(-rawExpectedCashHandover), 0);
   const difference = handoverAmount !== undefined
     ? roundMoney(toMoneyNumber(handoverAmount) - expectedCashHandover)
     : undefined;
@@ -239,6 +273,8 @@ export const calculateFinancialReportTotals = ({
     totalSales,
     profit,
     difference,
+    expectedCashHandover,
+    fundingGap,
   };
 };
 
@@ -252,19 +288,25 @@ export const getLatestHandoverAmountForDate = (handovers: any[], date: string): 
     })[0];
 
   if (!latest) return undefined;
-  const amount = toMoneyNumber(latest.rawG ?? latest.g);
-  return amount || undefined;
+  const rawAmount = latest.rawG ?? latest.g;
+  if (rawAmount === undefined || rawAmount === null || rawAmount === '') return undefined;
+  return toMoneyNumber(rawAmount);
 };
 
 export const getOrderCollectedAmount = (order: any): number => {
-  if (!order || order.status === 'cancelled') return 0;
+  if (!order || order.isDeleted || order.status === 'cancelled') return 0;
 
-  const totalAmount = toMoneyNumber(order.totalAmount || order.total);
+  const hasTotalAmount = order.totalAmount !== undefined && order.totalAmount !== null && order.totalAmount !== '';
+  const hasLegacyTotal = order.total !== undefined && order.total !== null && order.total !== '';
+  const hasRecordedTotal = hasTotalAmount || hasLegacyTotal;
+  const totalAmount = toMoneyNumber(
+    hasTotalAmount ? order.totalAmount : order.total
+  );
   const paidAmount = Math.max(toMoneyNumber(order.settledAmount), toMoneyNumber(order.paidAmount));
   const paymentParts = toMoneyNumber(order.cashAmount) + toMoneyNumber(order.cardAmount);
 
   if (order.paymentStatus === 'paid') {
-    return totalAmount || paidAmount || paymentParts;
+    return hasRecordedTotal ? totalAmount : paidAmount || paymentParts;
   }
 
   if (order.paymentStatus === 'partial') {
@@ -273,7 +315,7 @@ export const getOrderCollectedAmount = (order: any): number => {
 
   // Legacy completed records may not have paymentStatus but were already settled.
   if (!order.paymentStatus && order.status === 'completed') {
-    return totalAmount || paidAmount || paymentParts;
+    return hasRecordedTotal ? totalAmount : paidAmount || paymentParts;
   }
 
   return 0;
@@ -325,6 +367,38 @@ export const getOrderFinancialDateKey = (order: any): string => {
   return timestamp ? getLocalDateString(new Date(timestamp)) : '';
 };
 
+export const calculateHandoverDifferenceForDates = ({
+  dates,
+  orders,
+  expenses,
+  handovers,
+}: {
+  dates: string[];
+  orders: any[];
+  expenses: any[];
+  handovers: any[];
+}): number => roundMoney(dates.reduce((total, date) => {
+  const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
+  if (handoverAmount === undefined) return total;
+  const cashPayment = orders
+    .filter(order => getOrderFinancialDateKey(order) === date)
+    .reduce((sum, order) => sum + getOrderPaymentBreakdown(order).cash, 0);
+  const dailyExpenses = expenses.filter(expense => getExpenseDateKey(expense) === date);
+  const purchaseAmount = dailyExpenses.filter(isPurchaseRelatedExpense).reduce((sum, expense) => sum + toMoneyNumber(expense?.amount), 0);
+  const operatingExpenses = dailyExpenses.filter(expense => !isPurchaseRelatedExpense(expense));
+  const expenseAmount = operatingExpenses.reduce((sum, expense) => sum + getExpenseProfitAmount(expense), 0);
+  const cashExpenseAmount = operatingExpenses.reduce((sum, expense) => sum + getExpenseCashAmount(expense), 0);
+  const { difference = 0 } = calculateFinancialReportTotals({
+    cashPayment,
+    cardPayment: 0,
+    purchaseAmount,
+    expenseAmount,
+    cashExpenseAmount,
+    handoverAmount,
+  });
+  return total + difference;
+}, 0));
+
 export interface OrderStatusSummary {
   completedOrders: number;
   dineInOrders: number;
@@ -343,7 +417,7 @@ const getDateKeyFromValues = (...values: any[]): string => {
 };
 
 export const getOrderCancellationDateKey = (order: any): string => {
-  if (!order || order.status !== 'cancelled') return '';
+  if (!order || order.isDeleted || order.status !== 'cancelled') return '';
   return getDateKeyFromValues(
     order?.cancelledAt,
     order?.cancelAt,
@@ -378,7 +452,7 @@ const getCancelRecordQuantity = (record: any): number => {
 };
 
 export const getCancelledItemCountForDate = (order: any, date: string): number => {
-  if (!order || !date) return 0;
+  if (!order || order.isDeleted || !date) return 0;
 
   const orderCancelRecords = Array.isArray(order?.cancelRecords)
     ? order.cancelRecords.filter((record: any) => record?.orderType !== 'order' && record?.type !== 'order')
@@ -470,7 +544,7 @@ export const sumExpensesByKind = (
       return sum + (Number(expense.amount) || 0);
     }
     if (kind === 'operating' && !purchaseRelated) {
-      return sum + (Number(expense.amount) || 0);
+      return sum + getExpenseProfitAmount(expense);
     }
     return sum;
   }, 0);

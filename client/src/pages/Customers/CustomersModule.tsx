@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { dataManager } from '../../services/dataManager';
+import { dataService } from '../../services/DataService';
 import { getExchangeRateConfig, getExchangeRateStorageKey, getPointsExchangeRate, ExchangeRateConfig } from '../../utils/exchangeRate';
 import { loadScopedPointsTransactions, saveScopedPointsTransactions } from '../../utils/customerPoints';
 import { filterActiveCustomers } from '../../utils/customerRecords';
-import { smartGetDocuments, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartGetDocuments, smartGetDocumentsWhereEqual, smartSetDocument, smartUpdateDocument } from '../../services/smartSyncService';
 import { useAppContext } from '../../contexts/AppContext';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
+import type { TranslationKey, UiLanguage } from '../../i18n/translations';
 import {
   buildCustomerCenterRows,
   buildCustomerCenterSummary,
@@ -15,6 +18,13 @@ import {
   filterCustomerRows,
   getCustomerPointLedger,
 } from '../../utils/customerAnalytics';
+import {
+  CustomerPromotionReward,
+  getPromotionRedemptionError,
+  PromotionRedemptionOrderLike,
+  reconcilePromotionReward,
+} from '../../utils/customerPromotion';
+import { redeemCustomerPromotionReward } from '../../services/customerPromotionService';
 
 interface Customer {
   id: string;
@@ -49,18 +59,29 @@ const saveLocalPointsConfig = (config: ExchangeRateConfig) => {
   window.dispatchEvent(new CustomEvent('exchangeRateUpdated', { detail: config }));
 };
 
-const getScopedStorageKey = (collectionName: string): string => {
+const getScopedStorageKey = (collectionName: string): string | null => {
   try {
-    const currentUser = localStorage.getItem('current_user');
-    const storeId = currentUser ? JSON.parse(currentUser).storeId : null;
-    return storeId ? `store_${storeId}_${collectionName}` : collectionName;
+    return dataService.getStoreKey(collectionName);
   } catch {
-    return collectionName;
+    return null;
   }
 };
 
 const saveLocalCollection = (collectionName: string, records: any[]) => {
-  localStorage.setItem(getScopedStorageKey(collectionName), JSON.stringify(records));
+  const storageKey = getScopedStorageKey(collectionName);
+  if (!storageKey) return;
+  localStorage.setItem(storageKey, JSON.stringify(records));
+};
+
+const loadLocalCollection = <T,>(collectionName: string): T[] => {
+  const storageKey = getScopedStorageKey(collectionName);
+  if (!storageKey) return [];
+  try {
+    const records = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    return Array.isArray(records) ? records : [];
+  } catch {
+    return [];
+  }
 };
 
 const formatMoney = (value: number) => `C$ ${Number(value || 0).toLocaleString('es-NI', {
@@ -70,19 +91,19 @@ const formatMoney = (value: number) => `C$ ${Number(value || 0).toLocaleString('
 
 const formatNumber = (value: number) => Number(value || 0).toLocaleString('es-NI');
 
-const formatDate = (dateKey?: string) => {
-  if (!dateKey) return '无记录';
+const formatDate = (dateKey: string | undefined, language: UiLanguage, t: (key: TranslationKey) => string) => {
+  if (!dateKey) return t('customer.noRecord');
   const parsed = new Date(`${dateKey}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return dateKey;
-  return parsed.toLocaleDateString('zh-CN');
+  return parsed.toLocaleDateString(language === 'zh-CN' ? 'zh-CN' : 'es-NI');
 };
 
-const segmentLabels: Record<CustomerSegment, string> = {
-  new: '新客户',
-  active: '活跃客户',
-  sleeping: '沉睡客户',
-  vip: '高价值',
-  points: '积分客户',
+const segmentLabelKeys: Record<CustomerSegment, TranslationKey> = {
+  new: 'customer.segment.new',
+  active: 'customer.segment.active',
+  sleeping: 'customer.segment.sleeping',
+  vip: 'customer.segment.vip',
+  points: 'customer.segment.points',
 };
 
 const segmentColors: Record<CustomerSegment, { text: string; bg: string }> = {
@@ -94,10 +115,10 @@ const segmentColors: Record<CustomerSegment, { text: string; bg: string }> = {
 };
 
 const levelConfig = {
-  bronze: { label: '青铜', color: '#a16207', bg: '#fef3c7' },
-  silver: { label: '白银', color: '#475569', bg: '#e2e8f0' },
-  gold: { label: '黄金', color: '#b45309', bg: '#fef3c7' },
-  platinum: { label: '铂金', color: colors.blue, bg: colors.blueSoft },
+  bronze: { labelKey: 'customer.level.bronze' as TranslationKey, color: '#a16207', bg: '#fef3c7' },
+  silver: { labelKey: 'customer.level.silver' as TranslationKey, color: '#475569', bg: '#e2e8f0' },
+  gold: { labelKey: 'customer.level.gold' as TranslationKey, color: '#b45309', bg: '#fef3c7' },
+  platinum: { labelKey: 'customer.level.platinum' as TranslationKey, color: colors.blue, bg: colors.blueSoft },
 };
 
 const getCustomerLevel = (points: number): keyof typeof levelConfig => {
@@ -422,9 +443,13 @@ const badgeStyle = (segment: CustomerSegment): React.CSSProperties => ({
 });
 
 const CustomersModule: React.FC = () => {
-  const { orders } = useAppContext();
+  const { t, language } = useI18n();
+  const translationRef = React.useRef(t);
+  translationRef.current = t;
+  const { orders, setOrders, menuItems } = useAppContext();
   const [customers, setCustomers] = useState<Customer[]>(() => dataManager.getData('customers'));
   const [transactions, setTransactions] = useState<PointsTransaction[]>(() => loadScopedPointsTransactions());
+  const [promotionRewards, setPromotionRewards] = useState<CustomerPromotionReward[]>(() => loadLocalCollection('customer_rewards'));
   const [searchTerm, setSearchTerm] = useState('');
   const [segmentFilter, setSegmentFilter] = useState<'all' | CustomerSegment>('all');
   const [sortBy, setSortBy] = useState<CustomerSortKey>('recent');
@@ -432,6 +457,10 @@ const CustomersModule: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPointsModal, setShowPointsModal] = useState(false);
   const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [showRewardRedeemModal, setShowRewardRedeemModal] = useState(false);
+  const [selectedReward, setSelectedReward] = useState<CustomerPromotionReward | null>(null);
+  const [selectedRedemptionOrderId, setSelectedRedemptionOrderId] = useState('');
+  const [isRedeemingReward, setIsRedeemingReward] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -460,11 +489,13 @@ const CustomersModule: React.FC = () => {
   const refreshCustomerData = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [cloudCustomers, cloudCustomerDeletions, cloudTransactions, cloudPointsConfigs] = await Promise.all([
+      const [cloudCustomers, cloudCustomerDeletions, cloudTransactions, cloudPointsConfigs, availableRewards, pendingRewards] = await Promise.all([
         smartGetDocuments('customers', true),
         smartGetDocuments('customer_deletions', true),
         smartGetDocuments('points_transactions', true),
         smartGetDocuments('exchange_rate', true),
+        smartGetDocumentsWhereEqual('customer_rewards', 'status', 'available', true),
+        smartGetDocumentsWhereEqual('customer_rewards', 'status', 'pending', true),
       ]);
 
       const activeCustomers = filterActiveCustomers(cloudCustomers, cloudCustomerDeletions);
@@ -474,6 +505,15 @@ const CustomersModule: React.FC = () => {
       setTransactions(cloudTransactions as PointsTransaction[]);
       saveScopedPointsTransactions(cloudTransactions as PointsTransaction[]);
       saveLocalCollection('customer_deletions', cloudCustomerDeletions);
+      setPromotionRewards(previous => {
+        const merged = new Map<string, CustomerPromotionReward>();
+        previous.filter(reward => reward.status !== 'available' && reward.status !== 'pending')
+          .forEach(reward => merged.set(reward.id, reward));
+        [...availableRewards, ...pendingRewards].forEach(reward => merged.set(reward.id, reward as CustomerPromotionReward));
+        const nextRewards = Array.from(merged.values());
+        saveLocalCollection('customer_rewards', nextRewards);
+        return nextRewards;
+      });
 
       const cloudPointsConfig = (cloudPointsConfigs as ExchangeRateConfig[]).find((item: any) => item.id === 'global') || cloudPointsConfigs[0] as ExchangeRateConfig | undefined;
       if (cloudPointsConfig) {
@@ -490,7 +530,7 @@ const CustomersModule: React.FC = () => {
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新客户数据失败:', error);
-      alert('刷新客户数据失败，请检查网络后重试');
+      alert(translationRef.current('customer.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
@@ -522,6 +562,70 @@ const CustomersModule: React.FC = () => {
     return filteredCustomers[0] || null;
   }, [customerRows, filteredCustomers, selectedCustomer]);
 
+  useEffect(() => {
+    const customerId = selectedCustomerRow?.id;
+    if (!customerId) return;
+    let cancelled = false;
+
+    smartGetDocumentsWhereEqual('customer_rewards', 'customerId', customerId, true)
+      .then(rows => {
+        if (cancelled) return;
+        const customerRewards = rows as CustomerPromotionReward[];
+        setPromotionRewards(previous => {
+          const merged = new Map<string, CustomerPromotionReward>();
+          previous.filter(reward => reward.customerId !== customerId)
+            .forEach(reward => merged.set(reward.id, reward));
+          customerRewards.forEach(reward => merged.set(reward.id, reward));
+          const nextRewards = Array.from(merged.values());
+          saveLocalCollection('customer_rewards', nextRewards);
+          return nextRewards;
+        });
+      })
+      .catch(error => console.error('load customer rewards failed:', error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCustomerRow?.id]);
+
+  useEffect(() => {
+    const customerId = selectedCustomerRow?.id;
+    if (!customerId) return;
+    setPromotionRewards(previous => {
+      let changed = false;
+      const nextRewards = previous.map(reward => {
+        if (reward.customerId !== customerId) return reward;
+        const sourceOrder = orders.find(order => order.id === reward.orderId);
+        const nextReward = reconcilePromotionReward(reward, sourceOrder as any);
+        if (nextReward.status === reward.status) return reward;
+        changed = true;
+        smartUpdateDocument('customer_rewards', reward.id, nextReward, { localFirst: true }).catch(() => undefined);
+        return nextReward;
+      });
+      if (!changed) return previous;
+      saveLocalCollection('customer_rewards', nextRewards);
+      return nextRewards;
+    });
+  }, [orders, selectedCustomerRow?.id]);
+
+  const selectedPromotionRewards = React.useMemo(() => promotionRewards
+    .filter(reward => reward.customerId === selectedCustomerRow?.id)
+    .sort((left, right) => Date.parse(right.drawnAt || '') - Date.parse(left.drawnAt || '')),
+  [promotionRewards, selectedCustomerRow?.id]);
+
+  const availablePromotionRewards = React.useMemo(
+    () => selectedPromotionRewards.filter(reward => reward.status === 'available'),
+    [selectedPromotionRewards]
+  );
+
+  const eligibleRedemptionOrders = React.useMemo(() => {
+    if (!selectedReward) return [];
+    return orders.filter(order => !getPromotionRedemptionError(
+      selectedReward,
+      order as unknown as PromotionRedemptionOrderLike
+    ));
+  }, [orders, selectedReward]);
+
   const selectedLedger = React.useMemo(
     () => selectedCustomerRow ? getCustomerPointLedger(selectedCustomerRow.id, transactions).slice(0, 6) : [],
     [selectedCustomerRow, transactions]
@@ -538,6 +642,100 @@ const CustomersModule: React.FC = () => {
     }
   };
 
+  const openRewardRedemption = (reward: CustomerPromotionReward) => {
+    const candidates = orders.filter(order => !getPromotionRedemptionError(
+      reward,
+      order as unknown as PromotionRedemptionOrderLike
+    ));
+    setSelectedReward(reward);
+    setSelectedRedemptionOrderId(candidates[0]?.id || '');
+    setShowRewardRedeemModal(true);
+  };
+
+  const closeRewardRedemption = () => {
+    if (isRedeemingReward) return;
+    setShowRewardRedeemModal(false);
+    setSelectedReward(null);
+    setSelectedRedemptionOrderId('');
+  };
+
+  const handleRedeemPromotionReward = async () => {
+    if (!selectedReward || !selectedRedemptionOrderId) return;
+    const targetOrder = orders.find(order => order.id === selectedRedemptionOrderId);
+    if (!targetOrder) {
+      alert(t('customer.reward.alert.orderMissing'));
+      return;
+    }
+
+    setIsRedeemingReward(true);
+    try {
+      let operator = '';
+      try {
+        const currentUser = JSON.parse(localStorage.getItem('current_user') || '{}');
+        operator = currentUser.name || currentUser.username || currentUser.displayName || '';
+      } catch {
+        operator = '';
+      }
+      const menuItem = selectedReward.menuItemId
+        ? menuItems.find(item => item.id === selectedReward.menuItemId)
+        : undefined;
+      const rewardMenuFields = menuItem
+        ? {
+            category: menuItem.category,
+            ...(menuItem.type ? { type: menuItem.type } : {}),
+            ...(menuItem.stockItemId ? { stockItemId: menuItem.stockItemId } : {}),
+            ...(menuItem.ingredients ? { ingredients: menuItem.ingredients } : {}),
+          }
+        : {};
+      const rewardItem = selectedReward.prizeType === 'dish' || selectedReward.prizeType === 'gift'
+        ? {
+            ...rewardMenuFields,
+            id: `promotion-${selectedReward.id}`,
+            menuItemId: selectedReward.menuItemId || selectedReward.prizeId,
+            name: selectedReward.rewardLabel,
+            quantity: 1,
+            price: 0,
+            subtotal: 0,
+            sentQuantity: 0,
+            promotionRewardId: selectedReward.id,
+          }
+        : undefined;
+
+      const result = await redeemCustomerPromotionReward(
+        selectedReward,
+        targetOrder as unknown as PromotionRedemptionOrderLike,
+        operator,
+        rewardItem
+      );
+      setPromotionRewards(previous => {
+        const nextRewards = previous.map(reward => reward.id === result.reward.id ? result.reward : reward);
+        saveLocalCollection('customer_rewards', nextRewards);
+        return nextRewards;
+      });
+      setOrders(previous => previous.map(order => (
+        order.id === result.order.id ? result.order as any : order
+      )));
+      setShowRewardRedeemModal(false);
+      setSelectedReward(null);
+      setSelectedRedemptionOrderId('');
+      alert(result.pendingSync
+        ? t('customer.reward.alert.savedOffline')
+        : t('customer.reward.alert.redeemed'));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      const messageKey: TranslationKey = code === 'redemption-order-too-small'
+        ? 'customer.reward.alert.orderTooSmall'
+        : code === 'redemption-order-paid'
+          ? 'customer.reward.alert.orderPaid'
+          : code === 'reward-not-available'
+            ? 'customer.reward.alert.notAvailable'
+            : 'customer.reward.alert.failed';
+      alert(t(messageKey));
+    } finally {
+      setIsRedeemingReward(false);
+    }
+  };
+
   const openAddModal = () => {
     resetForm();
     setShowAddModal(true);
@@ -545,7 +743,7 @@ const CustomersModule: React.FC = () => {
 
   const handleAddCustomer = async () => {
     if (!formData.name.trim()) {
-      alert('请输入客户姓名');
+      alert(t('customer.alert.nameRequired'));
       return;
     }
 
@@ -572,14 +770,14 @@ const CustomersModule: React.FC = () => {
       await smartSetDocument('customers', newCustomer.id, newCustomer);
     } catch (error) {
       console.error('保存客户失败:', error);
-      alert('保存客户失败，请检查网络后重试');
+      alert(t('customer.alert.saveFailed'));
       return;
     }
     setCustomers(nextCustomers);
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     setShowAddModal(false);
     resetForm();
-    alert('客户添加成功');
+    alert(t('customer.alert.added'));
   };
 
   const handleEditCustomer = (customer: Customer) => {
@@ -619,7 +817,7 @@ const CustomersModule: React.FC = () => {
       await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
     } catch (error) {
       console.error('保存客户失败:', error);
-      alert('保存客户失败，请检查网络后重试');
+      alert(t('customer.alert.saveFailed'));
       return;
     }
     setCustomers(nextCustomers);
@@ -627,11 +825,11 @@ const CustomersModule: React.FC = () => {
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
     setShowEditModal(false);
     resetForm();
-    alert('客户信息已更新');
+    alert(t('customer.alert.updated'));
   };
 
   const handleDeleteCustomer = async (customerId: string) => {
-    if (!window.confirm('确定要删除这个客户吗？此操作不可恢复。')) return;
+    if (!window.confirm(t('customer.confirm.delete'))) return;
 
     const deletedCustomer = customers.find(customer => customer.id === customerId);
     const deletedAt = new Date().toISOString();
@@ -652,7 +850,7 @@ const CustomersModule: React.FC = () => {
       });
     } catch (error) {
       console.error('删除客户失败:', error);
-      alert('删除客户失败，请检查网络后重试');
+      alert(t('customer.alert.deleteFailed'));
       return;
     }
     setCustomers(nextCustomers);
@@ -660,7 +858,7 @@ const CustomersModule: React.FC = () => {
       setSelectedCustomer(null);
     }
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    alert('客户已删除');
+    alert(t('customer.alert.deleted'));
   };
 
   const handleManagePoints = (customer: Customer) => {
@@ -671,7 +869,7 @@ const CustomersModule: React.FC = () => {
 
   const handleAddPoints = async () => {
     if (!selectedCustomer || pointsAmount <= 0) {
-      alert('请输入有效的积分数量');
+      alert(t('customer.alert.invalidPoints'));
       return;
     }
 
@@ -699,7 +897,7 @@ const CustomersModule: React.FC = () => {
       await smartSetDocument('points_transactions', transaction.id, transaction);
     } catch (error) {
       console.error('保存积分失败:', error);
-      alert('保存积分失败，请检查网络后重试');
+      alert(t('customer.alert.pointsSaveFailed'));
       return;
     }
     setCustomers(nextCustomers);
@@ -709,7 +907,7 @@ const CustomersModule: React.FC = () => {
     saveScopedPointsTransactions(updatedTransactions);
     setShowPointsModal(false);
     setPointsAmount(0);
-    alert(`已添加 ${pointsAmount} 积分`);
+    alert(`${t('customer.alert.pointsAdded')} ${pointsAmount}`);
   };
 
   const handleSavePointsSettings = async () => {
@@ -717,12 +915,12 @@ const CustomersModule: React.FC = () => {
     const redeemRate = Number(tempPointsConfig.pointsToCurrency);
 
     if (!Number.isFinite(earnRate) || earnRate < 0) {
-      alert('请输入有效的消费积分比例');
+      alert(t('customer.alert.invalidEarnRate'));
       return;
     }
 
     if (!Number.isFinite(redeemRate) || redeemRate <= 0) {
-      alert('请输入有效的积分抵扣比例');
+      alert(t('customer.alert.invalidRedeemRate'));
       return;
     }
 
@@ -740,10 +938,10 @@ const CustomersModule: React.FC = () => {
       saveLocalPointsConfig(nextConfig);
       setPointsConfig(nextConfig);
       setTempPointsConfig(nextConfig);
-      alert('积分设置已保存');
+      alert(t('customer.alert.settingsSaved'));
     } catch (error) {
       console.error('保存积分设置失败:', error);
-      alert('保存积分设置失败，请检查网络后重试');
+      alert(t('customer.alert.settingsSaveFailed'));
     } finally {
       setIsSavingPointsSettings(false);
     }
@@ -757,12 +955,12 @@ const CustomersModule: React.FC = () => {
 
   const handleConfirmRedeem = async () => {
     if (!selectedCustomer || redeemAmount <= 0) {
-      alert('请输入有效的兑换积分');
+      alert(t('customer.alert.invalidRedeemPoints'));
       return;
     }
 
     if (redeemAmount > selectedCustomer.points) {
-      alert('积分不足');
+      alert(t('customer.alert.insufficientPoints'));
       return;
     }
 
@@ -791,7 +989,7 @@ const CustomersModule: React.FC = () => {
       await smartSetDocument('points_transactions', transaction.id, transaction);
     } catch (error) {
       console.error('保存积分兑换失败:', error);
-      alert('保存积分兑换失败，请检查网络后重试');
+      alert(t('customer.alert.redeemSaveFailed'));
       return;
     }
     setCustomers(nextCustomers);
@@ -801,11 +999,11 @@ const CustomersModule: React.FC = () => {
     saveScopedPointsTransactions(updatedTransactions);
     setShowRedeemModal(false);
     setRedeemAmount(0);
-    alert(`成功兑换 C$ ${cashValue.toFixed(2)}`);
+    alert(`${t('customer.alert.redeemed')} C$ ${cashValue.toFixed(2)}`);
   };
 
   const handleResetPoints = async (customerId: string) => {
-    if (!window.confirm('确定要重置这个客户的积分吗？')) return;
+    if (!window.confirm(t('customer.confirm.resetPoints'))) return;
 
     const nextCustomers = customers.map(customer =>
       customer.id === customerId ? { ...customer, points: 0 } : customer
@@ -817,7 +1015,7 @@ const CustomersModule: React.FC = () => {
       await smartSetDocument('customers', updatedCustomer.id, updatedCustomer);
     } catch (error) {
       console.error('重置积分失败:', error);
-      alert('重置积分失败，请检查网络后重试');
+      alert(t('customer.alert.resetFailed'));
       return;
     }
     setCustomers(nextCustomers);
@@ -825,37 +1023,37 @@ const CustomersModule: React.FC = () => {
       setSelectedCustomer(updatedCustomer);
     }
     await dataManager.saveData('customers', nextCustomers, { syncFirestore: false, notify: false });
-    alert('积分已重置为 0');
+    alert(t('customer.alert.resetDone'));
   };
 
   const renderCustomerForm = (mode: 'add' | 'edit') => (
     <>
       <div style={styles.formGroup}>
-        <label style={styles.label}>姓名 *</label>
+        <label style={styles.label}>{t('customer.name')} *</label>
         <input
           type="text"
           value={formData.name}
           onChange={(event) => setFormData({ ...formData, name: event.target.value })}
-          placeholder="请输入客户姓名"
+          placeholder={t('customer.namePlaceholder')}
           style={styles.input}
         />
       </div>
       <div style={styles.formGroup}>
-        <label style={styles.label}>电话</label>
+        <label style={styles.label}>{t('customer.phone')}</label>
         <input
           type="tel"
           value={formData.phone}
           onChange={(event) => setFormData({ ...formData, phone: event.target.value })}
-          placeholder="请输入电话号码"
+          placeholder={t('customer.phonePlaceholder')}
           style={styles.input}
         />
       </div>
       <div style={styles.formGroup}>
-        <label style={styles.label}>备注</label>
+        <label style={styles.label}>{t('customer.notes')}</label>
         <textarea
           value={formData.notes}
           onChange={(event) => setFormData({ ...formData, notes: event.target.value })}
-          placeholder="客户偏好、禁忌、特殊需求等"
+          placeholder={t('customer.notesPlaceholder')}
           rows={3}
           style={styles.textarea}
         />
@@ -881,13 +1079,13 @@ const CustomersModule: React.FC = () => {
           }}
           style={buttonStyle('secondary')}
         >
-          取消
+          {t('customer.cancel')}
         </button>
         <button
           onClick={mode === 'add' ? handleAddCustomer : handleSaveEdit}
           style={buttonStyle('primary')}
         >
-          保存
+          {t('customer.save')}
         </button>
       </div>
     </>
@@ -899,31 +1097,31 @@ const CustomersModule: React.FC = () => {
     <div style={styles.container} data-customer-center="true">
       <div style={styles.topBar}>
         <div>
-          <h1 style={styles.title}>客户中心</h1>
-          <p style={styles.subtitle}>客户档案、消费价值、积分风险和最近互动集中管理。</p>
+          <h1 style={styles.title}>{t('customer.title')}</h1>
+          <p style={styles.subtitle}>{t('customer.subtitle')}</p>
         </div>
         <div style={styles.actions}>
           <div style={styles.syncText}>
-            {lastSyncedAt ? `同步 ${lastSyncedAt.toLocaleTimeString('zh-CN')}` : '未同步'}
+            {lastSyncedAt ? `${t('customer.synced')} ${lastSyncedAt.toLocaleTimeString(language === 'zh-CN' ? 'zh-CN' : 'es-NI')}` : t('customer.notSynced')}
           </div>
           <button onClick={refreshCustomerData} disabled={isRefreshing} style={buttonStyle('secondary')}>
-            {isRefreshing ? '刷新中...' : '刷新'}
+            {isRefreshing ? t('customer.refreshing') : t('customer.refresh')}
           </button>
           <button onClick={openAddModal} style={buttonStyle('primary')}>
-            新增客户
+            {t('customer.add')}
           </button>
         </div>
       </div>
 
       <div style={styles.kpiGrid} data-customer-kpis="true">
         {[
-          { label: '客户总数', value: formatNumber(summary.totalCustomers), accent: colors.teal },
-          { label: '活跃客户', value: formatNumber(summary.activeCustomers), accent: colors.success },
-          { label: '沉睡客户', value: formatNumber(summary.sleepingCustomers), accent: colors.amber },
-          { label: '高价值客户', value: formatNumber(summary.highValueCustomers), accent: colors.blue },
-          { label: '累计消费', value: formatMoney(summary.totalSpend), accent: colors.teal },
-          { label: '平均消费', value: formatMoney(summary.averageSpend), accent: colors.textPrimary },
-          { label: '积分负债', value: formatMoney(summary.pointsLiability), accent: colors.danger },
+          { label: t('customer.kpi.total'), value: formatNumber(summary.totalCustomers), accent: colors.teal },
+          { label: t('customer.kpi.active'), value: formatNumber(summary.activeCustomers), accent: colors.success },
+          { label: t('customer.kpi.sleeping'), value: formatNumber(summary.sleepingCustomers), accent: colors.amber },
+          { label: t('customer.kpi.highValue'), value: formatNumber(summary.highValueCustomers), accent: colors.blue },
+          { label: t('customer.kpi.totalSpend'), value: formatMoney(summary.totalSpend), accent: colors.teal },
+          { label: t('customer.kpi.averageSpend'), value: formatMoney(summary.averageSpend), accent: colors.textPrimary },
+          { label: t('customer.kpi.pointsLiability'), value: formatMoney(summary.pointsLiability), accent: colors.danger },
         ].map(card => (
           <div key={card.label} style={{ ...styles.kpiCard, borderTop: `3px solid ${card.accent}` }}>
             <div style={styles.kpiLabel}>{card.label}</div>
@@ -935,34 +1133,34 @@ const CustomersModule: React.FC = () => {
       <div style={styles.workspace}>
         <section style={styles.panel}>
           <div style={styles.panelHeader}>
-            <h2 style={styles.panelTitle}>客户列表</h2>
-            <span style={styles.muted}>显示 {filteredCustomers.length} / {customerRows.length}</span>
+            <h2 style={styles.panelTitle}>{t('customer.list.title')}</h2>
+            <span style={styles.muted}>{t('customer.list.showing')} {filteredCustomers.length} / {customerRows.length}</span>
           </div>
 
           <div style={styles.toolbar}>
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="搜索姓名或电话"
+              placeholder={t('customer.searchPlaceholder')}
               style={styles.input}
             />
             <select value={sortBy} onChange={(event) => setSortBy(event.target.value as CustomerSortKey)} style={styles.select}>
-              <option value="recent">最近消费</option>
-              <option value="spend">消费金额</option>
-              <option value="points">积分余额</option>
-              <option value="visits">消费次数</option>
-              <option value="name">姓名</option>
+              <option value="recent">{t('customer.sort.recent')}</option>
+              <option value="spend">{t('customer.sort.spend')}</option>
+              <option value="points">{t('customer.sort.points')}</option>
+              <option value="visits">{t('customer.sort.visits')}</option>
+              <option value="name">{t('customer.name')}</option>
             </select>
           </div>
 
           <div style={styles.segmentBar} data-customer-segments="true">
             {[
-              { id: 'all', label: '全部' },
-              { id: 'vip', label: '高价值' },
-              { id: 'active', label: '活跃' },
-              { id: 'sleeping', label: '沉睡' },
-              { id: 'points', label: '有积分' },
-              { id: 'new', label: '新客户' },
+              { id: 'all', label: t('customer.filter.all') },
+              { id: 'vip', label: t('customer.filter.vip') },
+              { id: 'active', label: t('customer.filter.active') },
+              { id: 'sleeping', label: t('customer.filter.sleeping') },
+              { id: 'points', label: t('customer.filter.points') },
+              { id: 'new', label: t('customer.filter.new') },
             ].map(segment => (
               <button
                 key={segment.id}
@@ -975,25 +1173,29 @@ const CustomersModule: React.FC = () => {
           </div>
 
           {filteredCustomers.length === 0 ? (
-            <div style={styles.empty}>没有匹配的客户</div>
+            <div style={styles.empty}>{t('customer.noMatches')}</div>
           ) : (
             <div style={styles.tableWrap}>
               <table style={styles.table}>
                 <thead>
                   <tr>
-                    <th style={styles.th}>客户</th>
-                    <th style={styles.th}>状态</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>积分</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>累计消费</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>次数</th>
-                    <th style={styles.th}>最近消费</th>
-                    <th style={{ ...styles.th, textAlign: 'center' }}>操作</th>
+                    <th style={styles.th}>{t('customer.table.customer')}</th>
+                    <th style={styles.th}>{t('customer.table.status')}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t('customer.table.points')}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t('customer.table.rewards')}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t('customer.table.totalSpend')}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t('customer.table.visits')}</th>
+                    <th style={styles.th}>{t('customer.table.lastVisit')}</th>
+                    <th style={{ ...styles.th, textAlign: 'center' }}>{t('customer.table.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredCustomers.map(customer => {
                     const levelInfo = levelConfig[getCustomerLevel(customer.points)];
                     const isSelected = selectedCustomerRow?.id === customer.id;
+                    const availableRewards = promotionRewards.filter(reward => (
+                      reward.customerId === customer.id && reward.status === 'available'
+                    ));
                     return (
                       <tr
                         key={customer.id}
@@ -1005,31 +1207,34 @@ const CustomersModule: React.FC = () => {
                       >
                         <td style={styles.td}>
                           <div style={styles.customerName}>{customer.name}</div>
-                          <div style={styles.muted}>{customer.phone || '未登记电话'}</div>
+                          <div style={styles.muted}>{customer.phone || t('customer.phoneMissing')}</div>
                         </td>
                         <td style={styles.td}>
                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                            <span style={badgeStyle(customer.segment)}>{segmentLabels[customer.segment]}</span>
+                            <span style={badgeStyle(customer.segment)}>{t(segmentLabelKeys[customer.segment])}</span>
                             <span style={{
                               ...badgeStyle('new'),
                               color: levelInfo.color,
                               background: levelInfo.bg,
                             }}>
-                              {levelInfo.label}
+                              {t(levelInfo.labelKey)}
                             </span>
                           </div>
                         </td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: 650 }}>
                           {formatNumber(customer.points)}
                         </td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 650, color: availableRewards.length ? colors.amber : colors.textSecondary }}>
+                          {availableRewards.length || '-'}
+                        </td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: 650, color: colors.teal }}>
                           {formatMoney(customer.lifetimeSpend)}
                         </td>
                         <td style={{ ...styles.td, textAlign: 'right' }}>{formatNumber(customer.visitCount)}</td>
                         <td style={styles.td}>
-                          <div>{formatDate(customer.lastVisitDate)}</div>
+                          <div>{formatDate(customer.lastVisitDate, language, t)}</div>
                           <div style={styles.muted}>
-                            {customer.daysSinceVisit === null ? '无消费记录' : `${customer.daysSinceVisit} 天前`}
+                            {customer.daysSinceVisit === null ? t('customer.noVisits') : `${customer.daysSinceVisit} ${t('customer.daysAgo')}`}
                           </div>
                         </td>
                         <td style={{ ...styles.td, textAlign: 'center' }} onClick={(event) => event.stopPropagation()}>
@@ -1037,17 +1242,17 @@ const CustomersModule: React.FC = () => {
                             <button onClick={() => {
                               const record = getCustomerRecord(customer.id);
                               if (record) handleEditCustomer(record);
-                            }} style={buttonStyle('secondary')}>编辑</button>
+                            }} style={buttonStyle('secondary')}>{t('customer.edit')}</button>
                             <button onClick={() => {
                               const record = getCustomerRecord(customer.id);
                               if (record) handleManagePoints(record);
-                            }} style={buttonStyle('warning')}>积分</button>
+                            }} style={buttonStyle('warning')}>{t('customer.points')}</button>
                             <button onClick={() => {
                               const record = getCustomerRecord(customer.id);
                               if (record) handleRedeemPoints(record);
-                            }} style={buttonStyle('primary')}>兑换</button>
-                            <button onClick={() => handleResetPoints(customer.id)} style={buttonStyle('ghost')}>清零</button>
-                            <button onClick={() => handleDeleteCustomer(customer.id)} style={buttonStyle('danger')}>删除</button>
+                            }} style={buttonStyle('primary')}>{t('customer.redeem')}</button>
+                            <button onClick={() => handleResetPoints(customer.id)} style={buttonStyle('ghost')}>{t('customer.reset')}</button>
+                            <button onClick={() => handleDeleteCustomer(customer.id)} style={buttonStyle('danger')}>{t('customer.delete')}</button>
                           </div>
                         </td>
                       </tr>
@@ -1061,41 +1266,100 @@ const CustomersModule: React.FC = () => {
 
         <aside style={styles.detailPanel} data-customer-detail-panel="true">
           <div style={styles.panelHeader}>
-            <h2 style={styles.panelTitle}>客户 360</h2>
-            {detailCustomer && <span style={badgeStyle(detailCustomer.segment)}>{segmentLabels[detailCustomer.segment]}</span>}
+            <h2 style={styles.panelTitle}>{t('customer.detail.title')}</h2>
+            {detailCustomer && <span style={badgeStyle(detailCustomer.segment)}>{t(segmentLabelKeys[detailCustomer.segment])}</span>}
           </div>
           {detailCustomer ? (
             <div style={styles.detailBody}>
               <div>
                 <h3 style={styles.detailName}>{detailCustomer.name}</h3>
-                <div style={styles.muted}>{detailCustomer.phone || '未登记电话'}</div>
+                <div style={styles.muted}>{detailCustomer.phone || t('customer.phoneMissing')}</div>
                 {detailCustomer.notes && <div style={{ ...styles.muted, marginTop: '0.45rem' }}>{detailCustomer.notes}</div>}
               </div>
 
               <div style={styles.metricGrid}>
                 <div style={styles.miniCard}>
-                  <div style={styles.kpiLabel}>累计消费</div>
+                  <div style={styles.kpiLabel}>{t('customer.kpi.totalSpend')}</div>
                   <div style={styles.kpiValue}>{formatMoney(detailCustomer.lifetimeSpend)}</div>
                 </div>
                 <div style={styles.miniCard}>
-                  <div style={styles.kpiLabel}>平均客单</div>
+                  <div style={styles.kpiLabel}>{t('customer.detail.averageTicket')}</div>
                   <div style={styles.kpiValue}>{formatMoney(detailCustomer.averageTicket)}</div>
                 </div>
                 <div style={styles.miniCard}>
-                  <div style={styles.kpiLabel}>积分余额</div>
+                  <div style={styles.kpiLabel}>{t('customer.sort.points')}</div>
                   <div style={styles.kpiValue}>{formatNumber(detailCustomer.points)}</div>
                 </div>
                 <div style={styles.miniCard}>
-                  <div style={styles.kpiLabel}>可抵扣</div>
+                  <div style={styles.kpiLabel}>{t('customer.detail.redeemable')}</div>
                   <div style={styles.kpiValue}>{formatMoney(detailCustomer.redeemValue)}</div>
                 </div>
               </div>
 
+              <div style={styles.settingsCard} data-customer-rewards="true">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.65rem' }}>
+                  <div>
+                    <div style={styles.panelTitle}>{t('customer.reward.title')}</div>
+                    <div style={styles.muted}>{t('customer.reward.subtitle')}</div>
+                  </div>
+                  <span style={{
+                    ...badgeStyle('sleeping'),
+                    color: availablePromotionRewards.length ? colors.amber : colors.textSecondary,
+                    background: availablePromotionRewards.length ? colors.amberSoft : colors.surfaceMuted,
+                  }}>
+                    {t('customer.reward.availableCount')} {availablePromotionRewards.length}
+                  </span>
+                </div>
+                {selectedPromotionRewards.length === 0 ? (
+                  <div style={styles.muted}>{t('customer.reward.empty')}</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '0.55rem', maxHeight: '18rem', overflowY: 'auto' }}>
+                    {selectedPromotionRewards.map(reward => {
+                      const statusColor = reward.status === 'available'
+                        ? colors.success
+                        : reward.status === 'pending'
+                          ? colors.amber
+                          : reward.status === 'redeemed'
+                            ? colors.blue
+                            : colors.textSecondary;
+                      return (
+                        <div key={reward.id} style={{ ...styles.miniCard, background: colors.surface }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.65rem', alignItems: 'flex-start' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 650, color: colors.textPrimary }}>{reward.rewardLabel}</div>
+                              <div style={{ ...styles.muted, marginTop: '0.2rem' }}>
+                                {t('customer.reward.sourceOrder')} #{reward.orderNumber || reward.orderId} · {formatDate(reward.dateKey, language, t)}
+                              </div>
+                              {reward.redeemedOrderNumber && (
+                                <div style={{ ...styles.muted, marginTop: '0.2rem' }}>
+                                  {t('customer.reward.usedOn')} #{reward.redeemedOrderNumber}
+                                </div>
+                              )}
+                            </div>
+                            <span style={{ ...badgeStyle('new'), color: statusColor, background: colors.surfaceMuted, flexShrink: 0 }}>
+                              {t(`customer.reward.status.${reward.status}` as TranslationKey)}
+                            </span>
+                          </div>
+                          {reward.status === 'available' && (
+                            <button
+                              onClick={() => openRewardRedemption(reward)}
+                              style={{ ...buttonStyle('primary'), width: '100%', marginTop: '0.55rem' }}
+                            >
+                              {t('customer.reward.useNextOrder')}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div style={styles.settingsCard}>
-                <div style={{ ...styles.kpiLabel, marginBottom: '0.65rem' }}>积分规则</div>
+                <div style={{ ...styles.kpiLabel, marginBottom: '0.65rem' }}>{t('customer.pointsRules')}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
                   <div>
-                    <label style={styles.label}>每 C$1 获得积分</label>
+                    <label style={styles.label}>{t('customer.earnRate')}</label>
                     <input
                       type="number"
                       min="0"
@@ -1109,7 +1373,7 @@ const CustomersModule: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label style={styles.label}>多少积分抵 C$1</label>
+                    <label style={styles.label}>{t('customer.redeemRate')}</label>
                     <input
                       type="number"
                       min="1"
@@ -1128,20 +1392,22 @@ const CustomersModule: React.FC = () => {
                   disabled={isSavingPointsSettings}
                   style={{ ...buttonStyle('secondary'), marginTop: '0.75rem', width: '100%' }}
                 >
-                  {isSavingPointsSettings ? '保存中...' : `保存规则：C$1=${pointsEarnRate} 分，${pointsExchangeRate} 分抵 C$1`}
+                  {isSavingPointsSettings
+                    ? t('customer.saving')
+                    : `${t('customer.saveRules')} C$1=${pointsEarnRate} ${t('customer.unit.points')}, ${pointsExchangeRate} ${t('customer.unit.points')} = C$1`}
                 </button>
               </div>
 
               <div data-customer-point-ledger="true">
-                <div style={{ ...styles.panelTitle, marginBottom: '0.3rem' }}>最近积分流水</div>
+                <div style={{ ...styles.panelTitle, marginBottom: '0.3rem' }}>{t('customer.ledger.title')}</div>
                 {selectedLedger.length === 0 ? (
-                  <div style={styles.muted}>暂无积分流水</div>
+                  <div style={styles.muted}>{t('customer.ledger.empty')}</div>
                 ) : (
                   selectedLedger.map(transaction => (
                     <div key={transaction.id} style={styles.ledgerItem}>
                       <div>
                         <div style={{ fontWeight: 650 }}>{transaction.description || transaction.type}</div>
-                        <div style={styles.muted}>{new Date(transaction.createdAt).toLocaleString('zh-CN')}</div>
+                        <div style={styles.muted}>{new Date(transaction.createdAt).toLocaleString(language === 'zh-CN' ? 'zh-CN' : 'es-NI')}</div>
                       </div>
                       <div style={{
                         fontWeight: 650,
@@ -1155,15 +1421,70 @@ const CustomersModule: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div style={styles.empty}>选择一个客户查看完整档案</div>
+            <div style={styles.empty}>{t('customer.detail.selectPrompt')}</div>
           )}
         </aside>
       </div>
 
+      {showRewardRedeemModal && selectedReward && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent} data-reward-redemption-modal="true">
+            <h3 style={styles.modalTitle}>{t('customer.reward.redeemTitle')}</h3>
+            <div style={styles.settingsCard}>
+              <div style={styles.kpiLabel}>{t('customer.reward.currentReward')}</div>
+              <div style={styles.detailName}>{selectedReward.rewardLabel}</div>
+              <div style={{ ...styles.muted, marginTop: '0.35rem' }}>
+                {t('customer.reward.code')} {selectedReward.code} · {t('customer.reward.sourceOrder')} #{selectedReward.orderNumber || selectedReward.orderId}
+              </div>
+            </div>
+            <div style={{ ...styles.formGroup, marginTop: '0.9rem' }}>
+              <label style={styles.label}>{t('customer.reward.selectOrder')}</label>
+              {eligibleRedemptionOrders.length === 0 ? (
+                <div style={{ ...styles.miniCard, color: colors.amber }}>
+                  {t('customer.reward.noEligibleOrder')}
+                </div>
+              ) : (
+                <select
+                  value={selectedRedemptionOrderId}
+                  onChange={event => setSelectedRedemptionOrderId(event.target.value)}
+                  style={styles.select}
+                >
+                  {eligibleRedemptionOrders.map(order => (
+                    <option key={order.id} value={order.id}>
+                      #{order.orderNumber || order.id} · {order.orderType === 'dine_in' ? 'Mesa' : order.orderType === 'takeout' ? 'Barra' : 'Delivery'} · {formatMoney(order.totalAmount)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div style={{ ...styles.miniCard, marginTop: '0.7rem' }}>
+              <div style={{ fontWeight: 650 }}>{t('customer.reward.ruleTitle')}</div>
+              <div style={{ ...styles.muted, marginTop: '0.3rem' }}>{t('customer.reward.ruleText')}</div>
+            </div>
+            <div style={styles.modalActions}>
+              <button onClick={closeRewardRedemption} disabled={isRedeemingReward} style={buttonStyle('secondary')}>
+                {t('customer.cancel')}
+              </button>
+              <button
+                onClick={handleRedeemPromotionReward}
+                disabled={isRedeemingReward || !selectedRedemptionOrderId}
+                style={{
+                  ...buttonStyle('primary'),
+                  opacity: isRedeemingReward || !selectedRedemptionOrderId ? 0.55 : 1,
+                  cursor: isRedeemingReward || !selectedRedemptionOrderId ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isRedeemingReward ? t('customer.reward.redeeming') : t('customer.reward.confirmUse')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
         <div style={styles.modal}>
           <div style={styles.modalContent}>
-            <h3 style={styles.modalTitle}>新增客户</h3>
+            <h3 style={styles.modalTitle}>{t('customer.addTitle')}</h3>
             {renderCustomerForm('add')}
           </div>
         </div>
@@ -1172,7 +1493,7 @@ const CustomersModule: React.FC = () => {
       {showEditModal && selectedCustomer && (
         <div style={styles.modal}>
           <div style={styles.modalContent}>
-            <h3 style={styles.modalTitle}>编辑客户</h3>
+            <h3 style={styles.modalTitle}>{t('customer.editTitle')}</h3>
             {renderCustomerForm('edit')}
           </div>
         </div>
@@ -1181,14 +1502,14 @@ const CustomersModule: React.FC = () => {
       {showPointsModal && selectedCustomer && (
         <div style={styles.modal}>
           <div style={styles.modalContent}>
-            <h3 style={styles.modalTitle}>积分管理</h3>
+            <h3 style={styles.modalTitle}>{t('customer.pointsTitle')}</h3>
             <div style={styles.settingsCard}>
-              <div style={styles.kpiLabel}>客户</div>
+              <div style={styles.kpiLabel}>{t('customer.table.customer')}</div>
               <div style={styles.detailName}>{selectedCustomer.name}</div>
-              <div style={{ ...styles.muted, marginTop: '0.35rem' }}>当前积分：{formatNumber(selectedCustomer.points)}</div>
+              <div style={{ ...styles.muted, marginTop: '0.35rem' }}>{t('customer.currentPoints')}: {formatNumber(selectedCustomer.points)}</div>
             </div>
             <div style={{ ...styles.formGroup, marginTop: '0.9rem' }}>
-              <label style={styles.label}>增加积分</label>
+              <label style={styles.label}>{t('customer.addPoints')}</label>
               <input
                 type="number"
                 value={pointsAmount}
@@ -1205,9 +1526,9 @@ const CustomersModule: React.FC = () => {
                 }}
                 style={buttonStyle('secondary')}
               >
-                取消
+                {t('customer.cancel')}
               </button>
-              <button onClick={handleAddPoints} style={buttonStyle('warning')}>确认添加</button>
+              <button onClick={handleAddPoints} style={buttonStyle('warning')}>{t('customer.confirmAdd')}</button>
             </div>
           </div>
         </div>
@@ -1216,16 +1537,16 @@ const CustomersModule: React.FC = () => {
       {showRedeemModal && selectedCustomer && (
         <div style={styles.modal}>
           <div style={styles.modalContent}>
-            <h3 style={styles.modalTitle}>积分兑换</h3>
+            <h3 style={styles.modalTitle}>{t('customer.redeemTitle')}</h3>
             <div style={styles.settingsCard}>
-              <div style={styles.kpiLabel}>客户</div>
+              <div style={styles.kpiLabel}>{t('customer.table.customer')}</div>
               <div style={styles.detailName}>{selectedCustomer.name}</div>
               <div style={{ ...styles.muted, marginTop: '0.35rem' }}>
-                可用积分：{formatNumber(selectedCustomer.points)}，比例：{pointsExchangeRate} 分 = C$ 1.00
+                {t('customer.availablePoints')}: {formatNumber(selectedCustomer.points)}, {t('customer.rate')}: {pointsExchangeRate} {t('customer.unit.points')} = C$ 1.00
               </div>
             </div>
             <div style={{ ...styles.formGroup, marginTop: '0.9rem' }}>
-              <label style={styles.label}>兑换积分</label>
+              <label style={styles.label}>{t('customer.redeemPoints')}</label>
               <input
                 type="number"
                 value={redeemAmount}
@@ -1237,7 +1558,7 @@ const CustomersModule: React.FC = () => {
             </div>
             {redeemAmount > 0 && (
               <div style={{ ...styles.miniCard, textAlign: 'center', marginBottom: '0.9rem' }}>
-                <div style={styles.kpiLabel}>可兑换金额</div>
+                <div style={styles.kpiLabel}>{t('customer.redeemableAmount')}</div>
                 <div style={{ ...styles.kpiValue, color: colors.teal }}>{formatMoney(redeemAmount / pointsExchangeRate)}</div>
               </div>
             )}
@@ -1249,9 +1570,9 @@ const CustomersModule: React.FC = () => {
                 }}
                 style={buttonStyle('secondary')}
               >
-                取消
+                {t('customer.cancel')}
               </button>
-              <button onClick={handleConfirmRedeem} style={buttonStyle('primary')}>确认兑换</button>
+              <button onClick={handleConfirmRedeem} style={buttonStyle('primary')}>{t('customer.confirmRedeem')}</button>
             </div>
           </div>
         </div>

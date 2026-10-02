@@ -3,8 +3,10 @@ import { useAppContext } from '../../contexts/AppContext';
 import TableLayout from '../../components/TableLayout';
 import MenuSelection from '../../components/MenuSelection';
 import { dataService } from '../../services/DataService';
-import { smartSubscribeToCollection, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartGenerateDailyOrderNumber, smartSubscribeToCollection, smartUpdateDocument } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
+import { useI18n } from '../../i18n/I18nContext';
+import { createBrowserOrderCreationCoordinator, OrderCreationCoordinator } from '../../utils/orderCreationIntent';
 
 interface Table {
   id: string;
@@ -44,6 +46,7 @@ interface OrderItem {
 
 interface Order {
   id: string;
+  creationIntentId?: string;
   orderNumber?: string;
   tableId: string;
   tableNumber: string;
@@ -84,6 +87,7 @@ const getPaymentStatusForTotal = (settledAmount: number, totalAmount: number): O
 
 const WaiterInterface: React.FC = () => {
   const { orders: appOrders, setOrders: setAppOrders } = useAppContext();
+  const { t } = useI18n();
   const publishedTablesSignatureRef = useRef<string>('');
   const localTablesSignatureRef = useRef<string>('');
   const skipInitialTablePublishRef = useRef(true);
@@ -162,6 +166,13 @@ const WaiterInterface: React.FC = () => {
   const [currentItems, setCurrentItems] = useState<OrderItem[]>([]);
   const [viewMode, setViewMode] = useState<'tables' | 'order'>('tables');
   const [notification, setNotification] = useState<string>('');
+  const sendingToKitchenRef = useRef(false);
+  const orderCreationCoordinatorRef = useRef<OrderCreationCoordinator | null>(null);
+  if (!orderCreationCoordinatorRef.current) {
+    orderCreationCoordinatorRef.current = createBrowserOrderCreationCoordinator(
+      dataService.getStoreKey('waiter_order_creation_intent')
+    );
+  }
 
   useEffect(() => {
     const unsubscribe = smartSubscribeToCollection('pos_tables', (cloudTables) => {
@@ -203,10 +214,14 @@ const WaiterInterface: React.FC = () => {
   }, [tables]);
   
   // 创建订单
-  const createOrder = (orderData: Partial<Order>) => {
+  const createOrder = async (orderData: Partial<Order>) => {
+    const intent = orderCreationCoordinatorRef.current!.claim();
     const newOrder: Order = {
-      id: `order-${Date.now()}`,
-      orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
+      id: intent.id,
+      creationIntentId: intent.id,
+      orderNumber: await orderCreationCoordinatorRef.current!.getOrCreateOrderNumber(
+        () => smartGenerateDailyOrderNumber()
+      ),
       tableId: orderData.tableId || '',
       tableNumber: orderData.tableNumber || '',
       orderType: orderData.orderType || 'dine_in',
@@ -221,7 +236,9 @@ const WaiterInterface: React.FC = () => {
       ...orderData
     } as Order;
     
-    setAppOrders(prev => [...prev, newOrder]);
+    setAppOrders(prev => prev.some(order => order.id === newOrder.id)
+      ? prev.map(order => order.id === newOrder.id ? newOrder : order)
+      : [...prev, newOrder]);
     smartUpdateDocument('pos_orders', newOrder.id, serializeOrderForFirestore(newOrder)).catch(error => {
       console.error('服务生订单同步到 POS 失败:', newOrder.id, error);
     });
@@ -267,6 +284,14 @@ const WaiterInterface: React.FC = () => {
 
   // 选择桌台
   const handleTableSelect = (tableId: string) => {
+    const existingOrder = orders.find(order =>
+      order.tableId === tableId && order.status !== 'completed' && order.status !== 'cancelled'
+    );
+    if (existingOrder) {
+      orderCreationCoordinatorRef.current!.bindExisting(existingOrder.id, existingOrder.orderNumber);
+    } else {
+      orderCreationCoordinatorRef.current!.beginNew();
+    }
     setSelectedTableId(tableId);
     setViewMode('order');
   };
@@ -323,14 +348,19 @@ const WaiterInterface: React.FC = () => {
   };
 
   // 发送到厨房
-  const handleSendToKitchen = () => {
+  const handleSendToKitchen = async () => {
+    if (sendingToKitchenRef.current) return;
+    sendingToKitchenRef.current = true;
+    window.setTimeout(() => {
+      sendingToKitchenRef.current = false;
+    }, 1500);
     if (!selectedTableId) {
-      showNotification('❌ 请先选择桌台');
+      showNotification(`❌ ${t('waiter.notification.selectTable')}`);
       return;
     }
 
     if (currentItems.length === 0) {
-      showNotification('❌ 请先添加菜品');
+      showNotification(`❌ ${t('waiter.notification.addItems')}`);
       return;
     }
 
@@ -338,7 +368,7 @@ const WaiterInterface: React.FC = () => {
     const itemsToSend = currentItems.filter(item => !item.sentToKitchen || item.quantity > item.sentQuantity);
     
     if (itemsToSend.length === 0) {
-      showNotification('⚠️ 所有菜品已发送到厨房');
+      showNotification(`⚠️ ${t('waiter.notification.allSent')}`);
       return;
     }
 
@@ -373,11 +403,11 @@ const WaiterInterface: React.FC = () => {
       smartUpdateDocument('pos_orders', updatedOrder.id, serializeOrderForFirestore(updatedOrder)).catch(error => {
         console.error('服务生加菜同步到 POS 失败:', updatedOrder.id, error);
       });
-      showNotification(`✅ 已发送 ${itemsToSend.length} 个菜品到厨房（加菜）`);
+      showNotification(`✅ ${t('waiter.notification.sentPrefix')} ${itemsToSend.length} ${t('waiter.notification.addOnSuffix')}`);
     } else {
       // 创建新订单
       const table = tables.find(t => t.id === selectedTableId);
-      createOrder({
+      await createOrder({
         tableId: selectedTableId,
         tableNumber: table?.number || '',
         items: updatedItems,
@@ -385,12 +415,13 @@ const WaiterInterface: React.FC = () => {
         orderType: 'dine_in'
       });
       
-      showNotification(`✅ 订单已发送到厨房`);
+      showNotification(`✅ ${t('waiter.notification.orderSent')}`);
     }
   };
 
   // 返回桌台视图
   const handleBackToTables = () => {
+    orderCreationCoordinatorRef.current!.clear();
     setSelectedTableId(null);
     setCurrentItems([]);
     setViewMode('tables');
@@ -403,9 +434,9 @@ const WaiterInterface: React.FC = () => {
   const renderTablesView = () => (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: colors.page, fontFamily: font.family }}>
       <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${colors.border}`, backgroundColor: colors.surface }}>
-        <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: 0, color: colors.textPrimary }}>服务生桌台</h2>
+        <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: 0, color: colors.textPrimary }}>{t('waiter.tables.title')}</h2>
         <p style={{ color: colors.textSecondary, marginTop: '0.35rem', fontSize: font.body }}>
-          点击桌台开始点餐，桌台布局由 POS 同步
+          {t('waiter.tables.subtitle')}
         </p>
       </div>
       
@@ -458,10 +489,10 @@ const WaiterInterface: React.FC = () => {
                 color: colors.textPrimary,
               }}
             >
-              ← 返回桌台
+              ← {t('waiter.order.back')}
             </button>
             <span style={{ fontSize: '1.15rem', fontWeight: '800', color: colors.textPrimary }}>
-              桌台 {table?.number} - 点餐
+              {t('waiter.order.table')} {table?.number} - {t('waiter.order.takeOrder')}
             </span>
             {currentOrder && (
               <span style={{ 
@@ -473,7 +504,7 @@ const WaiterInterface: React.FC = () => {
                 fontSize: '0.75rem',
                 fontWeight: '600'
               }}>
-                已有订单（加菜模式）
+                {t('waiter.order.existing')}
               </span>
             )}
           </div>
@@ -492,7 +523,7 @@ const WaiterInterface: React.FC = () => {
               boxShadow: '0 10px 20px rgba(22, 163, 74, 0.22)'
             }}
           >
-            🍳 发送到厨房
+            🍳 {t('waiter.order.sendToKitchen')}
           </button>
         </div>
 
@@ -511,15 +542,15 @@ const WaiterInterface: React.FC = () => {
           {/* 右侧：订单详情 */}
           <div style={{ width: '350px', display: 'flex', flexDirection: 'column', backgroundColor: colors.surface }}>
             <div style={{ padding: '1rem', borderBottom: `1px solid ${colors.border}`, fontWeight: '800', color: colors.textPrimary }}>
-              🛒 当前订单
+              🛒 {t('waiter.order.current')}
             </div>
             
             {/* 商品列表 */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem' }}>
               {currentItems.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
-                  暂无商品<br/>
-                  <span style={{ fontSize: '0.875rem' }}>请从左侧菜单添加</span>
+                  {t('waiter.order.empty')}<br/>
+                  <span style={{ fontSize: '0.875rem' }}>{t('waiter.order.emptyHint')}</span>
                 </div>
               ) : (
                 currentItems.map(item => (
@@ -591,7 +622,7 @@ const WaiterInterface: React.FC = () => {
                     
                     {item.sentToKitchen && (
                       <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#16a34a' }}>
-                        ✓ 已发送厨房
+                        ✓ {t('waiter.order.sent')}
                       </div>
                     )}
                   </div>
@@ -602,15 +633,15 @@ const WaiterInterface: React.FC = () => {
             {/* 底部汇总 */}
             <div style={{ borderTop: `2px solid ${colors.border}`, padding: '1rem', backgroundColor: colors.surfaceMuted }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                <span style={{ color: '#6b7280' }}>商品数量:</span>
+                <span style={{ color: '#6b7280' }}>{t('waiter.order.itemCount')}:</span>
                 <span style={{ fontWeight: '600' }}>{currentItems.reduce((sum, item) => sum + item.quantity, 0)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem', fontWeight: 'bold' }}>
-                <span>总计:</span>
+                <span>{t('pos.common.total')}:</span>
                 <span style={{ color: '#dc2626' }}>C${totalAmount.toFixed(2)}</span>
               </div>
               <div style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: '#6b7280' }}>
-                💡 提示: 结账请在收银端进行
+                💡 {t('waiter.order.checkoutHint')}
               </div>
             </div>
           </div>

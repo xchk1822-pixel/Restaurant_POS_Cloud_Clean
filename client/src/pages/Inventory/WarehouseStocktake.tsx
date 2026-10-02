@@ -13,9 +13,11 @@ import {
   saveInventoryRefreshCache,
   sortStocktakeHistoryRecords,
 } from '../../utils/stocktakeRefresh';
+import { useI18n } from '../../i18n/I18nContext';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
+  const { t } = useI18n();
   
   // 状态管理
   const [searchTerm, setSearchTerm] = useState('');
@@ -30,7 +32,7 @@ const WarehouseStocktake: React.FC = () => {
   const inventoryCategoryStorageKey = dataService.getStoreKey('inventory_categories');
   
   // 库存分类（从 localStorage 加载）
-  const [inventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
+  const [inventoryCategories, setInventoryCategories] = useState<Array<{ key: string; name: string; icon: string }>>(() => {
     try {
       const saved = localStorage.getItem(inventoryCategoryStorageKey);
       return saved ? JSON.parse(saved) : [
@@ -101,21 +103,24 @@ const WarehouseStocktake: React.FC = () => {
   const refreshWarehouseData = async () => {
     setIsRefreshing(true);
     try {
-      const [cloudItems, cloudHistory] = await Promise.all([
+      const [cloudItems, cloudHistory, cloudCategories] = await Promise.all([
         smartGetDocuments('inventory_items', true),
-        smartGetDocuments('warehouse_stocktake_history', true)
+        smartGetDocuments('warehouse_stocktake_history', true),
+        smartGetDocuments('inventory_categories', true)
       ]);
 
       const normalizedCloudItems = normalizeInventoryItemsForRefresh(cloudItems);
       setInventoryItems(normalizedCloudItems);
       saveInventoryRefreshCache(dataService.getCurrentStoreId(), normalizedCloudItems);
+      setInventoryCategories(cloudCategories);
+      localStorage.setItem(inventoryCategoryStorageKey, JSON.stringify(cloudCategories));
 
       mergeAndCacheStocktakeHistory(cloudHistory);
 
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新仓库盘点数据失败:', error);
-      alert('刷新仓库盘点数据失败，请检查网络后重试');
+      alert(t('warehouse.alert.refreshFailed'));
     } finally {
       setIsRefreshing(false);
     }
@@ -165,11 +170,11 @@ const WarehouseStocktake: React.FC = () => {
     });
 
     if (!hasDifference) {
-      if (!window.confirm('盘点数据与系统库存完全一致，确认完成盘点吗？')) {
+      if (!window.confirm(t('warehouse.confirm.same'))) {
         return;
       }
     } else {
-      const confirmMsg = `发现 ${discrepancies.length} 个商品存在差异，确认完成盘点并更新库存吗？`;
+      const confirmMsg = `${t('warehouse.confirm.diffPrefix')} ${discrepancies.length} ${t('warehouse.confirm.diffSuffix')}`;
       if (!window.confirm(confirmMsg)) {
         return;
       }
@@ -259,10 +264,10 @@ const WarehouseStocktake: React.FC = () => {
       });
       cacheStocktakeHistory([stocktakeRecord, ...history]);
 
-      alert('盘点完成！');
+      alert(t('warehouse.alert.completed'));
     } catch (error) {
       console.error('保存盘点历史失败:', error);
-      alert('保存盘点结果失败，请检查网络后重试');
+      alert(t('warehouse.alert.saveFailed'));
     } finally {
       isStocktakeSubmittingRef.current = false;
       setIsStocktakeSubmitting(false);
@@ -277,12 +282,12 @@ const WarehouseStocktake: React.FC = () => {
     });
 
     if (filteredHistory.length === 0) {
-      alert('所选日期无盘点记录');
+      alert(t('warehouse.alert.noRecords'));
       return;
     }
 
     let csv = '\uFEFF';
-    csv += '盘点时间,商品名称,分类,单位,系统库存,盘点值,差异\n';
+    csv += `${t('warehouse.csv.headers')}\n`;
     
     filteredHistory.forEach(record => {
       const date = formatStocktakeRecordDateTime(record);
@@ -295,7 +300,7 @@ const WarehouseStocktake: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `仓库盘点记录_${selectedHistoryDate}.csv`;
+    link.download = `${t('warehouse.csv.filePrefix')}_${selectedHistoryDate}.csv`;
     link.click();
   };
 
@@ -313,11 +318,11 @@ const WarehouseStocktake: React.FC = () => {
     }}>
       {/* 标题栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>📦 仓库盘点</h2>
+        <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>📦 {t('warehouse.title')}</h2>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {lastSyncedAt && (
             <span style={{ fontSize: '0.75rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-              最后同步 {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
+              {t('warehouse.lastSync')} {lastSyncedAt.toLocaleTimeString('es-NI', { hour12: false })}
             </span>
           )}
           <button
@@ -333,7 +338,7 @@ const WarehouseStocktake: React.FC = () => {
               fontWeight: '600'
             }}
           >
-            {isRefreshing ? '同步中...' : '刷新仓库'}
+            {isRefreshing ? t('warehouse.syncing') : t('warehouse.refresh')}
           </button>
           <button
             onClick={openHistoryModal}
@@ -347,7 +352,7 @@ const WarehouseStocktake: React.FC = () => {
               fontWeight: '600'
             }}
           >
-            盘点历史
+            {t('warehouse.history')}
           </button>
         </div>
       </div>
@@ -368,7 +373,7 @@ const WarehouseStocktake: React.FC = () => {
               fontWeight: '600'
             }}
           >
-            全部
+            {t('warehouse.all')}
           </button>
           {inventoryCategories.map(cat => (
             <button
@@ -395,7 +400,7 @@ const WarehouseStocktake: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '0.75rem', alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="搜索商品名称或扫描条形码..."
+          placeholder={t('warehouse.searchPlaceholder')}
           value={searchTerm}
           onChange={(e) => {
             setSearchTerm(e.target.value);
@@ -416,7 +421,7 @@ const WarehouseStocktake: React.FC = () => {
           }}
         />
         <div style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
-          📊 {filteredItems.length} 个商品
+          📊 {filteredItems.length} {t('warehouse.itemCount')}
         </div>
         <button
           onClick={completeStocktake}
@@ -434,7 +439,7 @@ const WarehouseStocktake: React.FC = () => {
             opacity: isStocktakeSubmitting ? 0.75 : 1
           }}
         >
-          {isStocktakeSubmitting ? '处理中...' : '✅ 完成盘点'}
+          {isStocktakeSubmitting ? t('warehouse.processing') : `✅ ${t('warehouse.complete')}`}
         </button>
       </div>
 
@@ -444,19 +449,19 @@ const WarehouseStocktake: React.FC = () => {
           {filteredItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
               <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📦</div>
-              <p>暂无库存物品</p>
+              <p>{t('warehouse.empty')}</p>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>商品名称</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>分类</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>条形码</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>单位</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>系统库存</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>盘点值</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>差异</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.itemName')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.category')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.barcode')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.unit')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.systemStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.actualStock')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{t('warehouse.table.difference')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -567,7 +572,7 @@ const WarehouseStocktake: React.FC = () => {
               overflow: 'hidden'
             }} id="warehouse-stocktake-print" className="print-container">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.65rem', flexWrap: 'wrap' }}>
-                <h3 style={{ margin: 0 }}>📋 今日盘点汇总</h3>
+                <h3 style={{ margin: 0 }}>📋 {t('warehouse.historyTitle')}</h3>
                 <div className="stocktake-print-actions" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <input
                     type="date"
@@ -592,7 +597,7 @@ const WarehouseStocktake: React.FC = () => {
                       fontSize: '0.85rem'
                     }}
                   >
-                    📥 导出CSV
+                    📥 {t('warehouse.exportCsv')}
                   </button>
                   <button
                     onClick={() => printStocktakeHistory('warehouse-stocktake-print')}
@@ -606,7 +611,7 @@ const WarehouseStocktake: React.FC = () => {
                       fontSize: '0.85rem'
                     }}
                   >
-                    🖨️ 打印
+                    🖨️ {t('warehouse.print')}
                   </button>
                   <button
                     onClick={() => setShowHistoryModal(false)}
@@ -620,7 +625,7 @@ const WarehouseStocktake: React.FC = () => {
                       fontSize: '0.85rem'
                     }}
                   >
-                    关闭
+                    {t('warehouse.close')}
                   </button>
                 </div>
               </div>
@@ -636,7 +641,7 @@ const WarehouseStocktake: React.FC = () => {
                     return (
                       <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
                         <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📊</div>
-                        <p>{selectedHistoryDate === getLocalDateString() ? '今日暂无盘点记录' : `${selectedHistoryDate} 无盘点记录`}</p>
+                        <p>{selectedHistoryDate === getLocalDateString() ? t('warehouse.noRecordsToday') : `${selectedHistoryDate} ${t('warehouse.noRecordsSuffix')}`}</p>
                       </div>
                     );
                   }
@@ -660,7 +665,7 @@ const WarehouseStocktake: React.FC = () => {
                             }}>
                               <div>
                                 <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>
-                                  📦 仓库盘点
+                                  📦 {t('warehouse.title')}
                                 </div>
                                 <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
                                   {formatStocktakeRecordDateTime(record)}
@@ -673,7 +678,7 @@ const WarehouseStocktake: React.FC = () => {
                                 borderRadius: '0.375rem',
                                 fontWeight: '600'
                               }}>
-                                {record.totalDiscrepancies > 0 ? `⚠️ ${record.totalDiscrepancies}个差异` : '✓ 无差异'}
+                                {record.totalDiscrepancies > 0 ? `⚠️ ${record.totalDiscrepancies} ${t('warehouse.discrepancies')}` : `✓ ${t('warehouse.noDifference')}`}
                               </div>
                             </div>
 
@@ -681,12 +686,12 @@ const WarehouseStocktake: React.FC = () => {
                               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                                 <thead style={{ backgroundColor: 'white', position: 'sticky', top: 0 }}>
                                   <tr>
-                                    <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>商品名称</th>
-                                    <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>分类</th>
-                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>单位</th>
-                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>系统库存</th>
-                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>盘点值</th>
-                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>差异</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.itemName')}</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.category')}</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.unit')}</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.systemStock')}</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.actualStock')}</th>
+                                    <th style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '2px solid #e5e7eb' }}>{t('warehouse.table.difference')}</th>
                                   </tr>
                                 </thead>
                                 <tbody>

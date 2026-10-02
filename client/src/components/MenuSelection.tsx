@@ -3,6 +3,7 @@ import { useAppContext } from '../contexts/AppContext';
 import type { MenuItem as AppMenuItem } from '../contexts/AppContext';
 import MenuImage from './MenuImage';
 import { colors, font, radii, shadows } from '../styles/uiTokens';
+import { useI18n } from '../i18n/I18nContext';
 
 interface MenuItem extends AppMenuItem {}
 
@@ -26,6 +27,7 @@ interface OrderDetailProps {
 
 const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveItem, onUpdateQuantity }) => {
   const { menuItems: contextMenuItems, categories } = useAppContext();
+  const { t } = useI18n();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -61,7 +63,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
           ref={searchInputRef}
           type="text"
           autoFocus
-          placeholder="Buscar plato..."
+          placeholder={t('pos.menu.search')}
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={menuInputStyle}
@@ -99,7 +101,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               boxShadow: selectedCategory === category ? '0 8px 18px rgba(37, 99, 235, 0.2)' : 'none'
             }}
           >
-            {category === 'all' ? 'Todos' : category}
+            {category === 'all' ? t('pos.menu.all') : category}
           </button>
         ))}
       </div>
@@ -217,7 +219,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
               )}
               {item.type !== 'recipe' && (
                 <div style={{ fontSize: '0.68rem', color: '#6b7280', padding: '0.2rem 0.45rem 0.4rem' }}>
-                  ✓ Stock directo
+                  ✓ {t('pos.menu.directStock')}
                 </div>
               )}
               
@@ -236,7 +238,7 @@ const MenuSelection: React.FC<OrderDetailProps> = ({ items, onAddItem, onRemoveI
                   fontWeight: 'bold',
                   zIndex: 10
                 }}>
-                  No disponible
+                  {t('pos.menu.unavailable')}
                 </div>
               )}
             </button>

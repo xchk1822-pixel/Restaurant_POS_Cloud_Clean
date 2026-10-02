@@ -1,4 +1,5 @@
-import { getOrderCollectedAmount, isPurchaseRelatedExpense } from './financeMetrics';
+import { getExpenseProfitAmount, getOrderCollectedAmount, isPurchaseRelatedExpense } from './financeMetrics';
+import { buildLowStockSuggestions, type ReorderSuggestion } from './reorderSuggestions';
 
 const toNumber = (value: any): number => {
   const parsed = Number(value);
@@ -123,7 +124,9 @@ export const sumOwnerExpenseByKind = (expenses: any[], kind: 'purchase' | 'opera
   return expenses
     .filter(expense => !expense?.isDeleted)
     .filter(expense => kind === 'purchase' ? isPurchaseRelatedExpense(expense) : !isPurchaseRelatedExpense(expense))
-    .reduce((sum, expense) => sum + toNumber(expense?.amount), 0);
+    .reduce((sum, expense) => sum + (
+      kind === 'operating' ? getExpenseProfitAmount(expense) : toNumber(expense?.amount)
+    ), 0);
 };
 
 export const sumOwnerSupplierDebt = (purchases: any[]): number => {
@@ -134,6 +137,35 @@ export const sumOwnerSupplierDebt = (purchases: any[]): number => {
       const paid = toNumber(purchase?.paidAmount);
       return sum + Math.max(total - paid, 0);
     }, 0);
+};
+
+export interface OwnerLowStockRisk extends ReorderSuggestion {
+  storeId: string;
+  storeName: string;
+}
+
+export const buildOwnerLowStockRisks = (
+  stores: any[],
+  inventoryItems: any[],
+  fridgeInventory: any[],
+  suppliers: any[],
+  purchaseOrders: any[]
+): OwnerLowStockRisk[] => {
+  return (stores || [])
+    .flatMap(store => buildLowStockSuggestions({
+      inventoryItems: inventoryItems.filter(item => item.storeId === store.id),
+      fridgeInventory: fridgeInventory.filter(item => item.storeId === store.id),
+      suppliers: suppliers.filter(item => item.storeId === store.id),
+      purchaseOrders: purchaseOrders.filter(item => item.storeId === store.id),
+    }).map(suggestion => ({
+      ...suggestion,
+      storeId: store.id,
+      storeName: store.name || store.storeName || store.id,
+    })))
+    .sort((left, right) => {
+      const riskDifference = (left.currentStock / left.minStock) - (right.currentStock / right.minStock);
+      return riskDifference || left.storeName.localeCompare(right.storeName) || left.itemName.localeCompare(right.itemName);
+    });
 };
 
 export interface OwnerOrderTypeSummary {

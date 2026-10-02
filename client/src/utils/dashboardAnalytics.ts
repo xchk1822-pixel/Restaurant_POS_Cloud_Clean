@@ -1,5 +1,5 @@
 import { getLocalDateString } from './exchangeRate';
-import { getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from './financeMetrics';
+import { getExpenseProfitAmount, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from './financeMetrics';
 import { getExpenseCategoryPath, normalizeExpenseCategories } from './expenseCategories';
 import { findExpensePurchaseOrder } from './expensePurchaseLink';
 
@@ -476,7 +476,9 @@ const collectExpenseRankingMap = (
   const rankingMap: Record<string, ExpenseRanking> = {};
 
   (Array.isArray(expenses) ? expenses : []).forEach(expense => {
-    const amount = roundMoney(Number(expense?.amount) || 0);
+    const amount = roundMoney(isPurchaseRelatedExpense(expense)
+      ? Number(expense?.amount) || 0
+      : getExpenseProfitAmount(expense));
     if (amount <= 0) return;
 
     const identity = resolveExpenseRankingIdentity(expense, categories, purchaseOrders);

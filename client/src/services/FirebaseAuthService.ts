@@ -1,26 +1,49 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
   getAuth,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
   User as FirebaseUser
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { firebaseConfig } from '../firebase/config';
+import type { AssignedStore, UserRole } from '../contexts/AuthContext';
+import { cacheConfiguredRolePermissions } from '../utils/permissions';
 
 export interface AppUser {
   id: string;
   username: string;
   name: string;
-  role: 'super_admin' | 'store_manager' | 'cashier' | 'waiter' | 'chef';
+  role: UserRole;
   storeId?: string;
   storeName?: string;
+  storeIds?: string[];
+  assignedStores?: AssignedStore[];
   email?: string;
   status?: 'active' | 'inactive';
 }
+
+export const buildFirestoreAppUser = (
+  userId: string,
+  username: string,
+  email: string,
+  userData: Omit<AppUser, 'id'>
+): AppUser => ({
+  id: userId,
+  username,
+  name: userData.name,
+  role: userData.role,
+  ...(userData.storeId ? { storeId: userData.storeId } : {}),
+  ...(userData.storeName ? { storeName: userData.storeName } : {}),
+  ...(Array.isArray(userData.storeIds) ? { storeIds: userData.storeIds } : {}),
+  ...(Array.isArray(userData.assignedStores) ? { assignedStores: userData.assignedStores } : {}),
+  email,
+  status: userData.status || 'active'
+});
 
 const getUserCreationApp = (): FirebaseApp => {
   return getApps().find(app => app.name === 'user-creation') || initializeApp(firebaseConfig, 'user-creation');
@@ -39,6 +62,42 @@ export const getFirebaseUserProfile = async (firebaseUser: FirebaseUser): Promis
     throw new Error('账号已停用');
   }
 
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+    try {
+      const roleDoc = await getDocFromServer(doc(db, 'system_roles', userData.role));
+      if (roleDoc.exists()) {
+        cacheConfiguredRolePermissions(userData.role, roleDoc.data());
+      }
+    } catch {
+      // Keep the last cached role permissions when the cloud is temporarily unavailable.
+    }
+  }
+
+  let assignedStores = Array.isArray(userData.assignedStores)
+    ? userData.assignedStores.filter(store => store?.id)
+    : [];
+  const assignedStoreIds = Array.from(new Set(
+    [userData.storeId, ...(Array.isArray(userData.storeIds) ? userData.storeIds : [])].filter(Boolean)
+  )) as string[];
+
+  const knownStoreIds = new Set(assignedStores.map(store => store.id));
+  const missingAssignedStoreIds = assignedStoreIds.filter(storeId => !knownStoreIds.has(storeId));
+  if (userData.role === 'multi_store_manager' && missingAssignedStoreIds.length > 0) {
+    try {
+      const missingStores = await Promise.all(
+        missingAssignedStoreIds.map(storeId => getDoc(doc(db, 'stores', storeId)))
+      );
+      assignedStores = [
+        ...assignedStores,
+        ...missingStores
+          .filter(storeDoc => storeDoc.exists())
+          .map(storeDoc => ({ id: storeDoc.id, name: String(storeDoc.data()?.name || storeDoc.id) })),
+      ];
+    } catch {
+      // Existing assigned-store cache remains usable offline.
+    }
+  }
+
   return {
     id: firebaseUser.uid,
     username: userData.username,
@@ -46,6 +105,8 @@ export const getFirebaseUserProfile = async (firebaseUser: FirebaseUser): Promis
     role: userData.role,
     storeId: userData.storeId,
     storeName: userData.storeName,
+    storeIds: Array.isArray(userData.storeIds) ? userData.storeIds : undefined,
+    assignedStores: assignedStores.length > 0 ? assignedStores : undefined,
     email: userData.email,
     status: userData.status || 'active'
   };
@@ -87,25 +148,40 @@ export const createFirebaseUser = async (
   try {
     const email = `${username}@restaurant.local`;
     const userCreationAuth = getAuth(getUserCreationApp());
-    const userCredential = await createUserWithEmailAndPassword(userCreationAuth, email, password);
-    const firebaseUser = userCredential.user;
+    let firebaseUser: FirebaseUser;
+    let createdAuthUser = false;
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(userCreationAuth, email, password);
+      firebaseUser = userCredential.user;
+      createdAuthUser = true;
+    } catch (createError: any) {
+      if (createError?.code !== 'auth/email-already-in-use') throw createError;
+
+      const existingCredential = await signInWithEmailAndPassword(userCreationAuth, email, password);
+      const existingProfile = await getDoc(doc(db, 'users', existingCredential.user.uid));
+      if (existingProfile.exists()) throw createError;
+      firebaseUser = existingCredential.user;
+    }
 
     await updateProfile(firebaseUser, {
       displayName: userData.name
     });
 
-    const appUser: AppUser = {
-      id: firebaseUser.uid,
-      username,
-      name: userData.name,
-      role: userData.role,
-      storeId: userData.storeId,
-      storeName: userData.storeName,
-      email,
-      status: userData.status || 'active'
-    };
+    const appUser = buildFirestoreAppUser(firebaseUser.uid, username, email, userData);
 
-    await setDoc(doc(db, 'users', firebaseUser.uid), appUser);
+    try {
+      await setDoc(doc(db, 'users', firebaseUser.uid), appUser);
+    } catch (profileError) {
+      if (createdAuthUser) {
+        try {
+          await deleteUser(firebaseUser);
+        } catch (cleanupError) {
+          console.error('Rollback Firebase Auth user failed:', cleanupError);
+        }
+      }
+      throw profileError;
+    }
 
     return appUser;
   } catch (error: any) {

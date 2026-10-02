@@ -1,4 +1,24 @@
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from '../firebase';
+
 export type PrinterRole = 'cashier' | 'kitchen' | 'bar' | 'report';
+export type PrinterTransport = 'network' | 'windows';
+
+export interface StorePrinterConfig {
+  id: string;
+  name: string;
+  role: PrinterRole;
+  transport: PrinterTransport;
+  host?: string;
+  port?: number;
+  printerName?: string;
+  widthMm: 80 | 58;
+  enabled: boolean;
+  cut: boolean;
+  feedLines: number;
+  printAllCategories?: boolean;
+  categories?: string[];
+}
 
 export const LOCAL_PRINT_BRIDGE_URL = 'http://127.0.0.1:17777/print';
 export const ESC_POS_FULL_CUT_HEX = '1D5600';
@@ -26,12 +46,23 @@ export interface StoreReceiptProfile {
   footerLine: string;
 }
 
+export interface StorePrintSettings {
+  receiptWidthMm: 80 | 58;
+  cashierEnabled: boolean;
+  kitchenEnabled: boolean;
+  cashierCut: boolean;
+  kitchenCut: boolean;
+  cashierFeedLines: number;
+  kitchenFeedLines: number;
+}
+
 export interface ReceiptItem {
   name: string;
   quantity: number;
   price?: number;
   subtotal?: number;
   notes?: string;
+  category?: string;
 }
 
 export interface ReceiptTotals {
@@ -55,7 +86,118 @@ export interface LocalPrintPayload {
   cutCommandHex: string;
   feedLines: number;
   createdAt: string;
+  printerId?: string;
+  printerLabel?: string;
+  printerName?: string;
+  printerTransport?: PrinterTransport;
+  printerHost?: string;
+  printerPort?: number;
 }
+
+const normalizeFeedLines = (value: any, fallback = 8) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(20, Math.round(parsed))) : fallback;
+};
+
+export const buildStorePrintSettings = (store: any): StorePrintSettings => ({
+  receiptWidthMm: Number(store?.receiptPaperWidthMm) === 58 ? 58 : 80,
+  cashierEnabled: store?.cashierPrintEnabled !== false,
+  kitchenEnabled: store?.kitchenPrintEnabled !== false,
+  cashierCut: store?.receiptCutEnabled !== false,
+  kitchenCut: store?.kitchenCutEnabled !== false,
+  cashierFeedLines: normalizeFeedLines(store?.receiptFeedLines),
+  kitchenFeedLines: normalizeFeedLines(store?.kitchenFeedLines),
+});
+
+const normalizeCategory = (value: any) => String(value || '').trim().toLocaleLowerCase();
+
+export const buildStorePrinterConfigs = (store: any): StorePrinterConfig[] => {
+  if (!Array.isArray(store?.printers)) return [];
+
+  return store.printers
+    .map((printer: any, index: number): StorePrinterConfig | null => {
+      const role = String(printer?.role || '').trim() as PrinterRole;
+      if (!['cashier', 'kitchen', 'bar', 'report'].includes(role)) return null;
+
+      const transport: PrinterTransport = printer?.transport === 'windows' ? 'windows' : 'network';
+      const categories = Array.isArray(printer?.categories)
+        ? Array.from(new Set(printer.categories.map((category: any) => String(category || '').trim()).filter(Boolean))) as string[]
+        : [];
+
+      return {
+        id: String(printer?.id || `printer-${index + 1}`).trim(),
+        name: String(printer?.name || `Printer ${index + 1}`).trim(),
+        role,
+        transport,
+        host: transport === 'network' ? String(printer?.host || '').trim() : undefined,
+        port: transport === 'network' ? Math.max(1, Math.min(65535, Math.round(Number(printer?.port) || 9100))) : undefined,
+        printerName: transport === 'windows' ? String(printer?.printerName || '').trim() : undefined,
+        widthMm: Number(printer?.widthMm) === 58 ? 58 : 80,
+        enabled: printer?.enabled !== false,
+        cut: printer?.cut !== false,
+        feedLines: normalizeFeedLines(printer?.feedLines),
+        printAllCategories: printer?.printAllCategories === true,
+        categories,
+      };
+    })
+    .filter((printer: StorePrinterConfig | null): printer is StorePrinterConfig => Boolean(printer));
+};
+
+export const getPrintersForRole = (
+  printers: StorePrinterConfig[],
+  role: PrinterRole
+): StorePrinterConfig[] => printers.filter(printer => printer.enabled && printer.role === role);
+
+export const routeKitchenItemsToPrinters = (
+  items: ReceiptItem[],
+  printers: StorePrinterConfig[]
+): Array<{ printer?: StorePrinterConfig; items: ReceiptItem[] }> => {
+  const configuredKitchenPrinters = printers.filter(printer => printer.role === 'kitchen' || printer.role === 'bar');
+  if (configuredKitchenPrinters.length === 0) return items.length > 0 ? [{ items }] : [];
+  const kitchenPrinters = configuredKitchenPrinters.filter(printer => printer.enabled);
+  if (kitchenPrinters.length === 0) return [];
+
+  const jobs = kitchenPrinters.map(printer => {
+    if (printer.printAllCategories) return { printer, items };
+    const categories = new Set((printer.categories || []).map(normalizeCategory).filter(Boolean));
+    return {
+      printer,
+      items: items.filter(item => categories.has(normalizeCategory(item.category))),
+    };
+  }).filter(job => job.items.length > 0);
+
+  const routedItems = new Set(jobs.flatMap(job => job.items));
+  const unmatchedItems = items.filter(item => !routedItems.has(item));
+  if (unmatchedItems.length > 0) {
+    const fallbackPrinter = kitchenPrinters.find(printer => printer.role === 'kitchen') || kitchenPrinters[0];
+    const existingJob = jobs.find(job => job.printer.id === fallbackPrinter.id);
+    if (existingJob) existingJob.items = [...existingJob.items, ...unmatchedItems];
+    else jobs.push({ printer: fallbackPrinter, items: unmatchedItems });
+  }
+
+  return jobs;
+};
+
+export const applyPrinterTarget = (
+  payload: LocalPrintPayload,
+  printer?: StorePrinterConfig
+): LocalPrintPayload => {
+  if (!printer) return payload;
+  return {
+    ...payload,
+    role: printer.role,
+    printerRole: printer.role,
+    widthMm: printer.widthMm,
+    cut: printer.cut,
+    feedLines: printer.feedLines,
+    printerId: printer.id,
+    printerLabel: printer.name,
+    printerName: printer.printerName,
+    printerTransport: printer.transport,
+    printerHost: printer.host,
+    printerPort: printer.port,
+  };
+};
 
 const money = (value: number | undefined) => `C$${(Number(value) || 0).toFixed(2)}`;
 const amount = (value: number | undefined) => `${(Number(value) || 0).toFixed(2)}`;
@@ -263,7 +405,7 @@ export const buildThermalReceiptText = ({
     .join('\n');
 };
 
-export const getCurrentStoreReceiptProfile = (): StoreReceiptProfile => {
+const getCurrentStoreRecord = () => {
   let currentUser: any = null;
   let store: any = null;
 
@@ -279,7 +421,46 @@ export const getCurrentStoreReceiptProfile = (): StoreReceiptProfile => {
     store = null;
   }
 
+  return { store, currentUser };
+};
+
+export const refreshCurrentStorePrintCache = async (): Promise<boolean> => {
+  const { currentUser } = getCurrentStoreRecord();
+  const storeId = String(currentUser?.storeId || '').trim();
+  if (!storeId || !navigator.onLine) return false;
+
+  const snapshot = await getDocFromServer(doc(db, 'stores', storeId));
+  if (!snapshot.exists()) return false;
+
+  const nextStore = { id: snapshot.id, ...snapshot.data() };
+  let stores: any[] = [];
+  try {
+    const raw = localStorage.getItem('stores');
+    stores = raw ? JSON.parse(raw) : [];
+  } catch {
+    stores = [];
+  }
+  const nextStores = Array.isArray(stores)
+    ? [...stores.filter(store => String(store?.id || '') !== storeId), nextStore]
+    : [nextStore];
+  localStorage.setItem('stores', JSON.stringify(nextStores));
+  return true;
+};
+
+export const getCurrentStoreReceiptProfile = (): StoreReceiptProfile => {
+  const { store, currentUser } = getCurrentStoreRecord();
+
   return buildStoreReceiptProfile(store, currentUser);
+};
+
+export const getCurrentStorePrintSettings = (): StorePrintSettings => {
+  const { store } = getCurrentStoreRecord();
+  return buildStorePrintSettings(store);
+};
+
+export const getCurrentStorePrinterConfigs = (): StorePrinterConfig[] => {
+  const { store } = getCurrentStoreRecord();
+  return buildStorePrinterConfigs(store);
 };
 
 const totalsRow = (label: string, value: number, strong = false) => `
@@ -422,6 +603,8 @@ export const buildLocalPrintPayload = ({
   html,
   text,
   widthMm = 80,
+  cut = true,
+  feedLines = 8,
 }: {
   role: PrinterRole;
   storeId: string;
@@ -429,6 +612,8 @@ export const buildLocalPrintPayload = ({
   html: string;
   text: string;
   widthMm?: number;
+  cut?: boolean;
+  feedLines?: number;
 }): LocalPrintPayload => ({
   role,
   printerRole: role,
@@ -437,9 +622,9 @@ export const buildLocalPrintPayload = ({
   widthMm,
   html,
   text,
-  cut: true,
+  cut,
   cutCommandHex: ESC_POS_FULL_CUT_HEX,
-  feedLines: 8,
+  feedLines: normalizeFeedLines(feedLines),
   createdAt: new Date().toISOString(),
 });
 
@@ -450,6 +635,9 @@ export const buildKitchenTicketPayload = ({
   tableNumber,
   createdAt,
   items,
+  widthMm = 80,
+  cut = true,
+  feedLines = 8,
 }: {
   storeId: string;
   orderNumber: string;
@@ -457,6 +645,9 @@ export const buildKitchenTicketPayload = ({
   tableNumber?: string;
   createdAt: Date;
   items: ReceiptItem[];
+  widthMm?: number;
+  cut?: boolean;
+  feedLines?: number;
 }) => {
   const lines = [
     '******** COCINA ********',
@@ -472,7 +663,9 @@ export const buildKitchenTicketPayload = ({
     role: 'kitchen',
     storeId,
     orderNumber,
-    widthMm: 80,
+    widthMm,
+    cut,
+    feedLines,
     text: lines.join('\n'),
     html: `<pre data-printer-role="kitchen">${escapeHtml(lines.join('\n'))}</pre>`,
   });

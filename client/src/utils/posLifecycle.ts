@@ -126,6 +126,28 @@ export const isTerminalOrderStatus = (status?: string): boolean => {
   return status === 'completed' || status === 'cancelled';
 };
 
+export const isProvisionalOrderNumber = (orderNumber?: string): boolean => {
+  return /^OFF-\d{4}-[A-Z0-9]+-\d{3,}$/.test(String(orderNumber || '').toUpperCase());
+};
+
+export const buildProvisionalOrderNumber = (
+  datePrefix: string,
+  terminalId: string,
+  sequence: number
+): string => {
+  const safeTerminalId = String(terminalId || 'LOCAL').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'LOCAL';
+  return `OFF-${datePrefix}-${safeTerminalId}-${String(sequence).padStart(3, '0')}`;
+};
+
+export const hasTerminalStatusConflict = (
+  currentOrder: Partial<PosLifecycleOrder>,
+  incomingOrder: Partial<PosLifecycleOrder>
+): boolean => {
+  return isTerminalOrderStatus(currentOrder.status) &&
+    isTerminalOrderStatus(incomingOrder.status) &&
+    currentOrder.status !== incomingOrder.status;
+};
+
 export const isCloudTerminalAdvance = (
   localOrder: Partial<PosLifecycleOrder>,
   incomingOrder: Partial<PosLifecycleOrder>
@@ -140,13 +162,16 @@ export const isCloudTerminalAuthoritative = (
 ): boolean => {
   if (!incomingOrder.id) return false;
   if (pendingOrderIds?.has(String(incomingOrder.id)) && isTerminalOrderStatus(localOrder?.status)) return false;
-  return isTerminalOrderStatus(incomingOrder.status) && getOrderSignature(localOrder || {}) !== getOrderSignature(incomingOrder);
+  return isTerminalOrderStatus(incomingOrder.status) &&
+    !isTerminalOrderStatus(localOrder?.status) &&
+    getOrderSignature(localOrder || {}) !== getOrderSignature(incomingOrder);
 };
 
 export const isOrderStateRegression = (
   localOrder: Partial<PosLifecycleOrder>,
   incomingOrder: Partial<PosLifecycleOrder>
 ): boolean => {
+  if (hasTerminalStatusConflict(localOrder, incomingOrder)) return true;
   if (localOrder.stockDeducted && !incomingOrder.stockDeducted) return true;
   if (localOrder.clearedAt && !incomingOrder.clearedAt) return true;
 
@@ -172,6 +197,8 @@ export const isUnpaidActiveOrder = (order: Partial<PosLifecycleOrder>): boolean 
 };
 
 export const isDisplayablePosOrder = (order: Partial<PosLifecycleOrder>): boolean => {
+  if ((order as any)?.isDeleted) return false;
+
   const hasOrderNumber = Boolean(String(order.orderNumber || '').trim());
   const hasItems = Array.isArray(order.items) && order.items.length > 0;
   const hasMoney = Number(order.totalAmount || 0) > 0 ||

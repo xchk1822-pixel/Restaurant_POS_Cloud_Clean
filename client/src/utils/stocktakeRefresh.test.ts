@@ -1,14 +1,52 @@
 import {
   buildFridgeStocktakeHistoryRecords,
+  buildFridgeStocktakeSubmissionId,
+  buildFridgeStocktakeViewItems,
   formatStocktakeRecordDateTime,
   getStocktakeRecordDateKey,
   normalizeFridgeInventoryForRefresh,
   normalizeFridgesForRefresh,
   normalizeInventoryItemsForRefresh,
   normalizeStocktakeHistoryForRefresh,
+  saveFridgeItemOrderCache,
 } from './stocktakeRefresh';
 
 describe('stocktake refresh helpers', () => {
+  test('keeps fridge switching usable when optional item-order cache is full', () => {
+    const storage = {
+      setItem: jest.fn(() => {
+        throw new DOMException('Storage quota exceeded', 'QuotaExceededError');
+      }),
+    };
+
+    expect(saveFridgeItemOrderCache(storage, 'fridge-2-order', ['item-a', 'item-b'])).toBe(false);
+    expect(storage.setItem).toHaveBeenCalledWith(
+      'fridge-2-order',
+      JSON.stringify(['item-a', 'item-b'])
+    );
+  });
+
+  test('reuses one submission id for retries of the same fridge count', () => {
+    const input = {
+      date: '2026-08-24',
+      fridgeId: 'fridge-1',
+      items: [
+        { itemId: 'b', systemStock: 8, actualStock: 7 },
+        { itemId: 'a', systemStock: 4, actualStock: 4 },
+      ],
+    };
+
+    expect(buildFridgeStocktakeSubmissionId(input)).toBe(
+      buildFridgeStocktakeSubmissionId({ ...input, items: [...input.items].reverse() })
+    );
+    expect(buildFridgeStocktakeSubmissionId(input)).not.toBe(
+      buildFridgeStocktakeSubmissionId({
+        ...input,
+        items: [{ itemId: 'a', systemStock: 4, actualStock: 3 }],
+      })
+    );
+  });
+
   test('normalizes cloud inventory items without preserving local-only records', () => {
     const cloudItems = [
       {
@@ -47,6 +85,35 @@ describe('stocktake refresh helpers', () => {
     expect(inventory[0].quantity).toBe(7);
     expect(inventory[0].sortOrder).toBe(3);
     expect(inventory[0].lastModified).toBe(100);
+  });
+
+  test('makes stale fridge cache safe to render instead of crashing the selected fridge page', () => {
+    const result = buildFridgeStocktakeViewItems(
+      [{
+        id: 'fridge-2-drink',
+        fridgeId: 'fridge-2',
+        itemId: 'drink',
+        quantity: { stale: true },
+        sortOrder: '4',
+      }],
+      [{
+        id: 'drink',
+        name: { stale: true },
+        unit: 'BOT',
+        barcode: 123456,
+      }],
+      'fridge-2',
+      'Unknown item'
+    );
+
+    expect(result).toEqual([expect.objectContaining({
+      itemId: 'drink',
+      quantity: 0,
+      sortOrder: 4,
+      itemName: 'Unknown item',
+      unit: 'BOT',
+      barcode: '123456',
+    })]);
   });
 
   test('keeps local date-only stocktake records on the selected Nicaragua date', () => {

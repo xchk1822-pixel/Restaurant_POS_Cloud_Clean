@@ -9,6 +9,74 @@ import { getLocalDateTime, getLocalDateString } from '../utils/localTime';
 import { smartAddDocument } from './smartSyncService';
 
 class DataService {
+  private readonly localCacheLimits: Record<string, number> = {
+    expenses: 400,
+    pos_orders: 1000,
+    purchase_orders: 500,
+    attendance_records: 800,
+    salary_records: 500,
+    handovers: 400,
+    points_transactions: 800,
+    pos_cancel_records: 500,
+  };
+
+  private isQuotaExceededError(error: any): boolean {
+    return error?.name === 'QuotaExceededError'
+      || error?.code === 22
+      || String(error?.message || '').includes('exceeded the quota');
+  }
+
+  private getCacheRecordVersion(record: any): number {
+    const value = record?.updatedAt
+      ?? record?.createdAt
+      ?? record?.timestamp
+      ?? record?.date
+      ?? record?.orderDate
+      ?? record?.purchaseDate;
+
+    if (typeof value === 'number') return value;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.seconds === 'number') return value.seconds * 1000;
+
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private setLocalCache(collectionName: string, storageKey: string, rows: any[]): boolean {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(rows));
+      return true;
+    } catch (error) {
+      if (!this.isQuotaExceededError(error)) throw error;
+
+      const configuredLimit = this.localCacheLimits[collectionName];
+      if (!configuredLimit || rows.length === 0) {
+        console.warn('Local cache quota exceeded; existing cache was preserved:', collectionName);
+        return false;
+      }
+
+      const newestFirst = [...rows].sort(
+        (left, right) => this.getCacheRecordVersion(right) - this.getCacheRecordVersion(left)
+      );
+      let limit = Math.min(configuredLimit, Math.max(1, Math.floor(rows.length / 2)));
+
+      while (limit >= 1) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(newestFirst.slice(0, limit)));
+          console.warn('Local cache quota exceeded; compacted local history:', collectionName, `${limit}/${rows.length}`);
+          return true;
+        } catch (retryError) {
+          if (!this.isQuotaExceededError(retryError)) throw retryError;
+          if (limit === 1) break;
+          limit = Math.max(1, Math.floor(limit / 2));
+        }
+      }
+
+      console.warn('Local cache quota exceeded; existing cache was preserved:', collectionName);
+      return false;
+    }
+  }
+
   /**
    * 获取当前用户的storeId
    */
@@ -27,15 +95,14 @@ class DataService {
 
   /**
    * 构建localStorage的key
-   * - 如果有storeId，使用分店专属key：store_{storeId}_{collection}
-   * - 否则使用全局key：{collection}
+   * 分店业务缓存必须有storeId，不能退回裸全局key。
    */
   getStoreKey(collectionName: string): string {
     const storeId = this.getCurrentStoreId();
     if (storeId) {
       return `store_${storeId}_${collectionName}`;
     }
-    return collectionName;
+    throw new Error(`Missing storeId; refusing store-scoped cache access: ${collectionName}`);
   }
 
   /**
@@ -106,7 +173,7 @@ class DataService {
         // 分店专属集合：只保存到分店key
         if (storeId) {
           const storeKey = `store_${storeId}_${collectionName}`;
-          localStorage.setItem(storeKey, JSON.stringify(dataWithTimestamp));
+          this.setLocalCache(collectionName, storeKey, dataWithTimestamp);
         } else {
           console.warn(`⚠️ 没有 storeId，无法保存分店数据: ${collectionName}`);
         }
@@ -220,24 +287,17 @@ class DataService {
 
     const collections = [
       'inventory_items',
+      'inventory_categories',
       'menu_items',
-      'pos_orders',
-      'expenses',
-      'purchase_orders',
       'employees',
       'employee_deletions',
       'fridges',
       'fridge_inventory',
       'suppliers',
-      'attendance_records',
       'loan_records',
-      'salary_records',
-      'handovers',
       'customers',
       'expense_categories',
-      'points_transactions',
       'exchange_rate',
-      'pos_cancel_records',
       'pos_held_orders',
       'pos_tables'
     ];
@@ -255,7 +315,7 @@ class DataService {
         }));
 
         const localKey = `store_${storeId}_${collection}`;
-        localStorage.setItem(localKey, JSON.stringify(cloudData));
+        this.setLocalCache(collection, localKey, cloudData);
         if (cloudData.length > 0) {
         } else {
         }

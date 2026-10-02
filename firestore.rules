@@ -17,6 +17,10 @@ service cloud.firestore {
       return getUserDoc().data.role;
     }
 
+    function getUserStoreIds() {
+      return getUserDoc().data.get('storeIds', []);
+    }
+
     function getUserStatus() {
       return getUserDoc().data.status;
     }
@@ -30,7 +34,11 @@ service cloud.firestore {
     }
 
     function hasStoreAccess(storeId) {
-      return isActiveUser() && (getUserStoreId() == storeId || isSuperAdmin());
+      return isActiveUser() && (
+        isSuperAdmin()
+        || getUserStoreId() == storeId
+        || (getUserRole() == 'multi_store_manager' && storeId in getUserStoreIds())
+      );
     }
 
     function hasStoreRole(storeId, roles) {
@@ -38,19 +46,115 @@ service cloud.firestore {
     }
 
     function canManageStore(storeId) {
-      return hasStoreRole(storeId, ['store_manager']);
+      return hasStoreRole(storeId, ['store_manager', 'multi_store_manager']);
+    }
+
+    function hasStorePermission(storeId, permissionId) {
+      return hasStoreAccess(storeId) && (
+        isSuperAdmin()
+        || (
+          exists(/databases/$(database)/documents/system_roles/$(getUserRole()))
+          && permissionId in get(/databases/$(database)/documents/system_roles/$(getUserRole())).data.get('permissions', [])
+        )
+      );
+    }
+
+    function hasStorePermissionOrParent(storeId, permissionId, parentPermissionId) {
+      return hasStorePermission(storeId, permissionId)
+        || hasStorePermission(storeId, parentPermissionId);
+    }
+
+    function hasAnyStorePermission(storeId, permissionIds) {
+      return hasStoreAccess(storeId) && (
+        isSuperAdmin()
+        || (
+          exists(/databases/$(database)/documents/system_roles/$(getUserRole()))
+          && get(/databases/$(database)/documents/system_roles/$(getUserRole()))
+            .data.get('permissions', []).hasAny(permissionIds)
+        )
+      );
+    }
+
+    function canManageEmployeeProfiles(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'employees:profile', 'employees');
+    }
+
+    function canManageAttendance(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'employees:attendance', 'employees');
+    }
+
+    function canManageEmployeeLoans(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'employees:loans', 'employees');
+    }
+
+    function canManageEmployeeSalaries(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'employees:salary', 'employees');
+    }
+
+    function canManageInventoryItems(storeId) {
+      return canManageInventory(storeId)
+        || hasStorePermissionOrParent(storeId, 'inventory:items', 'inventory');
+    }
+
+    function canManageMenuItems(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'inventory:menu', 'inventory')
+        || hasStorePermission(storeId, 'inventory:items');
+    }
+
+    function canManageWarehouse(storeId) {
+      return canManageInventory(storeId)
+        || hasStorePermissionOrParent(storeId, 'inventory:warehouse', 'inventory');
+    }
+
+    function canManageFridge(storeId) {
+      return canManageInventory(storeId)
+        || hasStorePermissionOrParent(storeId, 'inventory:fridge', 'inventory');
+    }
+
+    function canManageSuppliers(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermission(storeId, 'suppliers:manage');
+    }
+
+    function canManageExpenses(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'manager:expenses', 'manager');
+    }
+
+    function canUseCustomerManagement(storeId) {
+      return canManageCustomers(storeId)
+        || hasStorePermission(storeId, 'customers:manage');
+    }
+
+    function canRunCustomerPromotion(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermission(storeId, 'customers:promotion');
     }
 
     function canOperatePos(storeId) {
-      return hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter', 'chef']);
+      return hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier', 'waiter', 'chef'])
+        || hasStorePermission(storeId, 'pos')
+        || hasStorePermission(storeId, 'waiter')
+        || hasStorePermission(storeId, 'kitchen');
     }
 
     function canManageInventory(storeId) {
-      return hasStoreRole(storeId, ['store_manager', 'cashier']);
+      return hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier']);
+    }
+
+    function canManagePurchases(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermission(storeId, 'inventory:purchase')
+        || hasStorePermission(storeId, 'inventory');
     }
 
     function canManageCustomers(storeId) {
-      return hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter']);
+      return hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier', 'waiter']);
     }
 
     match /users/{userId} {
@@ -59,7 +163,7 @@ service cloud.firestore {
     }
 
     match /stores/{storeId} {
-      allow read: if isSuperAdmin() || (isActiveUser() && getUserStoreId() == storeId);
+      allow read: if hasStoreAccess(storeId);
       allow write: if isSuperAdmin();
     }
 
@@ -70,52 +174,74 @@ service cloud.firestore {
 
     match /stores/{storeId}/employees/{employeeId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageEmployeeProfiles(storeId);
     }
 
     match /stores/{storeId}/employee_deletions/{deletionId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageEmployeeProfiles(storeId);
     }
 
     match /stores/{storeId}/attendance_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageAttendance(storeId) || canManageEmployeeSalaries(storeId);
     }
 
     match /stores/{storeId}/salary_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageEmployeeSalaries(storeId);
     }
 
     match /stores/{storeId}/loan_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageEmployeeLoans(storeId) || canManageEmployeeSalaries(storeId);
     }
 
     match /stores/{storeId}/cash_flow_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier'])
+        || hasAnyStorePermission(storeId, [
+          'employees',
+          'employees:loans',
+          'employees:salary'
+        ]);
     }
 
     match /stores/{storeId}/inventory_items/{itemId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if hasAnyStorePermission(storeId, [
+          'pos',
+          'inventory',
+          'inventory:purchase',
+          'inventory:items',
+          'inventory:warehouse',
+          'inventory:fridge'
+        ])
+        || canManageInventory(storeId);
     }
 
     match /stores/{storeId}/inventory_categories/{categoryId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageInventoryItems(storeId);
     }
 
     match /stores/{storeId}/menu_items/{menuId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageMenuItems(storeId);
+    }
+
+    match /stores/{storeId}/menu_categories/{categoryId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageMenuItems(storeId);
     }
 
     match /stores/{storeId}/pos_orders/{orderId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canOperatePos(storeId);
+      allow create: if canOperatePos(storeId);
+      allow update: if canOperatePos(storeId)
+        && (!resource.data.get('isDeleted', false)
+          || request.resource.data.get('isDeleted', false));
+      allow delete: if canOperatePos(storeId);
     }
 
     match /stores/{storeId}/order_counters/{counterId} {
@@ -125,102 +251,200 @@ service cloud.firestore {
 
     match /stores/{storeId}/pos_tables/{tableId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier', 'waiter']);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier', 'waiter'])
+        || hasStorePermission(storeId, 'pos')
+        || hasStorePermission(storeId, 'waiter');
     }
 
     match /stores/{storeId}/pos_held_orders/{heldOrderId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier'])
+        || hasStorePermission(storeId, 'pos');
     }
 
     match /stores/{storeId}/expenses/{expenseId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow create, update: if (request.resource.data.get('relatedType', '') == 'delivery'
+          && hasStorePermission(storeId, 'pos'))
+        || (request.resource.data.get('relatedType', '') == 'loan'
+          && (hasAnyStorePermission(storeId, ['employees', 'employees:loans'])
+            || canManageStore(storeId)))
+        || (request.resource.data.get('relatedType', '') == 'salary'
+          && (hasAnyStorePermission(storeId, ['employees', 'employees:salary'])
+            || canManageStore(storeId)))
+        || (request.resource.data.get('relatedType', '') == 'supplier_repayment'
+          && canManageSuppliers(storeId))
+        || (request.resource.data.get('type', '') == 'purchase'
+          && request.resource.data.get('relatedType', '') == 'purchase'
+          && (hasAnyStorePermission(storeId, ['manager:reports', 'inventory', 'inventory:purchase'])
+            || canManageStore(storeId)))
+        || canManageExpenses(storeId);
+      allow delete: if (resource.data.get('relatedType', '') == 'delivery'
+          && hasStorePermission(storeId, 'pos'))
+        || (resource.data.get('relatedType', '') == 'loan'
+          && (hasAnyStorePermission(storeId, ['employees', 'employees:loans'])
+            || canManageStore(storeId)))
+        || (resource.data.get('relatedType', '') == 'salary'
+          && (hasAnyStorePermission(storeId, ['employees', 'employees:salary'])
+            || canManageStore(storeId)))
+        || (resource.data.get('relatedType', '') == 'supplier_repayment'
+          && canManageSuppliers(storeId))
+        || (resource.data.get('type', '') == 'purchase'
+          && resource.data.get('relatedType', '') == 'purchase'
+          && (hasAnyStorePermission(storeId, ['manager:reports', 'inventory', 'inventory:purchase'])
+            || canManageStore(storeId)))
+        || canManageExpenses(storeId);
     }
 
     match /stores/{storeId}/expense_records/{expenseId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageExpenses(storeId);
     }
 
     match /stores/{storeId}/purchase_orders/{orderId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow create, delete: if canManagePurchases(storeId);
+      allow update: if canManagePurchases(storeId) || canManageSuppliers(storeId);
     }
 
     match /stores/{storeId}/suppliers/{supplierId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow create, delete: if canManageSuppliers(storeId);
+      allow update: if canManageSuppliers(storeId)
+        || (canManagePurchases(storeId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['balance', 'lastUpdated', 'lastModified', 'updatedAt']));
     }
 
     match /stores/{storeId}/supplier_payments/{paymentId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageSuppliers(storeId);
     }
 
     match /stores/{storeId}/handovers/{handoverId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'manager:handover', 'manager');
     }
 
     match /stores/{storeId}/fridges/{fridgeId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if canManageFridge(storeId);
     }
 
     match /stores/{storeId}/fridge_inventory/{inventoryId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if hasAnyStorePermission(storeId, [
+          'pos',
+          'inventory',
+          'inventory:items',
+          'inventory:fridge'
+        ])
+        || canManageInventory(storeId);
     }
 
     match /stores/{storeId}/stock_transfer_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if canManageFridge(storeId);
     }
 
     match /stores/{storeId}/inventory_stock_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if hasAnyStorePermission(storeId, [
+          'pos',
+          'inventory',
+          'inventory:purchase',
+          'inventory:items',
+          'inventory:warehouse',
+          'inventory:fridge'
+        ])
+        || canManageInventory(storeId);
     }
 
     match /stores/{storeId}/warehouse_stocktake_history/{historyId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if canManageWarehouse(storeId);
     }
 
     match /stores/{storeId}/fridge_stocktake_history/{historyId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageInventory(storeId);
+      allow write: if canManageFridge(storeId);
     }
 
     match /stores/{storeId}/customers/{customerId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageCustomers(storeId);
+      allow write: if canUseCustomerManagement(storeId) || hasStorePermission(storeId, 'pos');
     }
 
     match /stores/{storeId}/customer_deletions/{deletionId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageCustomers(storeId);
+      allow write: if canUseCustomerManagement(storeId);
     }
 
     match /stores/{storeId}/expense_categories/{categoryId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageStore(storeId);
+      allow write: if canManageExpenses(storeId);
     }
 
     match /stores/{storeId}/points_transactions/{transactionId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if canManageCustomers(storeId);
+      allow write: if canUseCustomerManagement(storeId) || hasStorePermission(storeId, 'pos');
     }
 
-    match /stores/{storeId}/exchange_rate/{rateId} {
+    match /stores/{storeId}/customer_rewards/{rewardId} {
+      allow read: if hasStoreAccess(storeId);
+      allow create: if canRunCustomerPromotion(storeId)
+        && request.resource.data.get('storeId', '') == storeId
+        && request.resource.data.get('customerId', '') is string
+        && request.resource.data.get('orderId', '') is string
+        && request.resource.data.get('orderAmount', 0) > 0
+        && request.resource.data.get('prizeType', '') in ['fixed', 'dish', 'gift', 'full_order']
+        && request.resource.data.get('rewardLabel', '') is string
+        && request.resource.data.get('rewardLabel', '').size() > 0
+        && (
+          (
+            request.resource.data.get('prizeType', '') in ['fixed', 'full_order']
+            && request.resource.data.get('rewardAmount', 0) > 0
+            && request.resource.data.get('rewardAmount', 0) <= request.resource.data.get('orderAmount', 0)
+          ) || (
+            request.resource.data.get('prizeType', '') in ['dish', 'gift']
+            && request.resource.data.get('rewardAmount', 0) == 0
+          )
+        )
+        && request.resource.data.get('status', '') in ['pending', 'available'];
+      allow update: if canRunCustomerPromotion(storeId)
+        && request.resource.data.get('storeId', '') == storeId
+        && request.resource.data.get('customerId', '') == resource.data.get('customerId', '')
+        && request.resource.data.get('orderId', '') == resource.data.get('orderId', '')
+        && request.resource.data.get('prizeType', '') == resource.data.get('prizeType', '')
+        && request.resource.data.get('rewardLabel', '') == resource.data.get('rewardLabel', '')
+        && request.resource.data.get('menuItemId', '') == resource.data.get('menuItemId', '')
+        && request.resource.data.get('rewardAmount', 0) == resource.data.get('rewardAmount', 0)
+        && request.resource.data.get('status', '') in ['pending', 'available', 'redeemed', 'void'];
+      allow delete: if false;
+    }
+
+    match /stores/{storeId}/customer_promotion_settings/{settingId} {
       allow read: if hasStoreAccess(storeId);
       allow write: if canManageStore(storeId);
     }
 
+    match /stores/{storeId}/customer_promotion_counters/{counterId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canRunCustomerPromotion(storeId);
+    }
+
+    match /stores/{storeId}/exchange_rate/{rateId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageStore(storeId)
+        || hasStorePermission(storeId, 'settings:exchange')
+        || hasStorePermission(storeId, 'customers:manage');
+    }
+
     match /stores/{storeId}/pos_cancel_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
-      allow write: if hasStoreRole(storeId, ['store_manager', 'cashier']);
+      allow write: if hasStoreRole(storeId, ['store_manager', 'multi_store_manager', 'cashier'])
+        || hasStorePermission(storeId, 'pos');
     }
   }
 }
