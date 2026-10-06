@@ -359,7 +359,7 @@ const DashboardModule: React.FC<DashboardModuleProps> = ({ orders: propOrders })
       const [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers, cloudMenuItems, cloudInventoryItems, cloudExpenseCategories] = await Promise.all([
         cachedRange
           ? Promise.resolve(cachedRange.orders)
-          : smartGetPosOrdersByActivityDateRange(orderStartDate, orderEndDate, true, undefined, ['lastPaidAt', 'cancelledAt'], false),
+          : smartGetPosOrdersByActivityDateRange(orderStartDate, orderEndDate, true, undefined, ['completedAt', 'lastPaidAt', 'cancelledAt'], false),
         cachedRange
           ? Promise.resolve(cachedRange.expenses)
           : smartGetDocumentsByDateRange('expenses', 'date', comparisonStartDate, comparisonEndDate, true),

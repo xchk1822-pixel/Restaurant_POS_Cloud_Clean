@@ -135,7 +135,9 @@ export interface Order {
   orderNumber?: string;
   tableId: string;
   tableNumber: string;
-  orderType: 'dine_in' | 'takeout' | 'delivery';
+  orderType: 'dine_in' | 'takeout' | 'delivery' | 'reservation';
+  deliveryDate?: string;
+  deliveryAt?: Date | string;
   customerId?: string;
   customerName?: string;
   items: OrderItem[];

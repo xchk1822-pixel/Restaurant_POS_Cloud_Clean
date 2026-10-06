@@ -35,6 +35,7 @@ const ORDER_TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
   dine_in: 'pos.orderType.dineIn',
   takeout: 'pos.orderType.takeout',
   delivery: 'pos.orderType.delivery',
+  reservation: 'pos.orderType.reservation',
 };
 
 const getStatusStyle = (status: string) => {

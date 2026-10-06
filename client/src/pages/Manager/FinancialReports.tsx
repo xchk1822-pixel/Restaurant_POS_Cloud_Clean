@@ -4,7 +4,7 @@ import { smartGetDocuments, smartGetDocumentsByDateRange, smartGetPosOrdersByAct
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { getInclusiveLocalDateKeys } from '../../utils/localTime';
 import { buildMissingPurchaseExpenses, getPurchaseExpenseDate } from '../../utils/purchaseExpenseRepair';
-import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseCashAmount, getExpenseDateKey, getExpenseProfitAmount, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
+import { buildDailyExpenseBreakdown, calculateFinancialReportTotals, calculateOrderStatusSummary, getExpenseCashAmount, getExpenseDateKey, getExpenseProfitAmount, getLatestHandoverAmountForDate, getOrderCollectedAmount, getOrderFinancialDateKey, getOrderPaymentBreakdown, getReservationCashFlowForDate, getReservationPrepaymentAmountForDate, isPurchaseRelatedExpense } from '../../utils/financeMetrics';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
 import type { TranslationKey } from '../../i18n/translations';
@@ -18,10 +18,12 @@ interface DailyReport {
   dineInOrders: number;
   takeoutOrders: number;
   deliveryOrders: number;
+  reservationOrders: number;
   cancelledOrders: number;
   cancelledItems: number;
   cashPayment: number;
   cardPayment: number;
+  reservationPrepaymentAmount: number;
   purchaseAmount: number;
   expenseAmount: number;
   profit: number;
@@ -106,10 +108,10 @@ const getFinancialCloudDateRange = (
 };
 
 const formatOrderSummary = (
-  report: Pick<DailyReport, 'completedOrders' | 'dineInOrders' | 'takeoutOrders' | 'deliveryOrders' | 'cancelledOrders' | 'cancelledItems'>,
+  report: Pick<DailyReport, 'completedOrders' | 'dineInOrders' | 'takeoutOrders' | 'deliveryOrders' | 'reservationOrders' | 'cancelledOrders' | 'cancelledItems'>,
   t: (key: TranslationKey) => string
 ): string =>
-  `${t('finance.orders.completed')} ${report.completedOrders} / Mesa ${report.dineInOrders} / Barra ${report.takeoutOrders} / Delivery ${report.deliveryOrders} / ${t('finance.orders.cancelled')} ${report.cancelledOrders} / ${t('finance.orders.cancelledItems')} ${report.cancelledItems}`;
+  `${t('finance.orders.completed')} ${report.completedOrders} / Mesa ${report.dineInOrders} / Barra ${report.takeoutOrders} / Delivery ${report.deliveryOrders} / Reserva ${report.reservationOrders} / ${t('finance.orders.cancelled')} ${report.cancelledOrders} / ${t('finance.orders.cancelledItems')} ${report.cancelledItems}`;
 
 const htmlEscape = (value: any): string => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -164,7 +166,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
       if (!cached) {
         [cloudOrders, cloudExpenses, cloudPurchases, cloudHandovers, cloudExpenseCategories] = await Promise.all([
-          smartGetPosOrdersByActivityDateRange(cloudRange.startDate, cloudRange.endDate, true, undefined, ['lastPaidAt', 'cancelledAt'], false),
+          smartGetPosOrdersByActivityDateRange(cloudRange.startDate, cloudRange.endDate, true, undefined, ['completedAt', 'lastPaidAt', 'cancelledAt'], false),
           smartGetDocumentsByDateRange('expenses', 'date', cloudRange.startDate, cloudRange.endDate, true),
           smartGetDocuments('purchase_orders', true),
           smartGetDocumentsByDateRange('handovers', 't', cloudRange.startDate, cloudRange.endDate, true),
@@ -263,6 +265,22 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       cardPayment += breakdown.card;
     });
 
+    const reservationCashFlow = orders.reduce((totals, order: any) => {
+      const flow = getReservationCashFlowForDate(order, date);
+      totals.total += flow.total;
+      totals.cash += flow.cash;
+      totals.card += flow.card;
+      return totals;
+    }, { total: 0, cash: 0, card: 0 });
+    const reservationPrepaymentAmount = orders.reduce(
+      (sum: number, order: any) => sum + getReservationPrepaymentAmountForDate(order, date),
+      0
+    );
+    const recognizedReservationCash = dayOrders.reduce((sum: number, order: any) => (
+      order.orderType === 'reservation' ? sum + getOrderPaymentBreakdown(order).cash : sum
+    ), 0);
+    const cashForHandover = cashPayment - recognizedReservationCash + reservationCashFlow.cash;
+
     // Cash plus card should match collected sales.
     const totalPayment = cashPayment + cardPayment;
     if (Math.abs(totalPayment - collectedSales) > 0.01 && collectedSales > 0) {
@@ -304,8 +322,16 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
 
     // Read shift handover records.
     const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
-    const { totalSales, profit, difference, expectedCashHandover, fundingGap } = calculateFinancialReportTotals({
+    const { totalSales, profit } = calculateFinancialReportTotals({
       cashPayment,
+      cardPayment,
+      purchaseAmount,
+      expenseAmount,
+      cashExpenseAmount,
+      handoverAmount,
+    });
+    const { difference, expectedCashHandover, fundingGap } = calculateFinancialReportTotals({
+      cashPayment: cashForHandover,
       cardPayment,
       purchaseAmount,
       expenseAmount,
@@ -321,10 +347,12 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
       dineInOrders: orderStatusSummary.dineInOrders,
       takeoutOrders: orderStatusSummary.takeoutOrders,
       deliveryOrders: orderStatusSummary.deliveryOrders,
+      reservationOrders: orderStatusSummary.reservationOrders,
       cancelledOrders: orderStatusSummary.cancelledOrders,
       cancelledItems: orderStatusSummary.cancelledItems,
       cashPayment,
       cardPayment,
+      reservationPrepaymentAmount,
       purchaseAmount,
       expenseAmount,
       profit,
@@ -371,10 +399,12 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     dineInOrders: acc.dineInOrders + report.dineInOrders,
     takeoutOrders: acc.takeoutOrders + report.takeoutOrders,
     deliveryOrders: acc.deliveryOrders + report.deliveryOrders,
+    reservationOrders: acc.reservationOrders + report.reservationOrders,
     cancelledOrders: acc.cancelledOrders + report.cancelledOrders,
     cancelledItems: acc.cancelledItems + report.cancelledItems,
     cashPayment: acc.cashPayment + report.cashPayment,
     cardPayment: acc.cardPayment + report.cardPayment,
+    reservationPrepaymentAmount: acc.reservationPrepaymentAmount + report.reservationPrepaymentAmount,
     purchaseAmount: acc.purchaseAmount + report.purchaseAmount,
     expenseAmount: acc.expenseAmount + report.expenseAmount,
     profit: acc.profit + report.profit,
@@ -384,7 +414,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
     fundingGap: acc.fundingGap + report.fundingGap,
     hasHandover: acc.hasHandover || report.handoverAmount !== undefined,
     supplierDebt: supplierDebtTotal
-  }), { totalSales: 0, orderCount: 0, completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, expectedCashHandover: 0, fundingGap: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
+  }), { totalSales: 0, orderCount: 0, completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, reservationOrders: 0, cancelledOrders: 0, cancelledItems: 0, cashPayment: 0, cardPayment: 0, reservationPrepaymentAmount: 0, purchaseAmount: 0, expenseAmount: 0, profit: 0, difference: 0, handoverAmount: 0, expectedCashHandover: 0, fundingGap: 0, hasHandover: false, supplierDebt: supplierDebtTotal });
   const dailyExpenseBreakdown = reportType === 'daily'
     ? buildDailyExpenseBreakdown(expenses, selectedDate, expenseCategories, purchaseOrders)
     : { summaries: [], details: [], groups: [] };
@@ -589,6 +619,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
         <td>${htmlEscape(formatOrderSummary(report, t))}</td>
         <td class="num">${money(report.cashPayment)}</td>
         <td class="num">${money(report.cardPayment)}</td>
+        <td class="num">${money(report.reservationPrepaymentAmount)}</td>
         <td class="num">${money(report.purchaseAmount)}</td>
         <td class="num">${money(report.expenseAmount)}</td>
         <td class="num ${report.profit >= 0 ? 'positive' : 'negative'}">${money(report.profit)}</td>
@@ -666,15 +697,15 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
           <div class="box"><div class="label">${htmlEscape(t('finance.card'))}</div><div class="value">${money(summary.cardPayment)}</div></div>
           <div class="box"><div class="label">${htmlEscape(t('finance.orders'))}</div><div class="value">${htmlEscape(formatOrderSummary(summary, t))}</div></div>
           <div class="box"><div class="label">${htmlEscape(t('finance.profitWithDifference'))}</div><div class="value">${money(summary.profit)}</div></div>
-          <div class="box"><div class="label">${htmlEscape(t('finance.handoverCash'))}</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div></div>
-          <div class="box difference-box"><div class="label">${htmlEscape(t('finance.shiftDifferenceWithFormula'))}</div><div class="value difference-value">${summary.hasHandover ? signedMoney(summary.difference) : htmlEscape(t('finance.notHandedOver'))}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.handoverCash'))}</div><div class="value">${summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div class="label">${htmlEscape(t('finance.difference'))}: ${summary.hasHandover ? signedMoney(summary.difference) : htmlEscape(t('finance.notHandedOver'))}</div></div>
+          <div class="box"><div class="label">${htmlEscape(t('finance.reservationPrepayment'))}</div><div class="value">${money(summary.reservationPrepaymentAmount)}</div></div>
           <div class="box"><div class="label">${htmlEscape(t('finance.operatingExpense'))}</div><div class="value">${money(summary.expenseAmount)}</div></div>
           <div class="box"><div class="label">${htmlEscape(t('finance.purchasePayment'))}</div><div class="value">${money(summary.purchaseAmount)}</div></div>
           <div class="box"><div class="label">${htmlEscape(t('finance.supplierDebtCurrent'))}</div><div class="value">${money(summary.supplierDebt)}</div></div>
         </div>
         <h2>${htmlEscape(t(isDaily ? 'finance.print.dailyReconciliation' : 'finance.print.dateSummary'))}</h2>
         <table>
-          <thead><tr><th>${htmlEscape(t('finance.date'))}</th><th>${htmlEscape(t('finance.sales'))}</th><th>${htmlEscape(t('finance.orders'))}</th><th>${htmlEscape(t('finance.cash'))}</th><th>${htmlEscape(t('finance.card'))}</th><th>${htmlEscape(t('finance.purchasePayment'))}</th><th>${htmlEscape(t('finance.operatingExpense'))}</th><th>${htmlEscape(t('finance.profit'))}</th><th>${htmlEscape(t('finance.handover'))}</th><th>${htmlEscape(t('finance.difference'))}</th></tr></thead>
+          <thead><tr><th>${htmlEscape(t('finance.date'))}</th><th>${htmlEscape(t('finance.sales'))}</th><th>${htmlEscape(t('finance.orders'))}</th><th>${htmlEscape(t('finance.cash'))}</th><th>${htmlEscape(t('finance.card'))}</th><th>${htmlEscape(t('finance.reservationPrepayment'))}</th><th>${htmlEscape(t('finance.purchasePayment'))}</th><th>${htmlEscape(t('finance.operatingExpense'))}</th><th>${htmlEscape(t('finance.profit'))}</th><th>${htmlEscape(t('finance.handover'))}</th><th>${htmlEscape(t('finance.difference'))}</th></tr></thead>
           <tbody>${reportRows}</tbody>
         </table>
         ${isDaily ? `
@@ -741,10 +772,10 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
             <div style={styles.statCard(colors.blue, colors.blue)}><div style={styles.statLabel}>{t('finance.sales')}</div><div style={styles.statValue(colors.blue)}>{money(summary.totalSales)}</div><div style={styles.statSub}>{t('finance.orders.completed')} {summary.completedOrders}</div></div>
             <div style={styles.statCard(colors.success, colors.success)}><div style={styles.statLabel}>{t('finance.cashIncome')}</div><div style={styles.statValue(colors.success)}>{money(summary.cashPayment)}</div><div style={styles.statSub}>{t('finance.share')} {summary.totalSales > 0 ? ((summary.cashPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
             <div style={styles.statCard('#7c3aed', '#7c3aed')}><div style={styles.statLabel}>{t('finance.cardIncome')}</div><div style={styles.statValue('#7c3aed')}>{money(summary.cardPayment)}</div><div style={styles.statSub}>{t('finance.share')} {summary.totalSales > 0 ? ((summary.cardPayment / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{t('finance.orders')}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '0.86rem', lineHeight: 1.35 }}>{formatOrderSummary(summary, t)}</div><div style={styles.statSub}>Mesa / Barra / Delivery</div></div>
+            <div style={styles.statCard(colors.teal, colors.teal)}><div style={styles.statLabel}>{t('finance.orders')}</div><div style={{ ...styles.statValue(colors.teal), fontSize: '0.86rem', lineHeight: 1.35 }}>{formatOrderSummary(summary, t)}</div><div style={styles.statSub}>Mesa / Barra / Delivery / Reserva</div></div>
             <div style={styles.statCard(summary.profit >= 0 ? colors.success : colors.danger, summary.profit >= 0 ? colors.success : colors.danger)}><div style={styles.statLabel}>{t('finance.profit')}</div><div style={styles.statValue(summary.profit >= 0 ? colors.success : colors.danger)}>{money(summary.profit)}</div><div style={styles.statSub}>{t('finance.profitFormula')} | {t('finance.profitMargin')} {summary.totalSales > 0 ? ((summary.profit / summary.totalSales) * 100).toFixed(1) : 0}%</div></div>
-            <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{t('finance.handoverCash')}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{summary.fundingGap > 0 ? `${t('finance.expected')} ${money(summary.expectedCashHandover)} / ${t('finance.fundingGap')} ${money(summary.fundingGap)}` : `${t('finance.expectedCash')} ${money(summary.expectedCashHandover)}`}</div></div>
-            <div style={styles.statCard(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success, summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}><div style={styles.statLabel}>{t('finance.shiftDifference')}</div><div style={styles.statValue(summary.hasHandover && summary.difference !== 0 ? (summary.difference > 0 ? colors.amber : colors.danger) : colors.success)}>{summary.hasHandover ? signedMoney(summary.difference) : '-'}</div><div style={styles.statSub}>{t('finance.differenceFormula')}</div></div>
+            <div style={styles.statCard(colors.textSecondary, colors.textSecondary)}><div style={styles.statLabel}>{t('finance.handoverCash')}</div><div style={styles.statValue(colors.textSecondary)}>{summary.hasHandover ? money(summary.handoverAmount) : '-'}</div><div style={styles.statSub}>{summary.fundingGap > 0 ? `${t('finance.expected')} ${money(summary.expectedCashHandover)} / ${t('finance.difference')} ${summary.hasHandover ? signedMoney(summary.difference) : '-'} / ${t('finance.fundingGap')} ${money(summary.fundingGap)}` : `${t('finance.expectedCash')} ${money(summary.expectedCashHandover)} / ${t('finance.difference')} ${summary.hasHandover ? signedMoney(summary.difference) : '-'}`}</div></div>
+            <div style={styles.statCard('#db2777', '#db2777')}><div style={styles.statLabel}>{t('finance.reservationPrepayment')}</div><div style={styles.statValue('#db2777')}>{money(summary.reservationPrepaymentAmount)}</div><div style={styles.statSub}>{t('finance.reservationPrepaymentHint')}</div></div>
             <div style={styles.statCard(colors.danger, colors.danger)}><div style={styles.statLabel}>{t('finance.operatingExpense')}</div><div style={styles.statValue(colors.danger)}>{money(summary.expenseAmount)}</div><div style={styles.statSub}>{t('finance.operatingOutflow')}</div></div>
             <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{t('finance.purchasePayment')}</div><div style={styles.statValue(colors.amber)}>{money(summary.purchaseAmount)}</div><div style={styles.statSub}>{t('finance.paidPurchases')}</div></div>
             <div style={styles.statCard(colors.amber, colors.amber)}><div style={styles.statLabel}>{t('finance.supplierDebt')}</div><div style={styles.statValue(colors.amber)}>{money(summary.supplierDebt)}</div><div style={styles.statSub}>{t('finance.outstandingDebt')}</div></div>
@@ -764,6 +795,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                       <th style={styles.th}>{t('finance.orders')}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.cash')}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.card')}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.reservationPrepayment')}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.purchasePayment')}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.expense')}</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t('finance.profit')}</th>
@@ -779,6 +811,7 @@ const FinancialReportsModule: React.FC<FinancialReportsModuleProps> = ({ orders:
                         <td style={styles.td}>{formatOrderSummary(report, t)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: colors.success }}>{money(report.cashPayment)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: '#7c3aed' }}>{money(report.cardPayment)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', color: '#db2777' }}>{money(report.reservationPrepaymentAmount)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: colors.amber }}>{money(report.purchaseAmount)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', color: colors.danger }}>{money(report.expenseAmount)}</td>
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: 'bold', color: report.profit >= 0 ? colors.success : colors.danger }}>{money(report.profit)}</td>

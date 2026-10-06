@@ -6,7 +6,7 @@ import { dataService } from '../../services/DataService';
 import { amountToPoints, getUSDToNioRate, getPointsExchangeRate, getLocalDateTimeString } from '../../utils/exchangeRate';
 import { formatNicaraguaDateTime, formatNicaraguaTime, getLocalDateString, toTimestampMillis } from '../../utils/localTime';
 import { dataManager } from '../../services/dataManager';
-import { smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId } from '../../services/smartSyncService';
+import { smartGetDocument, smartSetDocument, smartUpdateDocument, smartDeleteDocument, smartSubscribeToCollection, smartSubscribeToPosOrdersByDatePrefix, smartSubscribeToPosReservations, smartClaimOrderStockDeduction, smartGenerateDailyOrderNumber, getStableStockDeductionOperationId, type PosReservationSubscriptionMetadata } from '../../services/smartSyncService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
 import {
@@ -136,13 +136,28 @@ interface PointsTransaction {
   createdAt: string;
 }
 
+type PosOrderType = 'dine_in' | 'takeout' | 'delivery' | 'reservation';
+
+interface ReservationPaymentRecord {
+  id: string;
+  paidAt: string;
+  amount: number;
+  cashAmount: number;
+  cardAmount: number;
+}
+
 interface Order {
   id: string;
   creationIntentId?: string;
   orderNumber?: string;
   tableId: string;
   tableNumber: string;
-  orderType: 'dine_in' | 'takeout' | 'delivery';
+  orderType: PosOrderType;
+  deliveryDate?: string;
+  deliveryAt?: Date | string;
+  reservationOpen?: boolean;
+  reservationClosedDate?: string;
+  reservationPayments?: ReservationPaymentRecord[];
   deliveryType?: 'self' | 'outsourced';
   deliveryFee?: number; // 娲鹃€佽垂
   customerId?: string; // 鍏宠仈椤惧ID
@@ -199,7 +214,8 @@ interface HeldOrder {
   tableId: string;
   tableNumber: string;
   items: OrderItem[];
-  orderType: 'dine_in' | 'takeout' | 'delivery';
+  orderType: PosOrderType;
+  deliveryDate?: string;
   deliveryType?: 'self' | 'outsourced';
   createdAt: Date;
   serviceFeeEnabled: boolean;
@@ -245,6 +261,8 @@ const serializeDateForFirestore = (value: any): any => {
   return value;
 };
 
+const buildReservationDeliveryAt = (dateKey: string): Date => new Date(`${dateKey}T12:00:00`);
+
 const serializeOrderForFirestore = (order: Order): Record<string, any> => {
   const orderAny = order as any;
   return stripUndefinedValues({
@@ -257,6 +275,7 @@ const serializeOrderForFirestore = (order: Order): Record<string, any> => {
     cancelledAt: serializeDateForFirestore(order.cancelledAt),
     clearedAt: serializeDateForFirestore(order.clearedAt),
     lastPaidAt: serializeDateForFirestore(order.lastPaidAt),
+    deliveryAt: serializeDateForFirestore(order.deliveryAt),
     stockDeductedAt: serializeDateForFirestore(order.stockDeductedAt),
     pointsProcessedAt: serializeDateForFirestore(order.pointsProcessedAt),
     lastModified: order.lastModified || Date.now(),
@@ -269,6 +288,25 @@ const getScopedStorageKey = (key: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const formatOrderItemsForEditor = (order: Partial<Order>, forceSentToKitchen = false): OrderItem[] => {
+  return (order.items || []).map((item: any, index: number) => ({
+    id: item.id || `item-${index}`,
+    menuItemId: item.menuItemId || '',
+    name: item.name,
+    quantity: Number(item.quantity || 0),
+    price: Number(item.price || 0),
+    subtotal: Number.isFinite(Number(item.subtotal)) ? Number(item.subtotal) : Number(item.quantity || 0) * Number(item.price || 0),
+    category: item.category,
+    type: item.type || (item.stockItemId ? 'direct' : 'recipe'),
+    stockItemId: item.stockItemId,
+    ingredients: item.ingredients || [],
+    sentToKitchen: forceSentToKitchen ? true : Boolean(item.sentToKitchen),
+    sentQuantity: forceSentToKitchen ? Number(item.quantity || 0) : Number(item.sentQuantity || 0),
+    cancelledQuantity: item.cancelledQuantity,
+    cancelRecords: item.cancelRecords || [],
+  }));
 };
 
 const MAX_LOCAL_DEDUCTED_ORDER_IDS = 300;
@@ -553,10 +591,11 @@ const tableCanvasFoodPattern = [
   'linear-gradient(90deg, rgba(255,255,255,0.25) 1px, transparent 1px)',
 ].join(', ');
 
-const posOrderTypeIcons: Record<'dine_in' | 'takeout' | 'delivery', string> = {
+const posOrderTypeIcons: Record<PosOrderType, string> = {
   dine_in: '🍽️',
   takeout: '🥡',
   delivery: '🚚',
+  reservation: '📅',
 };
 
 const posPanelStyle: React.CSSProperties = {
@@ -580,12 +619,13 @@ const POS: React.FC = () => {
     refreshCurrentStorePrintCache().catch(() => undefined);
   }, []);
   const { t } = useI18n();
-  const posOrderTypeLabels: Record<'dine_in' | 'takeout' | 'delivery', string> = {
+  const posOrderTypeLabels: Record<PosOrderType, string> = {
     dine_in: t('pos.orderType.dineIn'),
     takeout: t('pos.orderType.takeout'),
     delivery: t('pos.orderType.delivery'),
+    reservation: t('pos.orderType.reservation'),
   };
-  const formatPosOrderType = (type: 'dine_in' | 'takeout' | 'delivery') => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
+  const formatPosOrderType = (type: PosOrderType) => `${posOrderTypeIcons[type]} ${posOrderTypeLabels[type]}`;
   const localOrdersSignatureRef = useRef('');
   const publishedOrdersSignatureRef = useRef('');
   const publishedOrderSignaturesRef = useRef<Map<string, string>>(new Map());
@@ -682,6 +722,7 @@ const POS: React.FC = () => {
             preparingAt: item.preparingAt ? new Date(item.preparingAt) : undefined,
             servedAt: item.servedAt ? new Date(item.servedAt) : undefined,
             lastPaidAt: item.lastPaidAt ? new Date(item.lastPaidAt) : undefined,
+            deliveryAt: item.deliveryAt ? new Date(item.deliveryAt) : undefined,
             lastModified: item.lastModified || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
           })) as unknown as T;
         }
@@ -728,7 +769,8 @@ const POS: React.FC = () => {
   const [pointsToUse, setPointsToUse] = useState<number>(0);
   // 浣跨敤鍏ㄥ眬绉垎鍏戞崲鐜?
   const pointsExchangeRate = getPointsExchangeRate();
-  const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'delivery'>('dine_in');
+  const [orderType, setOrderType] = useState<PosOrderType>('dine_in');
+  const [reservationDeliveryDate, setReservationDeliveryDate] = useState(getLocalDateString());
 
   // 浣跨敤鍏ㄥ眬姹囩巼
   const exchangeRate = getUSDToNioRate();
@@ -783,7 +825,8 @@ const POS: React.FC = () => {
 
   const [deductedOrderIds, setDeductedOrderIds] = useState<Set<string>>(() => loadLocalDeductedOrderIds());
 
-  const [orderTypeFilter, setOrderTypeFilter] = useState<'all' | 'dine_in' | 'takeout' | 'delivery'>('all');
+  const [orderTypeFilter, setOrderTypeFilter] = useState<'all' | PosOrderType>('all');
+  const [reservationDateFilter, setReservationDateFilter] = useState(getLocalDateString());
   const [showAddTableModal, setShowAddTableModal] = useState(false);
   const [editingTable, setEditingTable] = useState<any>(null);
   const [newTableName, setNewTableName] = useState('');
@@ -883,6 +926,8 @@ const POS: React.FC = () => {
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
 
   const [currentItems, setCurrentItems] = useState<OrderItem[]>([]);
+  const selectedOrderHydrationRef = useRef({ orderId: '', waitingForItems: false });
+  const [isRecoveringSelectedOrder, setIsRecoveringSelectedOrder] = useState(false);
 
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelPassword, setCancelPassword] = useState('');
@@ -1278,6 +1323,40 @@ const POS: React.FC = () => {
     });
   }, []);
 
+  const applyIncomingReservationOrders = React.useCallback((incomingOrders: Order[], metadata?: PosReservationSubscriptionMetadata) => {
+    if ((!incomingOrders || incomingOrders.length === 0) && !metadata?.authoritative) return;
+
+    const incomingById = new Map(incomingOrders.map(order => [order.id, order]));
+    metadata?.deletedOrderIds.forEach(orderId => pendingOrderSyncIdsRef.current.delete(orderId));
+    if (metadata?.deletedOrderIds.length) savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+
+    setOrders(prevOrders => {
+      const today = getLocalDateString();
+      const reconciledOrders = prevOrders.filter(order => {
+        if (metadata?.deletedOrderIds.includes(order.id)) return false;
+        if (order.orderType !== 'reservation') return true;
+        if (pendingOrderSyncIdsRef.current.has(order.id)) return true;
+        if (!metadata?.authoritative) return true;
+        if (order.reservationOpen === false && order.reservationClosedDate !== today) return true;
+        return incomingById.has(order.id);
+      });
+      const mergedOrders = mergeOrdersByVersion(reconciledOrders, incomingOrders, pendingOrderSyncIdsRef.current);
+      if (getOrdersSignature(mergedOrders) === getOrdersSignature(prevOrders)) return prevOrders;
+
+      incomingOrders.forEach(incomingOrder => {
+        const mergedOrder = mergedOrders.find(order => order.id === incomingOrder.id);
+        if (!mergedOrder) return;
+        const cloudSignature = getOrderSignature(incomingOrder);
+        if (cloudSignature === getOrderSignature(mergedOrder)) {
+          publishedOrderSignaturesRef.current.set(incomingOrder.id, cloudSignature);
+          pendingOrderSyncIdsRef.current.delete(incomingOrder.id);
+        }
+      });
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      return mergedOrders;
+    });
+  }, []);
+
   React.useEffect(() => {
     const today = getLocalDateString();
     const todayOrderPrefixForSubscription = `${today.slice(5, 7)}${today.slice(8, 10)}`;
@@ -1285,6 +1364,33 @@ const POS: React.FC = () => {
       applyIncomingCloudOrders(data as Order[]);
     });
   }, [applyIncomingCloudOrders]);
+
+  React.useEffect(() => smartSubscribeToPosReservations((data, metadata) => {
+    applyIncomingReservationOrders(data as Order[], metadata);
+  }), [applyIncomingReservationOrders]);
+
+  useEffect(() => {
+    const hydration = selectedOrderHydrationRef.current;
+    if (viewMode !== 'order' || !selectedOrderId || hydration.orderId !== selectedOrderId) {
+      if (hydration.waitingForItems) setIsRecoveringSelectedOrder(false);
+      selectedOrderHydrationRef.current = { orderId: '', waitingForItems: false };
+      return;
+    }
+    if (!hydration.waitingForItems) return;
+    if (currentItems.length > 0) {
+      hydration.waitingForItems = false;
+      setIsRecoveringSelectedOrder(false);
+      return;
+    }
+
+    const latestOrder = orders.find(order => order.id === selectedOrderId);
+    const recoveredItems = latestOrder ? formatOrderItemsForEditor(latestOrder) : [];
+    if (recoveredItems.length === 0) return;
+
+    hydration.waitingForItems = false;
+    setCurrentItems(recoveredItems);
+    setIsRecoveringSelectedOrder(false);
+  }, [currentItems.length, orders, selectedOrderId, viewMode]);
 
   useEffect(() => {
     if (orders.length > 0) return;
@@ -1899,6 +2005,8 @@ const POS: React.FC = () => {
   };
 
   const resetOrderEntryState = () => {
+    selectedOrderHydrationRef.current = { orderId: '', waitingForItems: false };
+    setIsRecoveringSelectedOrder(false);
     clearOrderIntent();
     setViewMode('overview');
     setCurrentItems([]);
@@ -1909,6 +2017,7 @@ const POS: React.FC = () => {
     setTaxEnabled(false);
     setDeliveryFee(0);
     setOrderType('dine_in');
+    setReservationDeliveryDate(getLocalDateString());
     setCashNIO('');
     setCashUSD('');
     setCardNIO('');
@@ -1942,6 +2051,90 @@ const POS: React.FC = () => {
   const returnToOverviewFromOrder = () => {
     discardUnconfirmedOrderItems();
     resetOrderEntryState();
+  };
+
+  const handleConfirmReservation = async () => {
+    if (sendingToKitchenRef.current || isSendingToKitchen) return;
+    if (currentItems.length === 0) {
+      alert(t('pos.alert.addProducts'));
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reservationDeliveryDate)) {
+      alert(t('pos.reservation.selectDeliveryDate'));
+      return;
+    }
+    if (selectedOrderId) {
+      alert(t('pos.reservation.alreadyConfirmed'));
+      return;
+    }
+
+    sendingToKitchenRef.current = true;
+    setIsSendingToKitchen(true);
+    try {
+      const intent = claimOrderIntent();
+      const now = new Date();
+      const reservationOrder: Order = mergeOrderCancelRecords({
+        id: intent.id,
+        creationIntentId: intent.id,
+        orderNumber: await claimOrderNumber(),
+        tableId: '',
+        tableNumber: '',
+        orderType: 'reservation',
+        deliveryDate: reservationDeliveryDate,
+        deliveryAt: buildReservationDeliveryAt(reservationDeliveryDate),
+        reservationOpen: true,
+        customerId: selectedCustomer?.id,
+        customerName: selectedCustomer?.name,
+        items: currentItems.map(item => ({ ...item, sentToKitchen: false, sentQuantity: 0 })),
+        status: 'confirmed',
+        createdAt: now,
+        totalAmount: finalTotal,
+        pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
+        pointsDiscount: pointsRedemptionAmount,
+        paidAmount: 0,
+        paymentStatus: 'unpaid',
+        settledAmount: 0,
+        lastModified: Date.now(),
+      });
+
+      setOrders(prevOrders => prevOrders.some(order => order.id === reservationOrder.id)
+        ? prevOrders
+        : [...prevOrders, reservationOrder]);
+      pendingOrderSyncIdsRef.current.add(reservationOrder.id);
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      publishOrderImmediately(reservationOrder).catch(error => {
+        console.error('reservation immediate publish queued locally:', reservationOrder.id, error);
+      });
+      showPosToast(t('pos.reservation.confirmed'), 'success');
+      setOrderTypeFilter('reservation');
+      setReservationDateFilter(reservationDeliveryDate);
+      resetOrderEntryState();
+    } finally {
+      sendingToKitchenRef.current = false;
+      setIsSendingToKitchen(false);
+    }
+  };
+
+  const handleReservationDeliveryDateChange = (nextDate: string) => {
+    setReservationDeliveryDate(nextDate);
+    if (!selectedOrderId || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return;
+
+    const order = orders.find(candidate => candidate.id === selectedOrderId);
+    if (!order || order.orderType !== 'reservation' || order.status === 'completed' || order.status === 'cancelled') return;
+
+    const updatedOrder: Order = {
+      ...order,
+      deliveryDate: nextDate,
+      deliveryAt: buildReservationDeliveryAt(nextDate),
+      updatedAt: new Date(),
+      lastModified: Date.now(),
+    };
+    setOrders(prevOrders => prevOrders.map(candidate => candidate.id === order.id ? updatedOrder : candidate));
+    pendingOrderSyncIdsRef.current.add(order.id);
+    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+    publishOrderImmediately(updatedOrder).catch(error => {
+      console.error('reservation delivery date publish failed:', order.id, error);
+    });
   };
 
   const handleSendToKitchen = async () => {
@@ -2028,6 +2221,9 @@ const POS: React.FC = () => {
           tableNumber: orderType === 'dine_in' ? (tables.find(t => t.id === selectedTableId)?.number || '') : '',
           orderType,
           deliveryType: orderType === 'delivery' ? deliveryType : undefined,
+          deliveryDate: orderType === 'reservation' ? reservationDeliveryDate : undefined,
+          deliveryAt: orderType === 'reservation' ? buildReservationDeliveryAt(reservationDeliveryDate) : undefined,
+          reservationOpen: orderType === 'reservation' ? true : undefined,
           customerId: selectedCustomer?.id,
           customerName: selectedCustomer?.name,
           items: updatedItems,
@@ -2083,6 +2279,8 @@ const POS: React.FC = () => {
               ...o,
               items: updatedItems,
               totalAmount: finalTotal,
+              status: o.orderType === 'reservation' && o.status === 'confirmed' ? 'preparing' : o.status,
+              preparingAt: o.orderType === 'reservation' && !o.preparingAt ? new Date() : o.preparingAt,
               pointsUsed: pointsRedemptionEnabled ? pointsToUse : (o.pointsUsed || 0),
               pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (o.pointsDiscount || 0),
               paymentStatus: nextPaymentStatus,
@@ -2153,6 +2351,7 @@ const POS: React.FC = () => {
             orderNumber: kitchenPrintOrderNumber,
             orderTypeText: posOrderTypeLabels[activeOrderType],
             tableNumber: kitchenPrintTableNumber,
+            deliveryDateText: activeOrderType === 'reservation' ? reservationDeliveryDate : undefined,
             createdAt: new Date(),
             items: job.items,
             widthMm: job.printer?.widthMm || printSettings.receiptWidthMm,
@@ -2178,6 +2377,7 @@ const POS: React.FC = () => {
   );
 
   const change = paidAmount - remainingAmount;
+  const canSubmitPayment = remainingAmount > 0.001 && paidAmount >= remainingAmount && currentItems.length > 0;
 
   const getStockDeductionKey = (item: OrderItem) => item.id || item.menuItemId;
 
@@ -2483,8 +2683,10 @@ const POS: React.FC = () => {
     const completedOrder: Order = {
       ...order,
       status: 'completed' as const,
-      completedAt: order.completedAt || now,
+      completedAt: now,
       clearedAt: order.clearedAt || now,
+      reservationOpen: order.orderType === 'reservation' ? false : order.reservationOpen,
+      reservationClosedDate: order.orderType === 'reservation' ? getLocalDateString(now) : order.reservationClosedDate,
       stockDeductionPending: !order.stockDeducted,
       lastModified: Date.now()
     };
@@ -2546,6 +2748,13 @@ const POS: React.FC = () => {
         return 'mixed';
       };
       const now = new Date();
+      const reservationPayment: ReservationPaymentRecord = {
+        id: `${selectedOrderId || 'new'}-${now.getTime()}`,
+        paidAt: now.toISOString(),
+        amount: actualSettled,
+        cashAmount: settledCashAmount,
+        cardAmount: settledCardAmount,
+      };
       let paidOrderForSideEffects: Order | null = null;
       let finalOrderId = selectedOrderId;
 
@@ -2565,8 +2774,14 @@ const POS: React.FC = () => {
           totalAmount: finalTotal,
           pointsUsed: pointsRedemptionEnabled ? pointsToUse : (existingOrder.pointsUsed || 0),
           pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (existingOrder.pointsDiscount || 0),
-          status: 'served',
-          servedAt: existingOrder.servedAt || now,
+          status: existingOrder.orderType === 'reservation' ? existingOrder.status : 'served',
+          servedAt: existingOrder.orderType === 'reservation' ? existingOrder.servedAt : (existingOrder.servedAt || now),
+          deliveryDate: existingOrder.orderType === 'reservation' ? reservationDeliveryDate : existingOrder.deliveryDate,
+          deliveryAt: existingOrder.orderType === 'reservation' ? buildReservationDeliveryAt(reservationDeliveryDate) : existingOrder.deliveryAt,
+          reservationOpen: existingOrder.orderType === 'reservation' ? true : existingOrder.reservationOpen,
+          reservationPayments: existingOrder.orderType === 'reservation'
+            ? [...(existingOrder.reservationPayments || []), { ...reservationPayment, id: `${existingOrder.id}-${now.getTime()}` }]
+            : existingOrder.reservationPayments,
           paymentStatus: nextPaymentStatus,
           paidAmount: newSettledAmount,
           settledAmount: newSettledAmount,
@@ -2607,12 +2822,18 @@ const POS: React.FC = () => {
           tableNumber: selectedTableId ? tables.find(t => t.id === selectedTableId)?.number || '' : '',
           orderType,
           deliveryType: orderType === 'delivery' ? deliveryType : undefined,
+          deliveryDate: orderType === 'reservation' ? reservationDeliveryDate : undefined,
+          deliveryAt: orderType === 'reservation' ? buildReservationDeliveryAt(reservationDeliveryDate) : undefined,
+          reservationOpen: orderType === 'reservation' ? true : undefined,
+          reservationPayments: orderType === 'reservation'
+            ? [{ ...reservationPayment, id: `${intent.id}-${now.getTime()}` }]
+            : undefined,
           customerId: selectedCustomer?.id,
           customerName: selectedCustomer?.name,
           items: currentItems,
-          status: 'served',
+          status: orderType === 'reservation' ? 'confirmed' : 'served',
           createdAt: now,
-          servedAt: now,
+          servedAt: orderType === 'reservation' ? undefined : now,
           completedAt: undefined,
           totalAmount: finalTotal,
           pointsUsed: pointsRedemptionEnabled ? pointsToUse : 0,
@@ -2678,6 +2899,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       setTaxEnabled(false);
       setDeliveryFee(0);
       setOrderType('dine_in');
+      setReservationDeliveryDate(getLocalDateString());
       setCashNIO('');
       setCashUSD('');
       setCardNIO('');
@@ -2808,6 +3030,8 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
           cancelledBy: '店长',
           cancelReason: cancelReason,
           cancelledAt: new Date(),
+          reservationOpen: order.orderType === 'reservation' ? false : order.reservationOpen,
+          reservationClosedDate: order.orderType === 'reservation' ? getLocalDateString() : order.reservationClosedDate,
           lastModified: Date.now()
         };
 
@@ -2972,6 +3196,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       orderNumber,
       orderTypeText,
       tableNumber,
+      deliveryDateText: orderType === 'reservation' ? reservationDeliveryDate : undefined,
       customerName: receiptCustomerName,
       customerPhone: receiptCustomerPhone,
       customerAddress: receiptCustomerAddress,
@@ -2987,6 +3212,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       orderNumber,
       orderTypeText,
       tableNumber,
+      deliveryDateText: orderType === 'reservation' ? reservationDeliveryDate : undefined,
       customerName: receiptCustomerName,
       customerPhone: receiptCustomerPhone,
       customerAddress: receiptCustomerAddress,
@@ -3052,6 +3278,11 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
     return Boolean(orderDate && getLocalDateString(orderDate) === today);
   };
 
+  const isOpenOverdueReservation = (order: Order) => order.orderType === 'reservation' &&
+    Boolean(order.deliveryDate && order.deliveryDate < today) &&
+    order.status !== 'completed' &&
+    order.status !== 'cancelled';
+
   const allOrders = (orderTypeFilter === 'all'
     ? orders
     : orders.filter(o => o.orderType === orderTypeFilter)
@@ -3060,10 +3291,19 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
     if (o.status === 'draft') return false;
     if (!isDisplayablePosOrder(o)) return false;
 
+    if (o.orderType === 'reservation') {
+      const targetDate = orderTypeFilter === 'reservation' ? reservationDateFilter : today;
+      return o.deliveryDate === targetDate || isOpenOverdueReservation(o) || o.reservationClosedDate === today;
+    }
+
     return isTodayPosOrder(o);
   });
 
   const filteredOrders = [...allOrders].sort((a, b) => {
+    const aOverdue = isOpenOverdueReservation(a);
+    const bOverdue = isOpenOverdueReservation(b);
+    if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+    if (aOverdue && bOverdue) return String(a.deliveryDate || '').localeCompare(String(b.deliveryDate || ''));
     const dateA = toDisplayDate(getOrderListTimeValue(a))?.getTime() || 0;
     const dateB = toDisplayDate(getOrderListTimeValue(b))?.getTime() || 0;
     return dateB - dateA;
@@ -3125,26 +3365,40 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
     }
   };
 
-  const handleOrderClick = (order: any) => {
+  const recoverSelectedReservationOrder = (order: Order, forceSentToKitchen = false) => {
+    if (order.orderType !== 'reservation' || (order.items || []).length > 0) return;
+
+    void smartGetDocument('pos_orders', order.id, true).then(latestOrder => {
+      const hydration = selectedOrderHydrationRef.current;
+      if (hydration.orderId !== order.id || !hydration.waitingForItems) return;
+      const recoveredItems = latestOrder
+        ? formatOrderItemsForEditor(latestOrder as Order, forceSentToKitchen)
+        : [];
+
+      hydration.waitingForItems = false;
+      setIsRecoveringSelectedOrder(false);
+      if (recoveredItems.length === 0) return;
+
+      setOrders(prevOrders => prevOrders.map(existing =>
+        existing.id === order.id ? { ...existing, ...latestOrder, items: (latestOrder as Order).items } : existing
+      ));
+      setCurrentItems(recoveredItems);
+    });
+  };
+
+  const handleOrderClick = (order: Order) => {
     bindExistingOrderIntent(order);
     if (order.status === 'cancelled' || (order.status === 'completed' && order.clearedAt)) {
       const table = tables.find(t => t.number === order.tableNumber);
       setSelectedTableId(table ? table.id : null);
       setSelectedOrderId(order.id);
 
-      const formattedItems: OrderItem[] = (order.items || []).map((item: any, index: number) => ({
-        id: item.id || `item-${index}`,
-        menuItemId: item.menuItemId || '',
-        name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        subtotal: item.quantity * item.price,
-        type: item.type || (item.stockItemId ? 'direct' : 'recipe'),
-        stockItemId: item.stockItemId,
-        ingredients: item.ingredients || [],
-        sentToKitchen: true,
-        sentQuantity: item.quantity
-      }));
+      const formattedItems = formatOrderItemsForEditor(order, true);
+      selectedOrderHydrationRef.current = {
+        orderId: order.id,
+        waitingForItems: order.orderType === 'reservation' && formattedItems.length === 0,
+      };
+      setIsRecoveringSelectedOrder(selectedOrderHydrationRef.current.waitingForItems);
       setCurrentItems(formattedItems);
 
       if (order.customerId) {
@@ -3157,6 +3411,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       }
 
       setOrderType(order.orderType || 'dine_in');
+      setReservationDeliveryDate(order.deliveryDate || getLocalDateString());
       if (order.orderType === 'delivery') {
         setDeliveryType(order.deliveryType || 'self');
         setDeliveryFee(order.deliveryFee || 0);
@@ -3167,6 +3422,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       setTaxEnabled(false);
 
       setViewMode('order');
+      recoverSelectedReservationOrder(order, true);
       return;
     }
 
@@ -3184,22 +3440,16 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
     setSelectedTableId(table ? table.id : null);
     setSelectedOrderId(order.id);
 
-    const formattedItems: OrderItem[] = (order.items || []).map((item: any, index: number) => ({
-      id: item.id || `item-${index}`,
-      menuItemId: item.menuItemId || '',
-      name: item.name,
-      quantity: item.quantity,
-      price: item.price,
-      subtotal: item.quantity * item.price,
-      type: item.type || (item.stockItemId ? 'direct' : 'dish'),
-      stockItemId: item.stockItemId,
-      ingredients: item.ingredients || [],
-      sentToKitchen: item.sentToKitchen || false,
-      sentQuantity: item.sentQuantity || 0
-    }));
+    const formattedItems = formatOrderItemsForEditor(order);
+    selectedOrderHydrationRef.current = {
+      orderId: order.id,
+      waitingForItems: order.orderType === 'reservation' && formattedItems.length === 0,
+    };
+    setIsRecoveringSelectedOrder(selectedOrderHydrationRef.current.waitingForItems);
 
     setCurrentItems(formattedItems);
     setOrderType(order.orderType || 'dine_in');
+    setReservationDeliveryDate(order.deliveryDate || getLocalDateString());
     setDeliveryType(order.deliveryType || 'self');
     setDeliveryFee(order.orderType === 'delivery' ? (order.deliveryFee || 0) : 0);
     setServiceFeeEnabled(false);
@@ -3208,7 +3458,13 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
     setCashUSD('');
     setCardNIO('');
     setCardUSD('');
+    if (order.customerId) {
+      setSelectedCustomer(customers.find(customer => customer.id === order.customerId) || null);
+    } else {
+      setSelectedCustomer(null);
+    }
     setViewMode('order');
+    recoverSelectedReservationOrder(order);
   };
 
   const handleTableDragStart = (e: React.DragEvent, tableId: string) => {
@@ -3815,6 +4071,20 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                             </div>
                           )}
 
+                          {displayOrderType === 'reservation' && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.35rem' }}>
+                              <label htmlFor="reservation-delivery-date" style={{ fontWeight: 700 }}>{t('pos.reservation.deliveryDate')}:</label>
+                              <input
+                                id="reservation-delivery-date"
+                                type="date"
+                                value={reservationDeliveryDate}
+                                disabled={currentOrder?.status === 'completed' || currentOrder?.status === 'cancelled'}
+                                onChange={event => handleReservationDeliveryDateChange(event.target.value)}
+                                style={{ minWidth: 0, padding: '0.28rem 0.4rem', border: '1px solid #cbd5e1', borderRadius: '0.35rem', fontWeight: 700 }}
+                              />
+                            </div>
+                          )}
+
                           {selectedTableId && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                               <span>{t('pos.receipt.table')}:</span>
@@ -4060,7 +4330,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   {!isReadOnly && (
                     <>
                       <button
-                        onClick={handleSendToKitchen}
+                        onClick={orderType === 'reservation' && !currentOrder ? handleConfirmReservation : handleSendToKitchen}
                         disabled={!hasUnsentItems || isSendingToKitchen}
                         style={{
                           flex: 1,
@@ -4074,11 +4344,11 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                           fontSize: '0.8rem',
                           opacity: hasUnsentItems && !isSendingToKitchen ? 1 : 0.6
                         }}
-                        title={isSendingToKitchen ? t('pos.order.processing') : (hasUnsentItems ? t('pos.order.confirmAndSend') : t('pos.order.allConfirmed'))}
+                        title={isSendingToKitchen ? t('pos.order.processing') : (orderType === 'reservation' && !currentOrder ? t('pos.reservation.confirm') : (hasUnsentItems ? t('pos.order.confirmAndSend') : t('pos.order.allConfirmed')))}
                       >
-                        ✅ {t('pos.order.confirm')}
+                        ✅ {orderType === 'reservation' && !currentOrder ? t('pos.reservation.confirm') : t('pos.order.confirm')}
                       </button>
-                      {currentItems.length > 0 && (
+                      {currentItems.length > 0 && orderType !== 'reservation' && (
                         <button
                           onClick={handleHoldOrder}
                           style={{
@@ -4157,7 +4427,9 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 fontSize: '0.875rem',
                 color: '#9ca3af'
               }}>
-                <div style={{ fontWeight: 700, color: '#6b7280' }}>{t('pos.order.empty')}</div>
+                <div style={{ fontWeight: 700, color: '#6b7280' }}>
+                  {isRecoveringSelectedOrder ? t('pos.order.loadingDetails') : t('pos.order.empty')}
+                </div>
                 <button
                   onClick={returnToOverviewFromOrder}
                   style={{
@@ -4487,16 +4759,16 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
 
                     <button
                       onClick={handleCompletePayment}
-                      disabled={isProcessingPayment || paidAmount < remainingAmount || currentItems.length === 0}
+                      disabled={isProcessingPayment || !canSubmitPayment}
                       style={{
                         flex: 2,
                         padding: '0.75rem',
-                        backgroundColor: !isProcessingPayment && paidAmount >= remainingAmount && currentItems.length > 0 ? '#10b981' : '#d1d5db',
+                        backgroundColor: !isProcessingPayment && canSubmitPayment ? '#10b981' : '#d1d5db',
                         color: 'white',
                         border: 'none',
                         borderRadius: '0.25rem',
                         fontWeight: '600',
-                        cursor: !isProcessingPayment && paidAmount >= remainingAmount && currentItems.length > 0 ? 'pointer' : 'not-allowed',
+                        cursor: !isProcessingPayment && canSubmitPayment ? 'pointer' : 'not-allowed',
                         fontSize: '0.95rem'
                       }}
                     >
@@ -4979,7 +5251,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   {t('pos.common.all')}
                 </button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.45rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.45rem' }}>
                 <button
                   onClick={() => setOrderTypeFilter('dine_in')}
                   style={{
@@ -5028,7 +5300,38 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 >
                   {formatPosOrderType('delivery')}
                 </button>
+                <button
+                  onClick={() => setOrderTypeFilter('reservation')}
+                  style={{
+                    flex: 1,
+                    padding: '0.55rem 0.35rem',
+                    backgroundColor: orderTypeFilter === 'reservation' ? '#db2777' : '#f8fafc',
+                    color: orderTypeFilter === 'reservation' ? 'white' : '#334155',
+                    border: orderTypeFilter === 'reservation' ? '1px solid #db2777' : '1px solid #cbd5e1',
+                    borderRadius: '0.5rem',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem'
+                  }}
+                >
+                  {formatPosOrderType('reservation')}
+                </button>
               </div>
+
+              {orderTypeFilter === 'reservation' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', marginTop: '0.7rem' }}>
+                  <label htmlFor="reservation-date-filter" style={{ fontSize: '0.78rem', color: colors.textSecondary, fontWeight: 700 }}>
+                    {t('pos.reservation.deliveryDate')}
+                  </label>
+                  <input
+                    id="reservation-date-filter"
+                    type="date"
+                    value={reservationDateFilter}
+                    onChange={event => setReservationDateFilter(event.target.value)}
+                    style={{ flex: 1, minWidth: 0, padding: '0.48rem 0.55rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', fontWeight: 700 }}
+                  />
+                </div>
+              )}
 
               <div style={{ ...posMutedPanelStyle, marginTop: '0.85rem', padding: '0.85rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -5044,7 +5347,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.orders.inKitchen')}:</span>
                   <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#3b82f6' }}>
-                    {filteredOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length}
+                    {filteredOrders.filter(o => o.status === 'preparing' || (o.status === 'confirmed' && o.orderType !== 'reservation')).length}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
@@ -5059,7 +5362,8 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 onClick={() => {
                   const newOrderType = orderTypeFilter === 'all' ? 'dine_in' : orderTypeFilter;
                   beginNewOrderIntent();
-                  setOrderType(newOrderType as 'dine_in' | 'takeout' | 'delivery');
+                  setOrderType(newOrderType as PosOrderType);
+                  setReservationDeliveryDate(newOrderType === 'reservation' ? reservationDateFilter : getLocalDateString());
                   setCurrentItems([]);
                   setSelectedOrderId(null);
                   setSelectedTableId(null);
@@ -5148,10 +5452,27 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       ) : order.orderType === 'takeout' ? (
                         // Takeout shows only takeout status.
                         <>{formatPosOrderType('takeout')}</>
+                      ) : order.orderType === 'reservation' ? (
+                        <>{formatPosOrderType('reservation')}</>
                       ) : (
                         <>{formatPosOrderType('delivery')}</>
                       )}
                     </div>
+                    {order.orderType === 'reservation' && order.deliveryDate && (
+                      <div style={{
+                        fontSize: '0.8rem',
+                        color: isOpenOverdueReservation(order) ? '#b91c1c' : '#9d174d',
+                        backgroundColor: isOpenOverdueReservation(order) ? '#fef2f2' : '#fdf2f8',
+                        border: `1px solid ${isOpenOverdueReservation(order) ? '#fecaca' : '#fbcfe8'}`,
+                        padding: '0.32rem 0.5rem',
+                        borderRadius: '0.45rem',
+                        marginBottom: '0.4rem',
+                        fontWeight: 800,
+                      }}>
+                        📅 {t('pos.reservation.deliveryDate')}: {order.deliveryDate}
+                        {isOpenOverdueReservation(order) ? ` · ${t('pos.reservation.overdue')}` : ''}
+                      </div>
+                    )}
                     {finalizingOrderIds.has(order.id) && order.status !== 'completed' && (
                       <div style={{
                         padding: '0.45rem 0.6rem',
@@ -5183,7 +5504,12 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                             return;
                           }
 
-                          if (window.confirm(`${order.orderType === 'takeout' ? t('pos.orders.completeTakeout') : t('pos.orders.completeDelivery')}\n\n${t('pos.confirm.completeOrder')}`)) {
+                          const completeLabel = order.orderType === 'takeout'
+                            ? t('pos.orders.completeTakeout')
+                            : order.orderType === 'reservation'
+                              ? t('pos.reservation.complete')
+                              : t('pos.orders.completeDelivery');
+                          if (window.confirm(`${completeLabel}\n\n${t('pos.confirm.completeOrder')}`)) {
                             setCompletingOrderIds(prev => {
                               const next = new Set(prev);
                               next.add(order.id);
@@ -5227,7 +5553,11 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                         {finalizingOrderIds.has(order.id) ? t('pos.orders.completing') :
                           completingOrderIds.has(order.id) ? t('pos.common.processing') :
                           order.paymentStatus === 'paid' || order.status === 'served'
-                          ? (order.orderType === 'takeout' ? `✅ ${t('pos.orders.completeTakeout')}` : `✅ ${t('pos.orders.completeDelivery')}`)
+                          ? (order.orderType === 'takeout'
+                            ? `✅ ${t('pos.orders.completeTakeout')}`
+                            : order.orderType === 'reservation'
+                              ? `✅ ${t('pos.reservation.complete')}`
+                              : `✅ ${t('pos.orders.completeDelivery')}`)
                           : `💳 ${t('pos.orders.payBeforeComplete')}`}
                       </button>
                     )}

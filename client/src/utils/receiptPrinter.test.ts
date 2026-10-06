@@ -23,6 +23,33 @@ const stripReceiptControls = (value: string) => value
   .replace(/\x1D!\x00/g, '');
 
 describe('receipt printer helpers', () => {
+  test('prints reservation delivery date on customer and kitchen tickets', () => {
+    const profile = buildStoreReceiptProfile({ receiptName: 'Restaurant POS' });
+    const shared = {
+      storeProfile: profile,
+      orderNumber: '1006001',
+      orderTypeText: 'Reserva',
+      deliveryDateText: '2026-10-08',
+      createdAt: new Date('2026-10-06T10:00:00-06:00'),
+      items: [{ name: 'Arroz chino', quantity: 1, price: 350, subtotal: 350 }],
+      totals: { consumo: 350, discount: 0, subtotal: 350, tax: 0, serviceFee: 0, total: 350 },
+      paymentLines: [],
+      widthMm: 80,
+    };
+
+    expect(buildThermalReceiptHtml(shared)).toContain('Fecha de entrega: 2026-10-08');
+    expect(buildThermalReceiptText(shared)).toContain('Fecha de entrega: 2026-10-08');
+    expect(buildKitchenTicketPayload({
+      storeId: 'store_1',
+      orderNumber: shared.orderNumber,
+      orderTypeText: shared.orderTypeText,
+      deliveryDateText: shared.deliveryDateText,
+      createdAt: shared.createdAt,
+      items: shared.items,
+      widthMm: 80,
+    }).text).toContain('Fecha de entrega: 2026-10-08');
+  });
+
   test('builds an 80mm receipt with store phone and address', () => {
     const profile = buildStoreReceiptProfile({
       id: 'store_1',

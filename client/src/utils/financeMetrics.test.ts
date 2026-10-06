@@ -10,6 +10,8 @@ import {
   getOrderCollectedAmount,
   getOrderFinancialDateKey,
   getOrderPaymentBreakdown,
+  getReservationCashFlowForDate,
+  getReservationPrepaymentAmountForDate,
   isPurchaseRelatedExpense,
   sumExpensesByKind,
 } from './financeMetrics';
@@ -181,6 +183,7 @@ describe('finance metrics helpers', () => {
       dineInOrders: 1,
       takeoutOrders: 1,
       deliveryOrders: 0,
+      reservationOrders: 0,
       cancelledOrders: 1,
       cancelledItems: 3,
     });
@@ -200,6 +203,66 @@ describe('finance metrics helpers', () => {
       takeoutOrders: 1,
       deliveryOrders: 1,
     });
+  });
+
+  test('recognizes reservation revenue on actual completion date and prepayment on payment date', () => {
+    const reservation = {
+      id: 'reservation-1',
+      orderType: 'reservation',
+      status: 'completed',
+      paymentStatus: 'paid',
+      totalAmount: 500,
+      settledAmount: 500,
+      cashAmount: 300,
+      cardAmount: 200,
+      deliveryDate: '2026-10-05',
+      completedAt: '2026-10-06T14:30:00.000-06:00',
+      lastPaidAt: '2026-10-02T10:00:00.000-06:00',
+      reservationPayments: [{
+        id: 'payment-1',
+        paidAt: '2026-10-02T10:00:00.000-06:00',
+        amount: 500,
+        cashAmount: 300,
+        cardAmount: 200,
+      }],
+    };
+
+    expect(getOrderFinancialDateKey(reservation)).toBe('2026-10-06');
+    expect(getReservationPrepaymentAmountForDate(reservation, '2026-10-02')).toBe(500);
+    expect(getReservationPrepaymentAmountForDate(reservation, '2026-10-06')).toBe(0);
+    expect(getReservationCashFlowForDate(reservation, '2026-10-02')).toEqual({ total: 500, cash: 300, card: 200 });
+    expect(calculateOrderStatusSummary([reservation], '2026-10-06')).toMatchObject({
+      completedOrders: 1,
+      reservationOrders: 1,
+    });
+  });
+
+  test('includes reservation cash prepayment in handover without recognizing early sales', () => {
+    const reservation = {
+      id: 'reservation-2',
+      orderType: 'reservation',
+      status: 'confirmed',
+      paymentStatus: 'paid',
+      totalAmount: 300,
+      settledAmount: 300,
+      cashAmount: 300,
+      cardAmount: 0,
+      reservationPayments: [{
+        id: 'payment-2',
+        paidAt: '2026-10-02T10:00:00.000-06:00',
+        amount: 300,
+        cashAmount: 300,
+        cardAmount: 0,
+      }],
+    };
+
+    expect(getOrderFinancialDateKey(reservation)).toBe('');
+    expect(calculateHandoverDifferenceForDates({
+      dates: ['2026-10-02'],
+      orders: [reservation],
+      expenses: [],
+      handovers: [{ date: '2026-10-02', rawG: 300, createdAt: '2026-10-02T23:00:00.000-06:00' }],
+    })).toBe(0);
   });
 
   test('calculates financial report totals with cash-based handover difference included in profit loss', () => {

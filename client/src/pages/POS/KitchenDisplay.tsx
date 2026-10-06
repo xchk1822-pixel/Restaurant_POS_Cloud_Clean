@@ -16,7 +16,7 @@ interface OrderItem {
 interface KitchenOrder {
   id: string;
   tableNumber: string;
-  type: 'dine_in' | 'takeout' | 'delivery';
+  type: 'dine_in' | 'takeout' | 'delivery' | 'reservation';
   items: OrderItem[];
   total: number;
   status: 'pending' | 'preparing' | 'ready';
@@ -59,7 +59,8 @@ const toKitchenOrders = (allOrders: any[]): KitchenOrder[] => {
     .map(order => {
       const kitchenItems = (order.items || []).filter((item: any) => {
         const itemType = item.type || 'dish';
-        return itemType === 'recipe' || itemType === 'dish';
+        const sentQuantity = Number(item.sentQuantity || 0);
+        return (itemType === 'recipe' || itemType === 'dish') && (item.sentToKitchen === true || sentQuantity > 0);
       });
 
       if (kitchenItems.length === 0) {
@@ -69,7 +70,7 @@ const toKitchenOrders = (allOrders: any[]): KitchenOrder[] => {
       const items = kitchenItems.map((item: any) => ({
         id: item.id,
         name: item.name,
-        quantity: item.quantity,
+        quantity: Number(item.sentQuantity || 0) > 0 ? Number(item.sentQuantity) : item.quantity,
         price: item.price,
         status: getKitchenItemStatus(item),
         notes: item.notes

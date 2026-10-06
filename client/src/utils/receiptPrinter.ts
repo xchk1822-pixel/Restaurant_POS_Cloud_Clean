@@ -313,6 +313,7 @@ export const buildThermalReceiptText = ({
   orderNumber,
   orderTypeText,
   tableNumber,
+  deliveryDateText,
   customerName,
   customerPhone,
   customerAddress,
@@ -327,6 +328,7 @@ export const buildThermalReceiptText = ({
   orderNumber: string;
   orderTypeText: string;
   tableNumber?: string;
+  deliveryDateText?: string;
   customerName?: string;
   customerPhone?: string;
   customerAddress?: string;
@@ -360,6 +362,7 @@ export const buildThermalReceiptText = ({
     divider(lineWidth),
     padColumnsInset(getReceiptDateText(createdAt), emphasize(orderNumber), lineWidth, 4),
     emphasize(`${safeLine(orderTypeText)}${tableNumber ? ` ${safeLine(tableNumber)}` : ''}`),
+    ...(deliveryDateText ? [`Fecha de entrega: ${safeLine(deliveryDateText)}`] : []),
     `Cliente: ${safeLine(customer)}`,
     `Tel: ${safeLine(customerPhone || 'NA')}`,
     `Dir: ${safeLine(customerAddress || 'NA')}`,
@@ -475,6 +478,7 @@ export const buildThermalReceiptHtml = ({
   orderNumber,
   orderTypeText,
   tableNumber,
+  deliveryDateText,
   customerName,
   customerPhone,
   customerAddress,
@@ -489,6 +493,7 @@ export const buildThermalReceiptHtml = ({
   orderNumber: string;
   orderTypeText: string;
   tableNumber?: string;
+  deliveryDateText?: string;
   customerName?: string;
   customerPhone?: string;
   customerAddress?: string;
@@ -560,6 +565,7 @@ export const buildThermalReceiptHtml = ({
     <div class="divider"></div>
     <div class="row receipt-meta"><span>${escapeHtml(dateText)}</span><strong>${escapeHtml(orderNumber)}</strong></div>
     <div class="section-title">${escapeHtml(orderTypeText)}${tableNumber ? ` ${escapeHtml(tableNumber)}` : ''}</div>
+    ${deliveryDateText ? `<div class="section-title">Fecha de entrega: ${escapeHtml(deliveryDateText)}</div>` : ''}
     <div>Cliente: ${escapeHtml(customer)}</div>
     <div>Tel: ${escapeHtml(customerPhone || 'NA')}</div>
     <div>Dir: ${escapeHtml(customerAddress || 'NA')}</div>
@@ -633,6 +639,7 @@ export const buildKitchenTicketPayload = ({
   orderNumber,
   orderTypeText,
   tableNumber,
+  deliveryDateText,
   createdAt,
   items,
   widthMm = 80,
@@ -643,6 +650,7 @@ export const buildKitchenTicketPayload = ({
   orderNumber: string;
   orderTypeText: string;
   tableNumber?: string;
+  deliveryDateText?: string;
   createdAt: Date;
   items: ReceiptItem[];
   widthMm?: number;
@@ -652,6 +660,7 @@ export const buildKitchenTicketPayload = ({
   const lines = [
     '******** COCINA ********',
     `${orderTypeText}${tableNumber ? ` ${tableNumber}` : ''}`,
+    ...(deliveryDateText ? [`Fecha de entrega: ${deliveryDateText}`] : []),
     `Pedido: ${orderNumber}`,
     getDateText(createdAt),
     '------------------------',

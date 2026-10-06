@@ -10,7 +10,7 @@ describe('order creation idempotency integration', () => {
     const source = readSource(path.join('pages', 'POS', 'POS.tsx'));
 
     expect(source).not.toContain('generateOrderId()');
-    expect(source.match(/creationIntentId:\s*intent\.id/g)).toHaveLength(4);
+    expect(source.match(/creationIntentId:\s*intent\.id/g)).toHaveLength(5);
     expect(source).toContain('beginNewOrderIntent();');
     expect(source).toContain('getOrCreateOrderNumber(generateOrderNumber)');
   });

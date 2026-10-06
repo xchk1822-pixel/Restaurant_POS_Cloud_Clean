@@ -223,7 +223,7 @@ const OwnerDashboard: React.FC = () => {
 
       for (const store of activeStores) {
         const [storeOrders, storeExpenses, storePurchases, storeCreditPurchases] = await Promise.all([
-          smartGetPosOrdersByActivityDateRange(rangeStartDate, rangeEndDate, true, store.id, ['lastPaidAt'], false),
+          smartGetPosOrdersByActivityDateRange(rangeStartDate, rangeEndDate, true, store.id, ['completedAt', 'lastPaidAt'], false),
           smartGetDocumentsByDateRange(`stores/${store.id}/expenses`, 'date', rangeStartDate, rangeEndDate, true),
           smartGetDocumentsByDateRange(`stores/${store.id}/purchase_orders`, 'orderDate', rangeStartDate, rangeEndDate, true),
           smartGetDocumentsWhereEqual(

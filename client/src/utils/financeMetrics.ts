@@ -353,6 +353,12 @@ export const getOrderPaymentBreakdown = (order: any): { cash: number; card: numb
 export const getOrderFinancialDateKey = (order: any): string => {
   if (getOrderCollectedAmount(order) <= 0) return '';
 
+  if (order?.orderType === 'reservation') {
+    if (order?.status !== 'completed') return '';
+    const completedTimestamp = toTimestampMillis(order?.completedAt || order?.clearedAt);
+    return completedTimestamp ? getLocalDateString(new Date(completedTimestamp)) : '';
+  }
+
   const timestamp = toTimestampMillis(
     order?.lastPaidAt ||
     order?.paidAt ||
@@ -365,6 +371,56 @@ export const getOrderFinancialDateKey = (order: any): string => {
   );
 
   return timestamp ? getLocalDateString(new Date(timestamp)) : '';
+};
+
+const getReservationPaymentRecords = (order: any): any[] => {
+  if (Array.isArray(order?.reservationPayments) && order.reservationPayments.length > 0) {
+    return order.reservationPayments;
+  }
+
+  const paidAt = order?.lastPaidAt || order?.paidAt;
+  if (!paidAt || getOrderCollectedAmount(order) <= 0) return [];
+  const breakdown = getOrderPaymentBreakdown(order);
+  return [{
+    id: `legacy-${String(order?.id || '')}`,
+    paidAt,
+    amount: breakdown.cash + breakdown.card,
+    cashAmount: breakdown.cash,
+    cardAmount: breakdown.card,
+  }];
+};
+
+export const getReservationCashFlowForDate = (
+  order: any,
+  date: string
+): { total: number; cash: number; card: number } => {
+  if (!order || order.isDeleted || order.orderType !== 'reservation' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { total: 0, cash: 0, card: 0 };
+  }
+
+  return getReservationPaymentRecords(order).reduce((result, payment) => {
+    const timestamp = toTimestampMillis(payment?.paidAt || payment?.createdAt);
+    if (!timestamp || getLocalDateString(new Date(timestamp)) !== date) return result;
+    const cash = Math.max(toMoneyNumber(payment?.cashAmount), 0);
+    const card = Math.max(toMoneyNumber(payment?.cardAmount), 0);
+    const explicitAmount = Math.max(toMoneyNumber(payment?.amount), 0);
+    const total = explicitAmount > 0 ? explicitAmount : cash + card;
+    return {
+      total: roundMoney(result.total + total),
+      cash: roundMoney(result.cash + cash),
+      card: roundMoney(result.card + card),
+    };
+  }, { total: 0, cash: 0, card: 0 });
+};
+
+export const getReservationPrepaymentAmountForDate = (order: any, date: string): number => {
+  const paymentFlow = getReservationCashFlowForDate(order, date);
+  if (paymentFlow.total <= 0) return 0;
+
+  const completionTimestamp = toTimestampMillis(order?.completedAt || order?.clearedAt);
+  if (!completionTimestamp) return paymentFlow.total;
+  const completionDate = getLocalDateString(new Date(completionTimestamp));
+  return date < completionDate ? paymentFlow.total : 0;
 };
 
 export const calculateHandoverDifferenceForDates = ({
@@ -380,9 +436,17 @@ export const calculateHandoverDifferenceForDates = ({
 }): number => roundMoney(dates.reduce((total, date) => {
   const handoverAmount = getLatestHandoverAmountForDate(handovers, date);
   if (handoverAmount === undefined) return total;
-  const cashPayment = orders
+  const recognizedCashPayment = orders
     .filter(order => getOrderFinancialDateKey(order) === date)
     .reduce((sum, order) => sum + getOrderPaymentBreakdown(order).cash, 0);
+  const recognizedReservationCash = orders
+    .filter(order => order?.orderType === 'reservation' && getOrderFinancialDateKey(order) === date)
+    .reduce((sum, order) => sum + getOrderPaymentBreakdown(order).cash, 0);
+  const reservationCashFlow = orders.reduce(
+    (sum, order) => sum + getReservationCashFlowForDate(order, date).cash,
+    0
+  );
+  const cashPayment = recognizedCashPayment - recognizedReservationCash + reservationCashFlow;
   const dailyExpenses = expenses.filter(expense => getExpenseDateKey(expense) === date);
   const purchaseAmount = dailyExpenses.filter(isPurchaseRelatedExpense).reduce((sum, expense) => sum + toMoneyNumber(expense?.amount), 0);
   const operatingExpenses = dailyExpenses.filter(expense => !isPurchaseRelatedExpense(expense));
@@ -404,6 +468,7 @@ export interface OrderStatusSummary {
   dineInOrders: number;
   takeoutOrders: number;
   deliveryOrders: number;
+  reservationOrders: number;
   cancelledOrders: number;
   cancelledItems: number;
 }
@@ -504,6 +569,8 @@ export const calculateOrderStatusSummary = (orders: any[], date: string): OrderS
         summary.deliveryOrders += 1;
       } else if (orderType === 'takeout') {
         summary.takeoutOrders += 1;
+      } else if (orderType === 'reservation') {
+        summary.reservationOrders += 1;
       } else {
         summary.dineInOrders += 1;
       }
@@ -513,7 +580,7 @@ export const calculateOrderStatusSummary = (orders: any[], date: string): OrderS
     }
     summary.cancelledItems += getCancelledItemCountForDate(order, date);
     return summary;
-  }, { completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, cancelledOrders: 0, cancelledItems: 0 });
+  }, { completedOrders: 0, dineInOrders: 0, takeoutOrders: 0, deliveryOrders: 0, reservationOrders: 0, cancelledOrders: 0, cancelledItems: 0 });
 };
 
 export const getExpenseDateKey = (expense: any): string => {

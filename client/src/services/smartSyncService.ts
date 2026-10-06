@@ -2488,6 +2488,11 @@ export const smartSubscribeToCollection = (
 
 type PosOrderSubscriptionCallback = (data: any[]) => void;
 
+export interface PosReservationSubscriptionMetadata {
+  authoritative: boolean;
+  deletedOrderIds: string[];
+}
+
 interface SharedPosOrderSubscription {
   callbacks: Set<PosOrderSubscriptionCallback>;
   latestData: any[] | null;
@@ -2668,6 +2673,100 @@ export const smartSubscribeToPosOrdersByDatePrefix = (
     }
     console.error('POS current-day order subscription setup failed:', error);
     callback(filterLocalOrders());
+    return () => {};
+  }
+};
+
+export const smartSubscribeToPosReservations = (
+  callback: (data: any[], metadata?: PosReservationSubscriptionMetadata) => void
+) => {
+  const storeId = dataService.getCurrentStoreId();
+  const collectionName = storeId ? `stores/${storeId}/pos_orders` : 'pos_orders';
+  const today = toLocalDateKey(new Date());
+  const filterLocalReservations = () => excludeDeletedRecords(getFromLocalStorage(collectionName))
+    .filter(order => order?.orderType === 'reservation')
+    .filter(order => order?.reservationOpen !== false || order?.reservationClosedDate === today);
+
+  if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED || !storeId) {
+    callback(filterLocalReservations());
+    return () => {};
+  }
+
+  try {
+    const collectionRef = collection(db, 'stores', storeId, 'pos_orders');
+    const openQuery = query(collectionRef, where('reservationOpen', '==', true));
+    const closedTodayQuery = query(collectionRef, where('reservationClosedDate', '==', today));
+    const openRows = new Map<string, any>();
+    const closedRows = new Map<string, any>();
+    let openLoaded = false;
+    let closedLoaded = false;
+    let lastSerialized: string | null = null;
+
+    const notify = () => {
+      const rowsById = new Map<string, any>();
+      openRows.forEach((row, id) => rowsById.set(id, row));
+      closedRows.forEach((row, id) => rowsById.set(id, row));
+      const rows = Array.from(rowsById.values());
+      const activeRows = excludeDeletedRecords(rows);
+      const deletedOrderIds = rows
+        .filter(order => order?.isDeleted)
+        .map(order => String(order?.id || ''))
+        .filter(Boolean);
+      const serialized = JSON.stringify(activeRows);
+      if (serialized === lastSerialized && deletedOrderIds.length === 0) return;
+      lastSerialized = serialized;
+      callback(activeRows, {
+        authoritative: openLoaded && closedLoaded,
+        deletedOrderIds,
+      });
+    };
+
+    const applySnapshot = (target: Map<string, any>, snapshot: any) => {
+      target.clear();
+      snapshot.forEach((snapshotDoc: any) => {
+        const row = normalizeRecordForCollection(
+          'pos_orders',
+          convertTimestampsToLocalTime({ id: snapshotDoc.id, ...snapshotDoc.data() })
+        );
+        target.set(row.id, row);
+      });
+    };
+
+    callback(filterLocalReservations());
+    const unsubscribeOpen = onSnapshot(
+      openQuery,
+      snapshot => {
+        if (snapshot.metadata.fromCache && navigator.onLine) return;
+        applySnapshot(openRows, snapshot);
+        openLoaded = true;
+        notify();
+      },
+      error => {
+        console.error('POS open reservation subscription failed:', error);
+        callback(filterLocalReservations());
+      }
+    );
+    const unsubscribeClosed = onSnapshot(
+      closedTodayQuery,
+      snapshot => {
+        if (snapshot.metadata.fromCache && navigator.onLine) return;
+        applySnapshot(closedRows, snapshot);
+        closedLoaded = true;
+        notify();
+      },
+      error => {
+        console.error('POS closed reservation subscription failed:', error);
+        callback(filterLocalReservations());
+      }
+    );
+
+    return () => {
+      unsubscribeOpen();
+      unsubscribeClosed();
+    };
+  } catch (error) {
+    console.error('POS reservation subscription setup failed:', error);
+    callback(filterLocalReservations());
     return () => {};
   }
 };
