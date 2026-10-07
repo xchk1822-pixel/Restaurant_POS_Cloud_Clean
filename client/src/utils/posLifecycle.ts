@@ -1,3 +1,5 @@
+import { getLocalDateString, toTimestampMillis } from './localTime';
+
 export type PosLifecycleTable = {
   id: string;
   status: 'available' | 'occupied' | 'reserved' | 'needs_cleaning';
@@ -11,6 +13,8 @@ export type PosLifecycleOrder = {
   tableId?: string;
   tableNumber?: string;
   orderType?: string;
+  deliveryDate?: string;
+  reservationClosedDate?: string;
   status?: string;
   paymentStatus?: string;
   totalAmount?: number;
@@ -40,6 +44,26 @@ export type PosLifecycleOrder = {
     stockItemId?: string;
     ingredients?: any[];
   }>;
+};
+
+export const shouldDisplayReservationOnDate = (
+  order: Partial<PosLifecycleOrder>,
+  targetDate: string,
+  today: string
+): boolean => {
+  if (order.orderType !== 'reservation') return false;
+
+  if (order.status === 'completed' || order.status === 'cancelled') {
+    const terminalTimestamp = order.status === 'cancelled'
+      ? toTimestampMillis(order.cancelledAt)
+      : toTimestampMillis(order.completedAt || order.clearedAt);
+    const terminalDate = order.reservationClosedDate || (
+      terminalTimestamp ? getLocalDateString(new Date(terminalTimestamp)) : ''
+    );
+    return terminalDate === targetDate;
+  }
+
+  return order.deliveryDate === targetDate || Boolean(order.deliveryDate && order.deliveryDate < today);
 };
 
 export const normalizeDateForSignature = (value: any): number | string | null => {

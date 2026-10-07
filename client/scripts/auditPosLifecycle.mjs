@@ -117,10 +117,18 @@ const pushIssue = (issues, type, severity, details) => {
   issues.push({ type, severity, ...details });
 };
 
-const auditStore = (store, orders, tables, cutoff) => {
+const auditStore = (store, orders, tables, stockRecords, cutoff) => {
   const issues = [];
   const tablesById = new Map(tables.map(table => [table.id || table.docId, table]));
   const ordersById = new Map(orders.map(order => [order.id || order.docId, order]));
+  const stockEvidenceKeys = new Set();
+  stockRecords
+    .filter(record => record.source === 'pos_sale')
+    .forEach(record => {
+      [record.orderId, record.orderNumber, record.sourceId]
+        .filter(Boolean)
+        .forEach(key => stockEvidenceKeys.add(String(key)));
+    });
   const activeOrders = orders.filter(isEditableActive);
   const activeDineInOrders = activeOrders.filter(order => order.orderType === 'dine_in');
 
@@ -205,8 +213,17 @@ const auditStore = (store, orders, tables, cutoff) => {
       if (activityIsRecent && order.status === 'completed' && !order.completedAt) {
         pushIssue(issues, 'completed_order_missing_completed_at', 'medium', { order: summarizeOrder(order) });
       }
-      if (businessIsRecent && order.status === 'completed' && !order.stockDeducted) {
+      const hasItems = Array.isArray(order.items) && order.items.length > 0;
+      const hasStockEvidence = [
+        order.id,
+        order.orderNumber,
+        order.stockDeductionOperationId,
+        `stock-${order.id || order.docId}`,
+      ].filter(Boolean).some(key => stockEvidenceKeys.has(String(key)));
+      if (businessIsRecent && order.status === 'completed' && hasItems && !order.stockDeducted && !hasStockEvidence) {
         pushIssue(issues, 'completed_order_missing_stock_deduction_flag', 'critical', { order: summarizeOrder(order) });
+      } else if (businessIsRecent && order.status === 'completed' && hasItems && !order.stockDeducted && hasStockEvidence) {
+        pushIssue(issues, 'completed_order_missing_stock_deduction_marker', 'medium', { order: summarizeOrder(order) });
       }
     });
 
@@ -233,11 +250,12 @@ const main = async () => {
   for (const store of stores) {
     const storeId = store.id || store.docId;
     try {
-      const [orders, tables] = await Promise.all([
+      const [orders, tables, stockRecords] = await Promise.all([
         getRows(`stores/${storeId}/pos_orders`),
         getRows(`stores/${storeId}/pos_tables`),
+        getRows(`stores/${storeId}/inventory_stock_records`),
       ]);
-      report.push(auditStore(store, orders, tables, cutoff));
+      report.push(auditStore(store, orders, tables, stockRecords, cutoff));
     } catch (error) {
       report.push({
         storeId,

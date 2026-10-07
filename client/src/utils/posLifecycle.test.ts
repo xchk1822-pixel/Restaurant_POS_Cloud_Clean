@@ -8,6 +8,7 @@ import {
   isProvisionalOrderNumber,
   mergeOrdersByVersion,
   reconcileTableStatusFromOrders,
+  shouldDisplayReservationOnDate,
   type PosLifecycleOrder,
   type PosLifecycleTable,
 } from './posLifecycle';
@@ -43,6 +44,37 @@ const baseTable = (overrides: Partial<PosLifecycleTable> = {}): PosLifecycleTabl
 });
 
 describe('POS lifecycle merge rules', () => {
+  test('terminal reservations appear only on their actual completion or cancellation date', () => {
+    const cancelledReservation = baseOrder({
+      orderType: 'reservation',
+      status: 'cancelled',
+      deliveryDate: '2026-10-10',
+      reservationClosedDate: '2026-10-07',
+      cancelledAt: '2026-10-07T14:00:00-06:00',
+    });
+    const completedReservation = baseOrder({
+      orderType: 'reservation',
+      status: 'completed',
+      deliveryDate: '2026-10-08',
+      completedAt: '2026-10-09T12:00:00-06:00',
+    });
+
+    expect(shouldDisplayReservationOnDate(cancelledReservation, '2026-10-07', '2026-10-07')).toBe(true);
+    expect(shouldDisplayReservationOnDate(cancelledReservation, '2026-10-10', '2026-10-07')).toBe(false);
+    expect(shouldDisplayReservationOnDate(completedReservation, '2026-10-09', '2026-10-09')).toBe(true);
+    expect(shouldDisplayReservationOnDate(completedReservation, '2026-10-08', '2026-10-09')).toBe(false);
+  });
+
+  test('open overdue reservations remain visible until they are completed or cancelled', () => {
+    const overdueReservation = baseOrder({
+      orderType: 'reservation',
+      status: 'confirmed',
+      deliveryDate: '2026-10-05',
+    });
+
+    expect(shouldDisplayReservationOnDate(overdueReservation, '2026-10-07', '2026-10-07')).toBe(true);
+  });
+
   test('offline order numbers are unique provisional values, never formal daily numbers', () => {
     const orderNumber = buildProvisionalOrderNumber('0713', 'TERM9A2B', 4);
 

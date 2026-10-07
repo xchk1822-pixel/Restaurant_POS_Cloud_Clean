@@ -37,7 +37,7 @@ const main = async () => {
 
   await page.locator('input').nth(0).fill(username);
   await page.locator('input').nth(1).fill(password);
-  await page.locator('button').first().click();
+  await page.locator('button[type="submit"]').click();
   await page.waitForURL(/\/pos/, { timeout: 30000 });
   await page.waitForTimeout(5000);
 
@@ -48,8 +48,8 @@ const main = async () => {
 
   const result = {
     url: page.url(),
-    hasMesas: text.includes('Mesas'),
-    hasPedidos: text.includes('Pedidos'),
+    hasTables: text.includes('Mesas') || text.includes('桌台'),
+    hasOrders: text.includes('Pedidos') || text.includes('订单'),
     errorCount: errors.length,
     errors: errors.slice(0, 5),
     bundle,
@@ -58,7 +58,7 @@ const main = async () => {
   console.log(JSON.stringify(result, null, 2));
   await browser.close();
 
-  if (!result.hasMesas || !result.hasPedidos || result.errorCount > 0) {
+  if (!result.hasTables || !result.hasOrders || result.errorCount > 0) {
     process.exit(1);
   }
 };

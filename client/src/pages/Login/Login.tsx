@@ -325,6 +325,7 @@ const Login: React.FC = () => {
               </label>
               <input
                 type="text"
+                autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder={t('login.usernamePlaceholder')}
@@ -348,6 +349,7 @@ const Login: React.FC = () => {
               </label>
               <input
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t('login.passwordPlaceholder')}

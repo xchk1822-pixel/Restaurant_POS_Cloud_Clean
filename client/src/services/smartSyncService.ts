@@ -2678,14 +2678,17 @@ export const smartSubscribeToPosOrdersByDatePrefix = (
 };
 
 export const smartSubscribeToPosReservations = (
-  callback: (data: any[], metadata?: PosReservationSubscriptionMetadata) => void
+  callback: (data: any[], metadata?: PosReservationSubscriptionMetadata) => void,
+  closedDate: string = toLocalDateKey(new Date())
 ) => {
   const storeId = dataService.getCurrentStoreId();
   const collectionName = storeId ? `stores/${storeId}/pos_orders` : 'pos_orders';
-  const today = toLocalDateKey(new Date());
+  const targetClosedDate = /^\d{4}-\d{2}-\d{2}$/.test(closedDate)
+    ? closedDate
+    : toLocalDateKey(new Date());
   const filterLocalReservations = () => excludeDeletedRecords(getFromLocalStorage(collectionName))
     .filter(order => order?.orderType === 'reservation')
-    .filter(order => order?.reservationOpen !== false || order?.reservationClosedDate === today);
+    .filter(order => order?.reservationOpen !== false || order?.reservationClosedDate === targetClosedDate);
 
   if (!db || !FIRESTORE_ENABLED || !REALTIME_SYNC_ENABLED || !storeId) {
     callback(filterLocalReservations());
@@ -2695,7 +2698,7 @@ export const smartSubscribeToPosReservations = (
   try {
     const collectionRef = collection(db, 'stores', storeId, 'pos_orders');
     const openQuery = query(collectionRef, where('reservationOpen', '==', true));
-    const closedTodayQuery = query(collectionRef, where('reservationClosedDate', '==', today));
+    const closedDateQuery = query(collectionRef, where('reservationClosedDate', '==', targetClosedDate));
     const openRows = new Map<string, any>();
     const closedRows = new Map<string, any>();
     let openLoaded = false;
@@ -2747,7 +2750,7 @@ export const smartSubscribeToPosReservations = (
       }
     );
     const unsubscribeClosed = onSnapshot(
-      closedTodayQuery,
+      closedDateQuery,
       snapshot => {
         if (snapshot.metadata.fromCache && navigator.onLine) return;
         applySnapshot(closedRows, snapshot);

@@ -237,7 +237,7 @@ describe('production data safety guards', () => {
       layoutSource.indexOf("path: '/suppliers'")
     );
     expect(layoutSource).not.toContain("path: '/manager/customers'");
-    expect(layoutSource).toContain("item.path === '/customers'");
+    expect(layoutSource).toContain("if (path === '/customers') return 'customers:manage';");
 
     expect(permissionsSource).toContain("'customers:manage'");
     expect(defaultStoreManagerBlock).not.toContain("'manager:customers'");
@@ -671,15 +671,14 @@ describe('production data safety guards', () => {
     expect(source).toContain('const tableCanvasFoodPattern = [');
     expect(source).toContain('backgroundImage: tableCanvasFoodPattern');
     expect(source).not.toContain('data:image/svg+xml');
-    expect(orderPanelBlock).toContain("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'");
-    expect(orderPanelBlock).not.toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'");
+    expect(orderPanelBlock).toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'");
     expect(source).toContain("takeout: t('pos.orderType.takeout')");
     expect(orderPanelBlock).toContain("{formatPosOrderType('takeout')}");
     expect(orderPanelBlock.indexOf("t('pos.orders.title')")).toBeLessThan(
       orderPanelBlock.indexOf("setOrderTypeFilter('all')")
     );
     expect(orderPanelBlock.indexOf("setOrderTypeFilter('all')")).toBeLessThan(
-      orderPanelBlock.indexOf("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'")
+      orderPanelBlock.indexOf("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'")
     );
   });
 
@@ -723,7 +722,7 @@ describe('production data safety guards', () => {
       source.indexOf('const deductStockForOrder')
     );
     const orderClickBlock = source.slice(
-      source.indexOf('const handleOrderClick = (order: any) => {'),
+      source.indexOf('const handleOrderClick = (order: Order) => {'),
       source.indexOf('const handleTableDragStart')
     );
 
@@ -755,11 +754,11 @@ describe('production data safety guards', () => {
       source.indexOf('const handleCompletePayment = async')
     );
 
-    expect(source).toContain("title={isSendingToKitchen ? t('pos.order.processing') : (hasUnsentItems ? t('pos.order.confirmAndSend') : t('pos.order.allConfirmed'))}");
+    expect(source).toContain("title={isSendingToKitchen ? t('pos.order.processing') : (orderType === 'reservation' && !currentOrder ? t('pos.reservation.confirm') : (hasUnsentItems ? t('pos.order.confirmAndSend') : t('pos.order.allConfirmed')))}");
     expect(source).toContain('const sendingToKitchenRef = useRef(false);');
     expect(source).toContain('if (sendingToKitchenRef.current || isSendingToKitchen)');
     expect(source).toContain('disabled={!hasUnsentItems || isSendingToKitchen}');
-    expect(source).toContain("✅ {t('pos.order.confirm')}");
+    expect(source).toContain("✅ {orderType === 'reservation' && !currentOrder ? t('pos.reservation.confirm') : t('pos.order.confirm')}");
     expect(source).not.toContain('纭涓嬪崟锛堝彂閫佸埌鍘ㄦ埧骞舵墸鍑忓簱瀛橈級');
     expect(sendBlock).not.toContain('deductStockForOrder');
     expect(sendBlock).not.toContain('deductStock(');
@@ -806,7 +805,7 @@ describe('production data safety guards', () => {
     expect(snapshotBlock).toContain("{ name: 'inventory_items', setter: setInventoryItems, label: '库存' }");
     expect(deductBlock).toContain("smartGetDocument('menu_items', itemId, true)");
     expect(deductBlock).toContain("smartGetDocument('inventory_items', itemId, true)");
-    expect(deductBlock).toContain("smartGetDocumentsWhereEqual(\n        'fridge_inventory'");
+    expect(deductBlock).toMatch(/smartGetDocumentsWhereEqual\(\s*'fridge_inventory',\s*'itemId'/);
     expect(deductBlock).not.toContain("smartGetDocuments('menu_items', true)");
     expect(deductBlock).not.toContain("smartGetDocuments('inventory_items', true)");
     expect(deductBlock).not.toContain("smartGetDocuments('fridge_inventory', true)");
@@ -923,7 +922,7 @@ describe('production data safety guards', () => {
     expect(posDeductBlock).toContain('completedAt: order.completedAt || new Date()');
     expect(posDeductBlock).not.toContain('completedAt: new Date()');
     expect(deductBlock).toContain('if (!incrementResult?.duplicate) return false');
-    expect(deductBlock).toContain("'sourceId',\n        sourceOperationId");
+    expect(deductBlock).toMatch(/'sourceId',\s*sourceOperationId/);
     expect(deductBlock).toContain('recoveryAppliedQuantity: 0');
     expect(deductBlock).toContain('beforeStock: null');
     expect(deductBlock).toContain('afterStock: null');
@@ -1381,9 +1380,13 @@ describe('production data safety guards', () => {
     expect(packageSource).toContain('"audit:pos-lifecycle": "node scripts/auditPosLifecycle.mjs"');
     expect(source).toContain("getRows(`stores/${storeId}/pos_orders`)");
     expect(source).toContain("getRows(`stores/${storeId}/pos_tables`)");
+    expect(source).toContain("getRows(`stores/${storeId}/inventory_stock_records`)");
     expect(source).toContain('multiple_active_orders_on_same_table');
     expect(source).toContain('busy_table_points_to_terminal_order');
     expect(source).toContain('completed_order_missing_stock_deduction_flag');
+    expect(source).toContain('completed_order_missing_stock_deduction_marker');
+    expect(source).toContain("record.source === 'pos_sale'");
+    expect(source).toContain('order.status === \'completed\' && hasItems && !order.stockDeducted && !hasStockEvidence');
     expect(source).not.toContain('setDoc(');
     expect(source).not.toContain('updateDoc(');
     expect(source).not.toContain('deleteDoc(');
@@ -1422,6 +1425,11 @@ describe('production data safety guards', () => {
     ].forEach(issueCode => {
       expect(source).toContain(issueCode);
     });
+
+    expect(source).toContain("pushIssue(issues, 'negative_warehouse_stock', 'info'");
+    expect(source).toContain("pushIssue(issues, 'negative_fridge_stock', 'info'");
+    expect(source).not.toContain("pushIssue(issues, 'negative_warehouse_stock', 'critical'");
+    expect(source).not.toContain("pushIssue(issues, 'negative_fridge_stock', 'critical'");
 
     expect(source).not.toContain('setDoc(');
     expect(source).not.toContain('updateDoc(');
@@ -1836,10 +1844,7 @@ describe('production data safety guards', () => {
     const source = fs.readFileSync(posPath, 'utf8');
     const filterStart = source.indexOf('const filterCachedOrdersForStartup = (cachedOrders: Order[]): Order[] => {');
     expect(filterStart).toBeGreaterThan(-1);
-    const filterBlock = source.slice(
-      filterStart,
-      source.indexOf('const generateOrderId = () => {', filterStart)
-    );
+    const filterBlock = source.slice(filterStart, source.indexOf('const [viewMode', filterStart));
 
     expect(filterBlock).toContain('return cachedOrders;');
     expect(filterBlock).not.toContain('return !isOrderFromDatePrefix(order, todayOrderPrefix);');
@@ -1870,6 +1875,46 @@ describe('production data safety guards', () => {
       expect(block).not.toContain('publishOrderImmediately(');
       expect(block).not.toContain('pendingOrderSyncIdsRef.current.add');
     });
+  });
+
+  test('reservation subscription follows the selected closed date instead of leaking today cancellations into every date', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const syncPath = path.join(process.cwd(), 'src/services/smartSyncService.ts');
+    const posSource = fs.readFileSync(posPath, 'utf8');
+    const syncSource = fs.readFileSync(syncPath, 'utf8');
+
+    expect(posSource).toContain('}, reservationDateFilter), [applyIncomingReservationOrders, reservationDateFilter]);');
+    expect(syncSource).toContain("where('reservationClosedDate', '==', targetClosedDate)");
+    expect(syncSource).toContain('order?.reservationClosedDate === targetClosedDate');
+    expect(posSource).toContain('return shouldDisplayReservationOnDate(o, targetDate, today);');
+    expect(posSource).not.toContain('o.reservationClosedDate === today');
+  });
+
+  test('POS quantity input reuses local quantity updates and preserves authorized sent-item reductions', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const quantityInputBlock = source.slice(
+      source.indexOf('const resetQuantityDraft = (itemId: string) => {'),
+      source.indexOf('const handleHoldOrder = async () => {')
+    );
+    const cancelItemBlock = source.slice(
+      source.indexOf('if (itemToDelete) {'),
+      source.indexOf('} else {', source.indexOf('if (itemToDelete) {'))
+    );
+
+    expect(quantityInputBlock).toContain('requestQuantityChange(item, Number(trimmedValue), true);');
+    expect(quantityInputBlock).toContain('handleUpdateQuantity(item.id, nextQuantity);');
+    expect(quantityInputBlock).toContain('if (nextQuantity < sentQuantity) {');
+    expect(quantityInputBlock).toContain("setCancelAction('reduce');");
+    expect(quantityInputBlock).not.toContain('publishOrderImmediately(');
+    expect(cancelItemBlock).toContain('const cancelledQuantity = item.quantity - newQuantity;');
+    expect(cancelItemBlock).toContain('quantity: cancelledQuantity');
+    expect(source).toContain('value={quantityDrafts[item.id] ?? String(item.quantity)}');
+    expect(source).toContain('<span style={{ color: posQuantityColor, fontWeight: 700 }}>{item.quantity}</span>');
+    expect(source).not.toContain('>x{item.quantity} × C$');
+    expect(source).toContain("C${filteredOrders.reduce((sum, o) => sum + getPosOrderSummaryAmount(o), 0).toFixed(2)}");
+    expect(source).toContain("<div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: colors.danger }}>");
+    expect(source).toContain("<span style={{ color: colors.danger, fontWeight: 700 }}>C${order.paidAmount.toFixed(2)}</span>");
   });
 
   test('expense records use explicit single-document cloud writes', () => {
@@ -2825,8 +2870,8 @@ describe('production data safety guards', () => {
     expect(metricsSource).toContain('? roundMoney(toMoneyNumber(handoverAmount) - expectedCashHandover)');
     expect(metricsSource).toContain('const profit = roundMoney(baseProfit + (difference || 0))');
     expect(source).toContain("t('finance.profitFormula')");
-    expect(source).toContain("t('finance.differenceFormula')");
     expect(source).toContain("t('finance.profitWithDifference')");
+    expect(source).toContain("t('finance.reservationPrepayment')");
     expect(source).toContain("t('finance.supplierDebtCurrent')");
     expect(source).not.toContain('const difference = handoverAmount !== undefined ? handoverAmount - profit : undefined');
   });
@@ -2841,8 +2886,8 @@ describe('production data safety guards', () => {
     expect(source).toContain("reportType === 'daily'");
     expect(source).toContain('isDaily ? `');
     expect(source).toContain("t('finance.dailyExpenseDetails')");
-    expect(source).toContain("t('finance.shiftDifference')");
-    expect(source).toContain("t('finance.differenceFormula')");
+    expect(source).toContain("t('finance.difference')");
+    expect(source).toContain("t('finance.reservationPrepayment')");
     expect(source).toContain("t('finance.invoiceOrCategory')");
     expect(source).toContain("t('finance.itemOrDescription')");
     expect(source).toContain('difference-box');
@@ -2924,7 +2969,7 @@ describe('production data safety guards', () => {
       "t('finance.orders')",
       "t('finance.profit')",
       "t('finance.handoverCash')",
-      "t('finance.shiftDifference')",
+      "t('finance.reservationPrepayment')",
       "t('finance.operatingExpense')",
       "t('finance.purchasePayment')",
       "t('finance.supplierDebt')",
@@ -3037,8 +3082,10 @@ describe('production data safety guards', () => {
 
     expect(orderCardBlock).toContain("{order.status === 'cancelled' ? t('pos.orders.cancelledAt') : t('pos.orders.finalAt')}");
     expect(orderCardBlock).toContain("formatOrderTime(order.status === 'cancelled' ? order.cancelledAt : order.completedAt)");
-    expect(orderCardBlock).toContain("{t('pos.orders.cancelledCharged')} C${Number(order.paidAmount || 0).toFixed(2)}");
-    expect(orderCardBlock).toContain("{t('pos.status.cancelled')} C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}");
+    expect(orderCardBlock).toContain("{t('pos.orders.cancelledCharged')} <span");
+    expect(orderCardBlock).toContain("C${Number(order.paidAmount || 0).toFixed(2)}");
+    expect(orderCardBlock).toContain("{t('pos.status.cancelled')} <span");
+    expect(orderCardBlock).toContain("C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}");
     expect(orderCardBlock).toContain("order.status !== 'cancelled' && order.paymentStatus === 'partial'");
     expect(orderCardBlock).not.toContain("{order.paymentStatus === 'partial' && order.paidAmount > 0 && (");
   });
@@ -3202,7 +3249,7 @@ describe('production data safety guards', () => {
     const waiterPath = path.join(process.cwd(), 'src/pages/WaiterInterface/WaiterInterface.tsx');
     const source = fs.readFileSync(waiterPath, 'utf8');
     const sendBlock = source.slice(
-      source.indexOf('const handleSendToKitchen = () => {'),
+      source.indexOf('const handleSendToKitchen = async () => {'),
       source.indexOf('// 返回桌台视图')
     );
 
@@ -3219,7 +3266,7 @@ describe('production data safety guards', () => {
     const syncSource = fs.readFileSync(syncPath, 'utf8');
 
     expect(posSource).toContain('smartGenerateDailyOrderNumber');
-    expect(posSource).toContain('await generateOrderNumber()');
+    expect(posSource).toContain('getOrCreateOrderNumber(generateOrderNumber)');
     expect(posSource).not.toContain('const maxSeq = orders.reduce');
     expect(syncSource).toContain('export const smartGenerateDailyOrderNumber');
     expect(syncSource).toContain("const counterCollectionPath = getStoreCollectionPath('order_counters')");
@@ -3822,7 +3869,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('buildKpis(financialOrders');
     expect(source).toContain('buildSalesRankings(financialOrders');
     expect(source).toContain('buildMonthlySalesCalendar(calendarOrders, calendarMonth)');
-    expect(source).toContain("smartGetPosOrdersByActivityDateRange(orderStartDate, orderEndDate, true, undefined, ['lastPaidAt', 'cancelledAt'], false)");
+    expect(source).toContain("smartGetPosOrdersByActivityDateRange(orderStartDate, orderEndDate, true, undefined, ['completedAt', 'lastPaidAt', 'cancelledAt'], false)");
     expect(source).not.toContain("smartSubscribeToCollection('pos_orders'");
   });
 
@@ -3883,7 +3930,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('calculateFinancialReportTotals({');
     expect(source).toContain('buildDailyExpenseBreakdown(');
     expect(source).toContain('calculateOrderStatusSummary(orders, date)');
-    expect(source).toContain("smartGetPosOrdersByActivityDateRange(cloudRange.startDate, cloudRange.endDate, true, undefined, ['lastPaidAt', 'cancelledAt'], false)");
+    expect(source).toContain("smartGetPosOrdersByActivityDateRange(cloudRange.startDate, cloudRange.endDate, true, undefined, ['completedAt', 'lastPaidAt', 'cancelledAt'], false)");
     expect(source).toContain('const handlePrint = () => {');
     expect(source).toContain('dailyExpenseBreakdown.groups.map');
     expect(source).toContain('group.details.map');
@@ -4075,7 +4122,7 @@ describe('production data safety guards', () => {
       source.indexOf('useEffect(() => {', source.indexOf('const refreshOwnerData = useCallback(async'))
     );
 
-    expect(refreshBlock).toContain("smartGetPosOrdersByActivityDateRange(rangeStartDate, rangeEndDate, true, store.id, ['lastPaidAt'], false)");
+    expect(refreshBlock).toContain("smartGetPosOrdersByActivityDateRange(rangeStartDate, rangeEndDate, true, store.id, ['completedAt', 'lastPaidAt'], false)");
     expect(refreshBlock).toContain("smartGetDocumentsByDateRange(`stores/${store.id}/expenses`, 'date', rangeStartDate, rangeEndDate, true)");
     expect(refreshBlock).toContain("smartGetDocumentsByDateRange(`stores/${store.id}/purchase_orders`, 'orderDate', rangeStartDate, rangeEndDate, true)");
     expect(refreshBlock).toContain('smartGetDocumentsWhereEqual(');
@@ -4419,7 +4466,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('const initialStockRecordDate = getManaguaDateKey()');
     expect(source).toContain('const [stockRecordStartDate, setStockRecordStartDate] = useState(initialStockRecordDate)');
     expect(source).toContain('const [stockRecordEndDate, setStockRecordEndDate] = useState(initialStockRecordDate)');
-    expect(source).toContain("smartGetDocumentsByDateRange(\n        'inventory_stock_records',\n        'createdAtMs'");
+    expect(source).toMatch(/smartGetDocumentsByDateRange\(\s*'inventory_stock_records',\s*'createdAtMs'/);
     expect(source).toContain("'number-timestamp'");
     expect(source).toContain("aria-label={t('inventory.record.startDate')}");
     expect(source).toContain("aria-label={t('inventory.record.endDate')}");
@@ -4458,7 +4505,7 @@ describe('production data safety guards', () => {
     const source = fs.readFileSync(servicePath, 'utf8');
 
     expect(source).toContain('export const smartRestoreOrderStockFromLedger = async ({');
-    expect(source).toContain("'inventory_stock_records',\n    'sourceId',\n    deductionOperationId");
+    expect(source).toMatch(/'inventory_stock_records',\s*'sourceId',\s*deductionOperationId/);
     expect(source).toContain("record?.source === 'pos_sale' && Number(record?.signedQuantity) < 0");
     expect(source).toContain('syncOperationId: `${restoreOperationId}-${originalRecord.id}`');
     expect(source).toContain('id: `${restoreOperationId}-${originalRecord.id}`');
@@ -4473,7 +4520,8 @@ describe('production data safety guards', () => {
     expect(source).toContain("fieldType: 'date-string' | 'timestamp' | 'number-timestamp' = 'date-string'");
     expect(source).toContain("fieldType === 'number-timestamp'");
     expect(source).toContain('new Date(`${startDate}T00:00:00-06:00`).getTime()');
-    expect(source).toContain('new Date(`${addDaysToDateKey(endDate, 1)}T00:00:00-06:00`).getTime()');
+    expect(source).toContain('const nextDate = addDaysToDateKey(endDate, 1);');
+    expect(source).toContain('new Date(`${nextDate}T00:00:00-06:00`).getTime()');
   });
 
   test('inventory stock records do not show legacy hardcoded demo rows', () => {
@@ -4837,7 +4885,7 @@ describe('production data safety guards', () => {
     const auditSource = fs.readFileSync(auditPath, 'utf8');
     const rules = fs.readFileSync(rulesPath, 'utf8');
 
-    expect(inventorySource).toContain("smartGetDocumentsByDateRange(\n        'inventory_stock_records',\n        'createdAtMs'");
+    expect(inventorySource).toMatch(/smartGetDocumentsByDateRange\(\s*'inventory_stock_records',\s*'createdAtMs'/);
     expect(inventorySource).toContain("'number-timestamp'");
     expect(inventorySource).toContain('setStockRecords(sortedRecords)');
     expect(warehouseSource).toContain("smartAddDocument('inventory_stock_records', record)");
@@ -5193,7 +5241,8 @@ describe('production data safety guards', () => {
     expect(printBlock).toContain('r.date >= printStartDate && r.date <= printEndDate');
     expect(printBlock).toContain('@page { size: A4 portrait; margin: 9mm; }');
     expect(printBlock).toContain('class="print-sheet"');
-    expect(printBlock).toContain('grid-template-columns: repeat(6, 1fr)');
+    expect(printBlock).toContain('grid-template-columns: repeat(7, 1fr)');
+    expect(printBlock).toContain('Horas extra');
     expect(printBlock).toContain('Una hoja A4 imprime maximo 15 dias');
     expect(printBlock).toContain('Ultimos ${printableRecords.length} dias / Total ${employeeRecords.length}');
     expect(printBlock).toContain('Registro de Asistencia');
@@ -5214,8 +5263,8 @@ describe('production data safety guards', () => {
 
     expect(layoutSource).toContain("{ path: '/employees/attendance', icon: 'AT', labelKey: 'nav.employees.attendance' }");
     expect(layoutSource).not.toContain("label: '考勤管理'");
-    expect(source).toContain("t('attendance.tab.mark')");
-    expect(source).toContain("t('attendance.tab.records')");
+    expect(source).toContain("t('attendance.markTitle')");
+    expect(source).toContain("t('attendance.recordsTitle')");
     expect(source).toContain("t('attendance.markIn')");
     expect(source).toContain("t('attendance.markedIn')");
     expect(source).toContain("t('attendance.markOut')");
@@ -5644,7 +5693,8 @@ describe('production data safety guards', () => {
     expect(authSource).toContain('persistAuthenticatedSession(updatedUser)');
     expect(appSource).toContain('STORE_SESSION_CHANGED_EVENT');
     expect(appSource).toContain('window.addEventListener(STORE_SESSION_CHANGED_EVENT, checkUserAndReload)');
-    expect(appSource).toContain('setOrders(Array.isArray(ordersData) ? ordersData : [])');
+    expect(appSource).toContain("reloadStoreCache<Order>('pos_orders', setOrders)");
+    expect(appSource).toContain('shouldApplyStoreCacheReload(event?.type, hasStoredSnapshot)');
     expect(appSource).toContain('setOrders([])');
     expect(isolationSource).not.toContain("localStorage.clear()");
     expect(isolationSource).not.toContain("removeItem(`store_");
@@ -5788,7 +5838,7 @@ describe('production data safety guards', () => {
     );
     expect(deductStockBlock).toContain("smartGetDocument('menu_items', itemId, true)");
     expect(deductStockBlock).toContain("smartGetDocument('inventory_items', itemId, true)");
-    expect(deductStockBlock).toContain("smartGetDocumentsWhereEqual(\n        'fridge_inventory'");
+    expect(deductStockBlock).toMatch(/smartGetDocumentsWhereEqual\(\s*'fridge_inventory',\s*'itemId'/);
     expect(deductStockBlock).not.toContain("smartGetDocuments('menu_items', true)");
     expect(deductStockBlock).not.toContain("smartGetDocuments('inventory_items', true)");
     expect(deductStockBlock).not.toContain("smartGetDocuments('fridge_inventory', true)");
@@ -5801,8 +5851,8 @@ describe('production data safety guards', () => {
     const recordsIndex = source.indexOf("t('inventory.tab.records')");
     const reorderIndex = source.indexOf("t('inventory.tab.reorder')");
 
-    expect(purchaseIndex).toBeGreaterThan(-1);
-    expect(recordsIndex).toBeGreaterThan(purchaseIndex);
+    expect(purchaseIndex).toBe(-1);
+    expect(recordsIndex).toBeGreaterThan(-1);
     expect(reorderIndex).toBeGreaterThan(recordsIndex);
   });
 

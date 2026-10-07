@@ -265,6 +265,29 @@ describe('finance metrics helpers', () => {
     })).toBe(0);
   });
 
+  test('cancelled reservation refunds remove prepayment and reservation cash flow', () => {
+    const cancelledReservation = {
+      id: 'reservation-refunded',
+      orderType: 'reservation',
+      status: 'cancelled',
+      paymentStatus: 'paid',
+      totalAmount: 400,
+      settledAmount: 400,
+      cancelledAt: '2026-10-07T13:00:00.000-06:00',
+      reservationPayments: [{
+        id: 'payment-refunded',
+        paidAt: '2026-10-06T10:00:00.000-06:00',
+        amount: 400,
+        cashAmount: 250,
+        cardAmount: 150,
+      }],
+    };
+
+    expect(getReservationCashFlowForDate(cancelledReservation, '2026-10-06')).toEqual({ total: 0, cash: 0, card: 0 });
+    expect(getReservationPrepaymentAmountForDate(cancelledReservation, '2026-10-06')).toBe(0);
+    expect(getOrderFinancialDateKey(cancelledReservation)).toBe('');
+  });
+
   test('calculates financial report totals with cash-based handover difference included in profit loss', () => {
     expect(calculateFinancialReportTotals({
       cashPayment: 100,

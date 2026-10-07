@@ -132,13 +132,13 @@ const auditStore = ({
 
   inventoryItems.forEach(item => {
     if (toNumber(item.currentStock) < 0) {
-      pushIssue(issues, 'negative_warehouse_stock', 'critical', { item: summarizeItem(item) });
+      pushIssue(issues, 'negative_warehouse_stock', 'info', { item: summarizeItem(item) });
     }
   });
 
   fridgeInventory.forEach(record => {
     if (toNumber(record.quantity) < 0) {
-      pushIssue(issues, 'negative_fridge_stock', 'critical', { record: summarizeFridgeRecord(record) });
+      pushIssue(issues, 'negative_fridge_stock', 'info', { record: summarizeFridgeRecord(record) });
     }
     if (!itemsById.has(record.itemId)) {
       pushIssue(issues, 'fridge_record_missing_item', 'high', { record: summarizeFridgeRecord(record) });
@@ -207,6 +207,7 @@ const auditStore = ({
     criticalCount: issues.filter(issue => issue.severity === 'critical').length,
     highCount: issues.filter(issue => issue.severity === 'high').length,
     mediumCount: issues.filter(issue => issue.severity === 'medium').length,
+    infoCount: issues.filter(issue => issue.severity === 'info').length,
     issues: issues.slice(0, 120),
   };
 };
@@ -269,8 +270,9 @@ const main = async () => {
     acc.criticalCount += storeReport.criticalCount || 0;
     acc.highCount += storeReport.highCount || 0;
     acc.mediumCount += storeReport.mediumCount || 0;
+    acc.infoCount += storeReport.infoCount || 0;
     return acc;
-  }, { issueCount: 0, criticalCount: 0, highCount: 0, mediumCount: 0 });
+  }, { issueCount: 0, criticalCount: 0, highCount: 0, mediumCount: 0, infoCount: 0 });
 
   console.log(JSON.stringify({
     generatedAt: new Date().toISOString(),

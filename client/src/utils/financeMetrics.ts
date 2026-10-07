@@ -394,7 +394,7 @@ export const getReservationCashFlowForDate = (
   order: any,
   date: string
 ): { total: number; cash: number; card: number } => {
-  if (!order || order.isDeleted || order.orderType !== 'reservation' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (!order || order.isDeleted || order.status === 'cancelled' || order.orderType !== 'reservation' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { total: 0, cash: 0, card: 0 };
   }
 

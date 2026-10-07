@@ -35,6 +35,9 @@ const STORE_COLLECTIONS = [
   'customers',
   'customer_deletions',
   'points_transactions',
+  'customer_rewards',
+  'customer_promotion_settings',
+  'customer_promotion_counters',
   'exchange_rate',
   'pos_cancel_records',
 ];

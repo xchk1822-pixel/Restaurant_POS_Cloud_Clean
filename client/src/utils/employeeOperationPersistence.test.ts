@@ -6,9 +6,12 @@ describe('employee operation persistence', () => {
     const rules = fs.readFileSync(path.join(process.cwd(), '../firestore.rules'), 'utf8');
 
     expect(rules).toContain('function hasStorePermission(storeId, permissionId)');
-    expect(rules).toContain("allow write: if canManageStore(storeId) || hasStorePermission(storeId, 'employees:attendance');");
-    expect(rules).toContain("allow write: if canManageStore(storeId) || hasStorePermission(storeId, 'manager:expenses');");
-    expect(rules).toContain("allow write: if canManageStore(storeId) || hasStorePermission(storeId, 'manager:handover');");
+    expect(rules).toContain('function canManageAttendance(storeId)');
+    expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:attendance', 'employees')");
+    expect(rules).toContain('allow write: if canManageAttendance(storeId) || canManageEmployeeSalaries(storeId);');
+    expect(rules).toContain('function canManageExpenses(storeId)');
+    expect(rules).toContain("hasStorePermissionOrParent(storeId, 'manager:expenses', 'manager')");
+    expect(rules).toContain("hasStorePermissionOrParent(storeId, 'manager:handover', 'manager')");
   });
 
   test('authenticated startup retries store pending writes', () => {

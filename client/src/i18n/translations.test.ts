@@ -103,7 +103,7 @@ describe('interface translations', () => {
     expect(translate('es-NI', 'employee.position.cashier')).toBe('Cajero');
     expect(translate('es-NI', 'employee.position.waiter')).toBe('Mesero');
     expect(translate('es-NI', 'employee.department.front')).toBe('Salón');
-    expect(translate('es-NI', 'employee.dailySalary')).toBe('Salario diario');
+    expect(translate('es-NI', 'employee.dailySalary')).toBe('Salario mensual');
     expect(translate('es-NI', 'employees.title')).toBe('Gestión de personal');
   });
 

@@ -18,6 +18,7 @@ import {
   isEditableActiveOrder,
   mergeOrdersByVersion,
   reconcileTableStatusFromOrders,
+  shouldDisplayReservationOnDate,
 } from '../../utils/posLifecycle';
 import {
   applyPrinterTarget,
@@ -612,6 +613,12 @@ const posMutedPanelStyle: React.CSSProperties = {
   borderRadius: radii.md,
 };
 
+const posQuantityColor = '#7b1fa2';
+const posMoneyInputStyle: React.CSSProperties = {
+  color: colors.danger,
+  fontWeight: 700,
+};
+
 const POS: React.FC = () => {
   const { deductStock, setOrders: setAppOrders } = useAppContext();
 
@@ -926,6 +933,7 @@ const POS: React.FC = () => {
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
 
   const [currentItems, setCurrentItems] = useState<OrderItem[]>([]);
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const selectedOrderHydrationRef = useRef({ orderId: '', waitingForItems: false });
   const [isRecoveringSelectedOrder, setIsRecoveringSelectedOrder] = useState(false);
 
@@ -934,6 +942,7 @@ const POS: React.FC = () => {
   const [cancelReason, setCancelReason] = useState('');
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [cancelAction, setCancelAction] = useState<'delete' | 'reduce' | 'add'>('delete');
+  const [pendingQuantityTarget, setPendingQuantityTarget] = useState<number | null>(null);
   const managerAuthorizationPasswords = ['admin123', '123456'];
   const [cancelRecords, setCancelRecords] = useState<CancelRecord[]>([]);
 
@@ -1367,7 +1376,7 @@ const POS: React.FC = () => {
 
   React.useEffect(() => smartSubscribeToPosReservations((data, metadata) => {
     applyIncomingReservationOrders(data as Order[], metadata);
-  }), [applyIncomingReservationOrders]);
+  }, reservationDateFilter), [applyIncomingReservationOrders, reservationDateFilter]);
 
   useEffect(() => {
     const hydration = selectedOrderHydrationRef.current;
@@ -1688,6 +1697,7 @@ const POS: React.FC = () => {
     if (!item) return;
 
     if (item.sentToKitchen && item.quantity <= item.sentQuantity) {
+      setPendingQuantityTarget(null);
       setItemToDelete(itemId);
       setCancelAction('delete');
       setShowCancelModal(true);
@@ -1729,6 +1739,54 @@ const POS: React.FC = () => {
         } : o
       ));
     }
+  };
+
+  const resetQuantityDraft = (itemId: string) => {
+    setQuantityDrafts(previous => {
+      if (!(itemId in previous)) return previous;
+      const next = { ...previous };
+      delete next[itemId];
+      return next;
+    });
+  };
+
+  const requestQuantityChange = (item: OrderItem, nextQuantity: number, confirmRemoval = false) => {
+    if (nextQuantity === item.quantity) {
+      resetQuantityDraft(item.id);
+      return;
+    }
+
+    if (nextQuantity === 0) {
+      if (confirmRemoval && !window.confirm(t('pos.confirm.removeQuantityItem'))) {
+        resetQuantityDraft(item.id);
+        return;
+      }
+      resetQuantityDraft(item.id);
+      handleRemoveItem(item.id);
+      return;
+    }
+
+    const sentQuantity = Number(item.sentQuantity) || 0;
+    if (nextQuantity < sentQuantity) {
+      setPendingQuantityTarget(nextQuantity);
+      setItemToDelete(item.id);
+      setCancelAction('reduce');
+      setShowCancelModal(true);
+      return;
+    }
+
+    resetQuantityDraft(item.id);
+    handleUpdateQuantity(item.id, nextQuantity);
+  };
+
+  const commitQuantityInput = (item: OrderItem, rawValue: string) => {
+    const trimmedValue = rawValue.trim();
+    if (!/^\d{1,3}$/.test(trimmedValue)) {
+      resetQuantityDraft(item.id);
+      return;
+    }
+
+    requestQuantityChange(item, Number(trimmedValue), true);
   };
 
   const handleHoldOrder = async () => {
@@ -2933,13 +2991,16 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       const item = currentItems.find(i => i.id === itemToDelete);
       if (item) {
         if (cancelAction === 'reduce') {
-          const newQuantity = item.quantity - 1;
+          const newQuantity = pendingQuantityTarget === null
+            ? item.quantity - 1
+            : Math.max(1, Math.min(pendingQuantityTarget, item.quantity - 1));
+          const cancelledQuantity = item.quantity - newQuantity;
 
           const cancelRecord: CancelRecord = {
             id: `cancel-${Date.now()}`,
             itemId: item.id,
             itemName: item.name,
-            quantity: 1,
+            quantity: cancelledQuantity,
             reason: cancelReason,
             cancelledBy: '店长',
             cancelledAt: new Date(),
@@ -3013,6 +3074,8 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
       setCancelPassword('');
       setCancelReason('');
       setCancelAction('delete');
+      resetQuantityDraft(itemToDelete);
+      setPendingQuantityTarget(null);
     } else {
       let tableIdToRelease = selectedTableId;
 
@@ -3293,7 +3356,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
 
     if (o.orderType === 'reservation') {
       const targetDate = orderTypeFilter === 'reservation' ? reservationDateFilter : today;
-      return o.deliveryDate === targetDate || isOpenOverdueReservation(o) || o.reservationClosedDate === today;
+      return shouldDisplayReservationOnDate(o, targetDate, today);
     }
 
     return isTodayPosOrder(o);
@@ -3849,6 +3912,8 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
               setCancelPassword('');
               setCancelReason('');
               setItemToDelete(null);
+              setPendingQuantityTarget(null);
+              setCancelAction('delete');
             }}
             style={{
               padding: '0.75rem 1.5rem',
@@ -4132,7 +4197,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                         </div>
                         {currentOrder.splitBills.map(bill => (
                           <div key={bill.id} style={{ color: '#78350f' }}>
-                      {bill.customerName}: C${bill.subtotal.toFixed(2)} ({bill.paymentStatus === 'paid' ? t('pos.status.paid') : t('pos.status.pending')})
+                            {bill.customerName}: <span style={{ color: colors.danger, fontWeight: 700 }}>C${bill.subtotal.toFixed(2)}</span> ({bill.paymentStatus === 'paid' ? t('pos.status.paid') : t('pos.status.pending')})
                           </div>
                         ))}
                       </div>
@@ -4153,74 +4218,120 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       fontSize: '0.8rem'
                     }}>
                       <div style={{ flex: 2 }}>
-                        <div style={{ fontWeight: '600', color: '#374151' }}>{item.name}</div>
-                        <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>x{item.quantity} × C${item.price.toFixed(2)}</div>
+                        <div style={{ fontWeight: '700', color: colors.blue }}>{item.name}</div>
+                        <div style={{ fontSize: '0.7rem' }}>
+                          <span style={{ color: posQuantityColor, fontWeight: 700 }}>{item.quantity}</span>
+                          <span style={{ color: colors.textSecondary }}> × </span>
+                          <span style={{ color: colors.danger, fontWeight: 700 }}>C${item.price.toFixed(2)}</span>
+                        </div>
                       </div>
-                      <div style={{ flex: 1, textAlign: 'right', fontWeight: '600', color: '#374151', marginRight: '0.5rem' }}>
+                      <div style={{ flex: 1, textAlign: 'right', fontWeight: '700', color: colors.danger, marginRight: '0.5rem' }}>
                         C${item.subtotal.toFixed(2)}
                       </div>
-                      <div style={{ display: 'flex', gap: '0.25rem' }}>
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleUpdateQuantity(item.id, item.quantity + 1);
-                          }}
-                          style={{
-                            width: '24px',
-                            height: '24px',
-                            padding: '0',
-                            backgroundColor: '#10b981',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            fontWeight: 'bold',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                          title={t('pos.receipt.increaseQuantity')}
-                        >
-                          +
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (item.quantity > 1) {
-                              if (item.quantity > item.sentQuantity) {
-                                handleUpdateQuantity(item.id, item.quantity - 1);
-                              } else {
-                                setItemToDelete(item.id);
-                                setCancelAction('reduce');
-                                setShowCancelModal(true);
+                      {!isReadOnly && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem', flexShrink: 0 }}>
+                          <button
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const draftValue = quantityDrafts[item.id];
+                              const displayedQuantity = /^\d{1,3}$/.test(draftValue || '')
+                                ? Number(draftValue)
+                                : item.quantity;
+                              requestQuantityChange(item, Math.max(0, displayedQuantity - 1));
+                            }}
+                            style={{
+                              width: '24px',
+                              height: '28px',
+                              padding: '0',
+                              backgroundColor: item.quantity > 1 ? '#f59e0b' : '#ef4444',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '0.25rem',
+                              cursor: 'pointer',
+                              fontSize: '0.95rem',
+                              fontWeight: 'bold',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title={item.quantity > 1 ? t('pos.receipt.reduceQuantity') : t('pos.receipt.removeItem')}
+                          >
+                            {item.quantity > 1 ? '−' : '×'}
+                          </button>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            aria-label={`${t('pos.receipt.quantityInput')}: ${item.name}`}
+                            title={t('pos.receipt.quantityInputHelp')}
+                            value={quantityDrafts[item.id] ?? String(item.quantity)}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              if (/^\d{0,3}$/.test(e.target.value)) {
+                                setQuantityDrafts(previous => ({ ...previous, [item.id]: e.target.value }));
                               }
-                            } else {
-                              handleRemoveItem(item.id);
-                            }
-                          }}
-                          style={{
-                            width: '24px',
-                            height: '24px',
-                            padding: '0',
-                            backgroundColor: item.quantity > 1 ? '#f59e0b' : '#ef4444',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            fontWeight: 'bold',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                          title={item.quantity > 1 ? t('pos.receipt.reduceQuantity') : t('pos.receipt.removeItem')}
-                        >
-                          {item.quantity > 1 ? '−' : '×'}
-                        </button>
-                      </div>
+                            }}
+                            onBlur={(e) => commitQuantityInput(item, e.currentTarget.value)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                resetQuantityDraft(item.id);
+                              }
+                            }}
+                            style={{
+                              width: '42px',
+                              height: '28px',
+                              padding: '0 0.2rem',
+                              boxSizing: 'border-box',
+                              border: `1px solid ${posQuantityColor}`,
+                              borderRadius: '0.25rem',
+                              backgroundColor: '#ffffff',
+                              color: posQuantityColor,
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              textAlign: 'center',
+                              outlineColor: posQuantityColor
+                            }}
+                          />
+                          <button
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const draftValue = quantityDrafts[item.id];
+                              const displayedQuantity = /^\d{1,3}$/.test(draftValue || '')
+                                ? Number(draftValue)
+                                : item.quantity;
+                              requestQuantityChange(item, Math.min(999, displayedQuantity + 1));
+                            }}
+                            style={{
+                              width: '24px',
+                              height: '28px',
+                              padding: '0',
+                              backgroundColor: '#10b981',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '0.25rem',
+                              cursor: 'pointer',
+                              fontSize: '0.95rem',
+                              fontWeight: 'bold',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title={t('pos.receipt.increaseQuantity')}
+                          >
+                            +
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -4236,7 +4347,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       return (
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                   <span style={{ color: '#6b7280' }}>🚚 {t('pos.receipt.deliveryFee')}</span>
-                          <span style={{ color: '#374151', fontWeight: '600' }}>C${displayDeliveryFee.toFixed(2)}</span>
+                          <span style={{ color: colors.danger, fontWeight: '700' }}>C${displayDeliveryFee.toFixed(2)}</span>
                         </div>
                       );
                     }
@@ -4245,12 +4356,12 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span style={{ color: '#6b7280' }}>{t('pos.receipt.tax')} (15%)</span>
-                    <span style={{ color: '#374151', fontWeight: '600' }}>C${(taxEnabled ? tax : 0).toFixed(2)}</span>
+                    <span style={{ color: colors.danger, fontWeight: '700' }}>C${(taxEnabled ? tax : 0).toFixed(2)}</span>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
                     <span style={{ color: '#6b7280' }}>{t('pos.receipt.service')} (10%)</span>
-                    <span style={{ color: '#374151', fontWeight: '600' }}>C${(serviceFeeEnabled ? serviceFee : 0).toFixed(2)}</span>
+                    <span style={{ color: colors.danger, fontWeight: '700' }}>C${(serviceFeeEnabled ? serviceFee : 0).toFixed(2)}</span>
                   </div>
 
                   {discountEnabled && discountAmount > 0 && (
@@ -4259,14 +4370,14 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   🎫 {t('pos.receipt.discount')} {discountType === 'percentage' ? `(${discountValue}%)` : ''}
                         {discountReason && <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}> - {discountReason}</span>}
                       </span>
-                      <span style={{ color: '#ef4444', fontWeight: '600' }}>-C${discountAmount.toFixed(2)}</span>
+                      <span style={{ color: colors.danger, fontWeight: '700' }}>-C${discountAmount.toFixed(2)}</span>
                     </div>
                   )}
 
                   {pointsRedemptionEnabled && pointsRedemptionAmount > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.75rem' }}>
                   <span style={{ color: '#f59e0b' }}>⭐ {t('pos.receipt.pointsRedeemed')} ({pointsToUse})</span>
-                      <span style={{ color: '#f59e0b', fontWeight: '600' }}>-C${pointsRedemptionAmount.toFixed(2)}</span>
+                      <span style={{ color: colors.danger, fontWeight: '700' }}>-C${pointsRedemptionAmount.toFixed(2)}</span>
                     </div>
                   )}
 
@@ -4279,7 +4390,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                     fontWeight: 'bold'
                   }}>
                   <span style={{ color: '#374151' }}>{t('pos.common.total')}</span>
-                    <span style={{ color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
+                    <span style={{ color: colors.danger }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                 </div>
 
@@ -4468,15 +4579,15 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
                   <span style={{ color: '#047857' }}>{t('pos.payment.previous')}：</span>
-                  <span style={{ fontWeight: '600', color: '#059669' }}>C${settledAmount.toFixed(2)}</span>
+                  <span style={{ fontWeight: '700', color: colors.danger }}>C${settledAmount.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
                   <span style={{ color: '#047857' }}>{t('pos.payment.amountDue')}：</span>
-                  <span style={{ fontWeight: '600', color: '#2563eb' }}>C${finalTotal.toFixed(2)}</span>
+                  <span style={{ fontWeight: '700', color: colors.danger }}>C${finalTotal.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.2rem', borderTop: '1px dashed #10b981', fontSize: '0.8rem' }}>
                   <span style={{ color: '#065f46', fontWeight: '600' }}>{t('pos.payment.remaining')}:</span>
-                  <span style={{ fontWeight: 'bold', color: '#dc2626', fontSize: '1rem' }}>C${remainingAmount.toFixed(2)}</span>
+                  <span style={{ fontWeight: 'bold', color: colors.danger, fontSize: '1rem' }}>C${remainingAmount.toFixed(2)}</span>
                 </div>
               </div>
             )}
@@ -4524,7 +4635,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                         placeholder="0"
                         min="0"
                         step="0.01"
-                        style={{ flex: 1, padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem' }}
+                        style={{ flex: 1, padding: '0.3rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.85rem', ...posMoneyInputStyle }}
                       />
                     </div>
 
@@ -4658,7 +4769,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                             step="1"
                             style={{ flex: 1, padding: '0.3rem', border: '1px solid #f59e0b', borderRadius: '0.25rem', fontSize: '0.8rem' }}
                           />
-                          <span style={{ fontSize: '0.75rem', color: '#92400e', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: '0.75rem', color: colors.danger, fontWeight: 700, whiteSpace: 'nowrap' }}>
                             =C${pointsRedemptionAmount.toFixed(2)}
                           </span>
                         </div>
@@ -4671,15 +4782,15 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💵 {t('pos.payment.cash')}</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
+                      <span style={{ fontSize: '0.85rem', color: colors.danger, fontWeight: '700', minWidth: '40px' }}>C$</span>
                       <input type="number" value={cashNIO} onChange={(e) => setCashNIO(e.target.value)} placeholder="0.00" min="0" step="0.01"
-                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem' }} />
+                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem', ...posMoneyInputStyle }} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>$</span>
+                      <span style={{ fontSize: '0.85rem', color: colors.danger, fontWeight: '700', minWidth: '40px' }}>$</span>
                       <input type="number" value={cashUSD} onChange={(e) => setCashUSD(e.target.value)} placeholder="0.00" min="0" step="0.01"
-                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem' }} />
-                      <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>≈C${cashUSD ? (parseFloat(cashUSD) * exchangeRate).toFixed(2) : '0.00'}</span>
+                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem', ...posMoneyInputStyle }} />
+                      <span style={{ fontSize: '0.75rem', color: colors.danger, fontWeight: 700 }}>≈C${cashUSD ? (parseFloat(cashUSD) * exchangeRate).toFixed(2) : '0.00'}</span>
                     </div>
                   </div>
                 </div>
@@ -4688,15 +4799,15 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#374151', marginBottom: '0.4rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.2rem' }}>💳 {t('pos.payment.card')}</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>C$</span>
+                      <span style={{ fontSize: '0.85rem', color: colors.danger, fontWeight: '700', minWidth: '40px' }}>C$</span>
                       <input type="number" value={cardNIO} onChange={(e) => setCardNIO(e.target.value)} placeholder="0.00" min="0" step="0.01"
-                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem' }} />
+                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem', ...posMoneyInputStyle }} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '600', minWidth: '40px' }}>$</span>
+                      <span style={{ fontSize: '0.85rem', color: colors.danger, fontWeight: '700', minWidth: '40px' }}>$</span>
                       <input type="number" value={cardUSD} onChange={(e) => setCardUSD(e.target.value)} placeholder="0.00" min="0" step="0.01"
-                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem' }} />
-                      <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>≈C${cardUSD ? (parseFloat(cardUSD) * exchangeRate).toFixed(2) : '0.00'}</span>
+                        style={{ flex: 1, padding: '0.4rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.9rem', ...posMoneyInputStyle }} />
+                      <span style={{ fontSize: '0.75rem', color: colors.danger, fontWeight: 700 }}>≈C${cardUSD ? (parseFloat(cardUSD) * exchangeRate).toFixed(2) : '0.00'}</span>
                     </div>
                   </div>
                 </div>
@@ -4704,11 +4815,11 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '0.6rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
                     <span>{t('pos.common.total')}</span>
-                    <span style={{ color: '#2563eb', fontSize: '1.3rem' }}>C${finalTotal.toFixed(2)}</span>
+                    <span style={{ color: colors.danger, fontSize: '1.3rem' }}>C${finalTotal.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
                     <span style={{ color: '#6b7280' }}>{t('pos.payment.current')}</span>
-                    <span style={{ color: '#10b981', fontWeight: '600' }}>C${paidAmount.toFixed(2)}</span>
+                    <span style={{ color: colors.danger, fontWeight: '700' }}>C${paidAmount.toFixed(2)}</span>
                   </div>
 
                   {change >= 0 && paidAmount > 0 && (
@@ -4721,7 +4832,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       border: '1px solid #10b981'
                     }}>
                       <div style={{ fontSize: '0.8rem', color: '#065f46', marginBottom: '0.15rem', fontWeight: '600' }}>{t('pos.payment.change')}</div>
-                      <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#065f46' }}>C${change.toFixed(2)}</div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: colors.danger }}>C${change.toFixed(2)}</div>
                     </div>
                   )}
                   {change < 0 && paidAmount > 0 && (
@@ -4735,7 +4846,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       color: '#991b1b',
                       border: '1px solid #ef4444'
                     }}>
-                      {t('pos.payment.remainingToPay')}: C${Math.abs(change).toFixed(2)}
+                      {t('pos.payment.remainingToPay')}: <span style={{ color: colors.danger, fontWeight: 700 }}>C${Math.abs(change).toFixed(2)}</span>
                     </div>
                   )}
 
@@ -5352,7 +5463,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
                   <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('pos.common.total')}:</span>
-                  <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#2563eb' }}>
+                  <span style={{ fontSize: '1rem', fontWeight: 'bold', color: colors.danger }}>
                     C${filteredOrders.reduce((sum, o) => sum + getPosOrderSummaryAmount(o), 0).toFixed(2)}
                   </span>
                 </div>
@@ -5619,10 +5730,10 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                         fontSize: '0.8rem',
                         color: '#991b1b'
                       }}>
-                        {t('pos.orders.cancelledCharged')} C${Number(order.paidAmount || 0).toFixed(2)}
+                        {t('pos.orders.cancelledCharged')} <span style={{ color: colors.danger, fontWeight: 700 }}>C${Number(order.paidAmount || 0).toFixed(2)}</span>
                         {Number(order.totalAmount || 0) > Number(order.paidAmount || 0) && (
                           <span style={{ fontWeight: '600', marginLeft: '0.5rem' }}>
-                            {' '}/ {t('pos.status.cancelled')} C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}
+                            {' '}/ {t('pos.status.cancelled')} <span style={{ color: colors.danger, fontWeight: 700 }}>C${(Number(order.totalAmount || 0) - Number(order.paidAmount || 0)).toFixed(2)}</span>
                           </span>
                         )}
                       </div>
@@ -5650,9 +5761,9 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                         marginBottom: '0.5rem',
                         fontSize: '0.8rem'
                       }}>
-                        {t('pos.orders.paidAmount')}: C${order.paidAmount.toFixed(2)} / C${order.totalAmount.toFixed(2)}
-                        <span style={{ color: '#f59e0b', fontWeight: '600', marginLeft: '0.5rem' }}>
-                          ({t('pos.orders.shortAmount')} C${(order.totalAmount - order.paidAmount).toFixed(2)})
+                        {t('pos.orders.paidAmount')}: <span style={{ color: colors.danger, fontWeight: 700 }}>C${order.paidAmount.toFixed(2)}</span> / <span style={{ color: colors.danger, fontWeight: 700 }}>C${order.totalAmount.toFixed(2)}</span>
+                        <span style={{ fontWeight: '600', marginLeft: '0.5rem' }}>
+                          ({t('pos.orders.shortAmount')} <span style={{ color: colors.danger, fontWeight: 700 }}>C${(order.totalAmount - order.paidAmount).toFixed(2)}</span>)
                         </span>
                       </div>
                     )}
@@ -5661,7 +5772,7 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                       <div style={{ fontSize: '0.85rem', color: '#374151' }}>
                         {order.items?.length || 0} {t('pos.common.products')}
                       </div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#2563eb' }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: colors.danger }}>
                         C${order.totalAmount?.toFixed(2) || '0.00'}
                       </div>
                     </div>
