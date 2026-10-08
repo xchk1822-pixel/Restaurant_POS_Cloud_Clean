@@ -800,6 +800,7 @@ describe('production data safety guards', () => {
     );
 
     expect(saveBlock).toContain("order.orderType !== 'reservation'");
+    expect(saveBlock).toContain('if (!hasReservationDraftChanges) return;');
     expect(saveBlock).toContain('items: currentItems.map(item => ({ ...item }))');
     expect(saveBlock).toContain('deliveryDate: reservationDeliveryDate');
     expect(saveBlock).toContain('pendingOrderSyncIdsRef.current.add(order.id)');
@@ -807,8 +808,11 @@ describe('production data safety guards', () => {
     expect(saveBlock).not.toContain('sentQuantity: item.quantity');
     expect(saveBlock).not.toContain("status: 'preparing'");
     expect(saveBlock).not.toContain('printViaLocalBridge');
+    expect(source).toContain('const hasReservationDraftChanges = Boolean(activeReservationOrder &&');
     expect(source).toContain('onClick={handleSaveReservationChanges}');
-    expect(source).toContain("💾 {t('pos.common.save')}");
+    expect(source).toContain('disabled={!hasReservationDraftChanges || isSavingReservation || isSendingToKitchen}');
+    expect(source).toContain("? '#f59e0b' : '#fde68a'");
+    expect(source).toContain("{hasReservationDraftChanges ? '💾' : '🔒'} {t('pos.common.save')}");
   });
 
   test('POS stock deduction reads only the current order inventory before marking it completed', () => {

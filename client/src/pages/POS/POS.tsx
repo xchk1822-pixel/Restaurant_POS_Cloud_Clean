@@ -310,6 +310,28 @@ const formatOrderItemsForEditor = (order: Partial<Order>, forceSentToKitchen = f
   }));
 };
 
+const getReservationDraftSignature = (
+  deliveryDate: string | undefined,
+  customerId: string | undefined,
+  items: OrderItem[],
+  totalAmount: number,
+  pointsUsed: number,
+  pointsDiscount: number
+) => JSON.stringify({
+  deliveryDate: String(deliveryDate || ''),
+  customerId: String(customerId || ''),
+  items: items.map(item => ({
+    menuItemId: String(item.menuItemId || ''),
+    name: String(item.name || ''),
+    quantity: Number(item.quantity || 0),
+    price: Number(item.price || 0),
+    subtotal: Number(item.subtotal || 0),
+  })),
+  totalAmount: Number(totalAmount || 0),
+  pointsUsed: Number(pointsUsed || 0),
+  pointsDiscount: Number(pointsDiscount || 0),
+});
+
 const MAX_LOCAL_DEDUCTED_ORDER_IDS = 300;
 const COMPACT_LOCAL_DEDUCTED_ORDER_IDS = 80;
 
@@ -2019,6 +2041,24 @@ const POS: React.FC = () => {
   );
 
   const finalTotal = subtotal + (serviceFeeEnabled ? serviceFee : 0) + (taxEnabled ? tax : 0) + deliveryFee - discountAmount - pointsRedemptionAmount - promotionRedemptionAmount;
+  const activeReservationOrder = existingOrder?.orderType === 'reservation' ? existingOrder : null;
+  const hasReservationDraftChanges = Boolean(activeReservationOrder &&
+    getReservationDraftSignature(
+      reservationDeliveryDate,
+      selectedCustomer?.id || activeReservationOrder.customerId,
+      currentItems,
+      finalTotal,
+      pointsRedemptionEnabled ? pointsToUse : Number(activeReservationOrder.pointsUsed || 0),
+      pointsRedemptionEnabled ? pointsRedemptionAmount : Number(activeReservationOrder.pointsDiscount || 0)
+    ) !== getReservationDraftSignature(
+      activeReservationOrder.deliveryDate,
+      activeReservationOrder.customerId,
+      activeReservationOrder.items || [],
+      activeReservationOrder.totalAmount,
+      Number(activeReservationOrder.pointsUsed || 0),
+      Number(activeReservationOrder.pointsDiscount || 0)
+    )
+  );
   const calculateTotalForItems = (items: OrderItem[]): number => {
     const nextSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
     return nextSubtotal +
@@ -2188,6 +2228,7 @@ const POS: React.FC = () => {
 
   const handleSaveReservationChanges = () => {
     if (savingReservationRef.current || isSavingReservation) return;
+    if (!hasReservationDraftChanges) return;
     if (!selectedOrderId || currentItems.length === 0) {
       alert(t('pos.alert.addProducts'));
       return;
@@ -2217,8 +2258,8 @@ const POS: React.FC = () => {
         ...order,
         deliveryDate: reservationDeliveryDate,
         deliveryAt: buildReservationDeliveryAt(reservationDeliveryDate),
-        customerId: selectedCustomer?.id,
-        customerName: selectedCustomer?.name,
+        customerId: selectedCustomer?.id || order.customerId,
+        customerName: selectedCustomer?.name || order.customerName,
         items: currentItems.map(item => ({ ...item })),
         totalAmount: finalTotal,
         pointsUsed: pointsRedemptionEnabled ? pointsToUse : (order.pointsUsed || 0),
@@ -4470,20 +4511,21 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   {!isReadOnly && currentOrder?.orderType === 'reservation' && isEditableActiveOrder(currentOrder) && (
                     <button
                       onClick={handleSaveReservationChanges}
-                      disabled={isSavingReservation || isSendingToKitchen}
+                      disabled={!hasReservationDraftChanges || isSavingReservation || isSendingToKitchen}
                       style={{
                         flex: 1,
                         padding: '0.6rem',
-                        backgroundColor: isSavingReservation || isSendingToKitchen ? '#d1d5db' : '#0f766e',
-                        color: 'white',
+                        backgroundColor: hasReservationDraftChanges && !isSavingReservation && !isSendingToKitchen ? '#f59e0b' : '#fde68a',
+                        color: hasReservationDraftChanges ? '#111827' : '#92400e',
                         border: 'none',
                         borderRadius: '0.25rem',
                         fontWeight: '600',
-                        cursor: isSavingReservation || isSendingToKitchen ? 'not-allowed' : 'pointer',
+                        cursor: !hasReservationDraftChanges || isSavingReservation || isSendingToKitchen ? 'not-allowed' : 'pointer',
                         fontSize: '0.8rem'
                       }}
+                      title={hasReservationDraftChanges ? t('pos.common.save') : t('pos.reservation.savedNoChanges')}
                     >
-                      💾 {t('pos.common.save')}
+                      {hasReservationDraftChanges ? '💾' : '🔒'} {t('pos.common.save')}
                     </button>
                   )}
 
