@@ -781,6 +781,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('const resetOrderEntryState = () => {');
     expect(source).toContain('const returnToOverviewFromOrder = () => {');
     expect(returnBlock).toContain('if (!selectedOrderId || !hasUnsentItems) return;');
+    expect(returnBlock).toContain("if (selectedOrder?.orderType === 'reservation') return;");
     expect(returnBlock).toContain('const sentQuantity = getSentQuantity(item);');
     expect(returnBlock).toContain('if (sentQuantity <= 0) return null;');
     expect(returnBlock).toContain('quantity: sentQuantity');
@@ -788,6 +789,26 @@ describe('production data safety guards', () => {
     expect(returnBlock).toContain('setOrders(prevOrders => prevOrders.map(order =>');
     expect(returnBlock).toContain('resetOrderEntryState();');
     expect(source).toContain('onClick={returnToOverviewFromOrder}');
+  });
+
+  test('existing reservation changes can be saved without sending or printing', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+    const saveBlock = source.slice(
+      source.indexOf('const handleSaveReservationChanges = () => {'),
+      source.indexOf('const handleSendToKitchen = async () => {')
+    );
+
+    expect(saveBlock).toContain("order.orderType !== 'reservation'");
+    expect(saveBlock).toContain('items: currentItems.map(item => ({ ...item }))');
+    expect(saveBlock).toContain('deliveryDate: reservationDeliveryDate');
+    expect(saveBlock).toContain('pendingOrderSyncIdsRef.current.add(order.id)');
+    expect(saveBlock).toContain('publishOrderImmediately(updatedOrder)');
+    expect(saveBlock).not.toContain('sentQuantity: item.quantity');
+    expect(saveBlock).not.toContain("status: 'preparing'");
+    expect(saveBlock).not.toContain('printViaLocalBridge');
+    expect(source).toContain('onClick={handleSaveReservationChanges}');
+    expect(source).toContain("💾 {t('pos.common.save')}");
   });
 
   test('POS stock deduction reads only the current order inventory before marking it completed', () => {

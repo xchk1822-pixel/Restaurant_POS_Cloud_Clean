@@ -789,6 +789,8 @@ const POS: React.FC = () => {
 
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const paymentProcessingRef = useRef(false);
+  const [isSavingReservation, setIsSavingReservation] = useState(false);
+  const savingReservationRef = useRef(false);
   const [isSendingToKitchen, setIsSendingToKitchen] = useState(false);
   const sendingToKitchenRef = useRef(false);
   const [clearingOrderId, setClearingOrderId] = useState<string | null>(null);
@@ -1656,6 +1658,10 @@ const POS: React.FC = () => {
     return item.stockItemId ? 'direct' : 'recipe';
   };
 
+  const isEditingReservationDraft = Boolean(selectedOrderId && orders.some(order =>
+    order.id === selectedOrderId && order.orderType === 'reservation'
+  ));
+
   const handleAddItem = (item: any) => {
     const existingItem = currentItems.find(i => i.menuItemId === item.id);
 
@@ -1685,7 +1691,7 @@ const POS: React.FC = () => {
 
     setCurrentItems(newCurrentItems);
 
-    if (selectedOrderId) {
+    if (selectedOrderId && !isEditingReservationDraft) {
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? { ...o, items: newCurrentItems } : o
       ));
@@ -1707,7 +1713,7 @@ const POS: React.FC = () => {
     const newCurrentItems = currentItems.filter(i => i.id !== itemId);
     setCurrentItems(newCurrentItems);
 
-    if (selectedOrderId) {
+    if (selectedOrderId && !isEditingReservationDraft) {
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? { ...o, items: newCurrentItems } : o
       ));
@@ -1723,7 +1729,7 @@ const POS: React.FC = () => {
 
     setCurrentItems(newCurrentItems);
 
-    if (selectedOrderId) {
+    if (selectedOrderId && !isEditingReservationDraft) {
       const nextTotalAmount = newCurrentItems.reduce((sum, item) => sum + item.subtotal, 0);
       setOrders(orders.map(o =>
         o.id === selectedOrderId ? {
@@ -2085,6 +2091,9 @@ const POS: React.FC = () => {
   const discardUnconfirmedOrderItems = () => {
     if (!selectedOrderId || !hasUnsentItems) return;
 
+    const selectedOrder = orders.find(order => order.id === selectedOrderId);
+    if (selectedOrder?.orderType === 'reservation') return;
+
     const confirmedItems = currentItems
       .map(item => {
         const sentQuantity = getSentQuantity(item);
@@ -2175,24 +2184,63 @@ const POS: React.FC = () => {
 
   const handleReservationDeliveryDateChange = (nextDate: string) => {
     setReservationDeliveryDate(nextDate);
-    if (!selectedOrderId || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return;
+  };
+
+  const handleSaveReservationChanges = () => {
+    if (savingReservationRef.current || isSavingReservation) return;
+    if (!selectedOrderId || currentItems.length === 0) {
+      alert(t('pos.alert.addProducts'));
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reservationDeliveryDate)) {
+      alert(t('pos.reservation.selectDeliveryDate'));
+      return;
+    }
 
     const order = orders.find(candidate => candidate.id === selectedOrderId);
-    if (!order || order.orderType !== 'reservation' || order.status === 'completed' || order.status === 'cancelled') return;
+    if (!order || order.orderType !== 'reservation' || !isEditableActiveOrder(order)) {
+      alert(t('pos.alert.currentOrderMissing'));
+      return;
+    }
 
-    const updatedOrder: Order = {
-      ...order,
-      deliveryDate: nextDate,
-      deliveryAt: buildReservationDeliveryAt(nextDate),
-      updatedAt: new Date(),
-      lastModified: Date.now(),
-    };
-    setOrders(prevOrders => prevOrders.map(candidate => candidate.id === order.id ? updatedOrder : candidate));
-    pendingOrderSyncIdsRef.current.add(order.id);
-    savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
-    publishOrderImmediately(updatedOrder).catch(error => {
-      console.error('reservation delivery date publish failed:', order.id, error);
-    });
+    savingReservationRef.current = true;
+    setIsSavingReservation(true);
+    try {
+      const nextSettledAmount = Number(order.settledAmount || order.paidAmount || 0);
+      const nextPaymentStatus: 'unpaid' | 'partial' | 'paid' =
+        nextSettledAmount >= finalTotal - 0.001
+          ? 'paid'
+          : nextSettledAmount > 0
+            ? 'partial'
+            : 'unpaid';
+      const updatedOrder = mergeOrderCancelRecords({
+        ...order,
+        deliveryDate: reservationDeliveryDate,
+        deliveryAt: buildReservationDeliveryAt(reservationDeliveryDate),
+        customerId: selectedCustomer?.id,
+        customerName: selectedCustomer?.name,
+        items: currentItems.map(item => ({ ...item })),
+        totalAmount: finalTotal,
+        pointsUsed: pointsRedemptionEnabled ? pointsToUse : (order.pointsUsed || 0),
+        pointsDiscount: pointsRedemptionEnabled ? pointsRedemptionAmount : (order.pointsDiscount || 0),
+        paymentStatus: nextPaymentStatus,
+        updatedAt: new Date(),
+        lastModified: Date.now(),
+      }, order.id);
+
+      setOrders(prevOrders => prevOrders.map(candidate =>
+        candidate.id === order.id ? updatedOrder : candidate
+      ));
+      pendingOrderSyncIdsRef.current.add(order.id);
+      savePendingOrderSyncIds(pendingOrderSyncIdsRef.current);
+      publishOrderImmediately(updatedOrder).catch(error => {
+        console.error('reservation changes queued locally:', order.id, error);
+      });
+      showPosToast(t('pos.reservation.confirmed'), 'success');
+    } finally {
+      savingReservationRef.current = false;
+      setIsSavingReservation(false);
+    }
   };
 
   const handleSendToKitchen = async () => {
@@ -4418,6 +4466,26 @@ ${t('pos.toast.remainingPayment')}: C$${(finalTotal - newSettledAmount).toFixed(
                   >
                   🖨️ {t('pos.receipt.print')}
                   </button>
+
+                  {!isReadOnly && currentOrder?.orderType === 'reservation' && isEditableActiveOrder(currentOrder) && (
+                    <button
+                      onClick={handleSaveReservationChanges}
+                      disabled={isSavingReservation || isSendingToKitchen}
+                      style={{
+                        flex: 1,
+                        padding: '0.6rem',
+                        backgroundColor: isSavingReservation || isSendingToKitchen ? '#d1d5db' : '#0f766e',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        fontWeight: '600',
+                        cursor: isSavingReservation || isSendingToKitchen ? 'not-allowed' : 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      💾 {t('pos.common.save')}
+                    </button>
+                  )}
 
                   {isReadOnly && (
                     <button
