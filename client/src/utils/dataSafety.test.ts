@@ -5949,4 +5949,14 @@ describe('production data safety guards', () => {
     expect(financialRefreshBlock).toContain('try {');
     expect(financialRefreshBlock).toContain("console.warn('财务报表开支类别缓存写入失败，继续使用云端数据:'");
   });
+
+  test('POS payment permits a fully discounted zero-balance order', () => {
+    const posPath = path.join(process.cwd(), 'src/pages/POS/POS.tsx');
+    const source = fs.readFileSync(posPath, 'utf8');
+
+    expect(source).toContain('const paymentTolerance = 0.001;');
+    expect(source).toContain('const canSubmitPayment = currentItems.length > 0 && paidAmount + paymentTolerance >= remainingAmount;');
+    expect(source).toContain('if (paidAmount + paymentTolerance < remainingAmount)');
+    expect(source).not.toContain('remainingAmount > 0.001 && paidAmount >= remainingAmount');
+  });
 });

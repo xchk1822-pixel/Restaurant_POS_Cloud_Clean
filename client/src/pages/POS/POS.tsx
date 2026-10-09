@@ -2523,8 +2523,9 @@ const POS: React.FC = () => {
     (cardUSD ? parseFloat(cardUSD) * exchangeRate : 0)
   );
 
+  const paymentTolerance = 0.001;
   const change = paidAmount - remainingAmount;
-  const canSubmitPayment = remainingAmount > 0.001 && paidAmount >= remainingAmount && currentItems.length > 0;
+  const canSubmitPayment = currentItems.length > 0 && paidAmount + paymentTolerance >= remainingAmount;
 
   const getStockDeductionKey = (item: OrderItem) => item.id || item.menuItemId;
 
@@ -2861,7 +2862,7 @@ const POS: React.FC = () => {
       return;
     }
 
-    if (paidAmount < remainingAmount) {
+    if (paidAmount + paymentTolerance < remainingAmount) {
       alert(t('pos.alert.paymentInsufficient'));
       return;
     }
