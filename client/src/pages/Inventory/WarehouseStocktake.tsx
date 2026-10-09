@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
@@ -17,7 +18,11 @@ import { useI18n } from '../../i18n/I18nContext';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
+  const { user } = useAuth();
   const { t } = useI18n();
+  const canViewSystemStock = user?.role === 'super_admin'
+    || user?.role === 'store_manager'
+    || user?.role === 'multi_store_manager';
   
   // 状态管理
   const [searchTerm, setSearchTerm] = useState('');
@@ -131,11 +136,16 @@ const WarehouseStocktake: React.FC = () => {
     setActualQuantities(previousQuantities => {
       const initial: Record<string, number> = {};
       filteredItems.forEach(item => {
-        initial[item.id] = previousQuantities[item.id] ?? item.currentStock;
+        const previousQuantity = previousQuantities[item.id];
+        if (previousQuantity !== undefined) {
+          initial[item.id] = previousQuantity;
+        } else if (canViewSystemStock) {
+          initial[item.id] = item.currentStock;
+        }
       });
       return initial;
     });
-  }, [filteredItems]);
+  }, [canViewSystemStock, filteredItems]);
 
   // 扫码处理
   const handleScan = (barcode: string) => {
@@ -151,6 +161,12 @@ const WarehouseStocktake: React.FC = () => {
 
   // 完成盘点
   const completeStocktake = async () => {
+    const uncountedItems = filteredItems.filter(item => actualQuantities[item.id] === undefined);
+    if (uncountedItems.length > 0) {
+      alert(`⚠️ ${t('warehouse.alert.uncountedPrefix')} ${uncountedItems.length} ${t('warehouse.alert.uncountedSuffix')}:\n${uncountedItems.map(item => '• ' + item.name).join('\n')}\n\n${t('warehouse.alert.finishAll')}`);
+      return;
+    }
+
     const discrepancies: any[] = [];
     let hasDifference = false;
 
@@ -169,7 +185,11 @@ const WarehouseStocktake: React.FC = () => {
       }
     });
 
-    if (!hasDifference) {
+    if (!canViewSystemStock) {
+      if (!window.confirm(t('warehouse.confirm.blind'))) {
+        return;
+      }
+    } else if (!hasDifference) {
       if (!window.confirm(t('warehouse.confirm.same'))) {
         return;
       }
@@ -466,16 +486,17 @@ const WarehouseStocktake: React.FC = () => {
               </thead>
               <tbody>
                 {filteredItems.map((item) => {
-                  const actualCount = actualQuantities[item.id] ?? 0;
-                  const difference = actualCount - item.currentStock;
-                  const hasDifference = difference !== 0;
+                  const actualCount = actualQuantities[item.id];
+                  const isCounted = actualCount !== undefined;
+                  const difference = isCounted ? actualCount - item.currentStock : null;
+                  const hasDifference = isCounted && difference !== 0;
 
                   return (
                     <tr
                       key={item.id}
                       style={{
                         borderBottom: '1px solid #f3f4f6',
-                        backgroundColor: hasDifference ? '#fef3c7' : 'white'
+                        backgroundColor: canViewSystemStock && hasDifference ? '#fef3c7' : 'white'
                       }}
                     >
                       <td style={{ padding: '0.75rem', fontWeight: '600' }}>
@@ -494,44 +515,63 @@ const WarehouseStocktake: React.FC = () => {
                         {item.unit}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#3b82f6' }}>
-                        {item.currentStock}
+                        {canViewSystemStock ? item.currentStock : '***'}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                         <input
                           id={`input-${item.id}`}
                           type="number"
+                          inputMode="decimal"
                           min="0"
-                          step="1"
-                          value={actualCount}
+                          step="any"
+                          value={isCounted ? actualCount.toString() : ''}
                           onChange={(e) => {
-                            const value = parseInt(e.target.value) ?? 0;
-                            setActualQuantities(prev => ({
-                              ...prev,
-                              [item.id]: value
-                            }));
+                            const inputValue = e.target.value;
+                            if (inputValue === '') {
+                              setActualQuantities(prev => {
+                                const next = { ...prev };
+                                delete next[item.id];
+                                return next;
+                              });
+                            } else {
+                              const value = Number(inputValue);
+                              if (!Number.isFinite(value) || value < 0) return;
+                              setActualQuantities(prev => ({
+                                ...prev,
+                                [item.id]: value
+                              }));
+                            }
                           }}
+                          placeholder="--"
                           style={{
                             width: '80px',
                             padding: '0.4rem',
-                            border: hasDifference ? '2px solid #f59e0b' : '1px solid #d1d5db',
+                            border: canViewSystemStock && hasDifference
+                              ? '2px solid #f59e0b'
+                              : isCounted ? '1px solid #d1d5db' : '2px solid #f59e0b',
                             borderRadius: '0.25rem',
                             textAlign: 'right',
                             fontSize: '0.9rem',
-                            fontWeight: '600'
+                            fontWeight: '600',
+                            backgroundColor: isCounted ? 'white' : '#fffbeb'
                           }}
                         />
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>
-                        {hasDifference ? (
+                        {!canViewSystemStock ? (
+                          <span style={{ color: '#6b7280', letterSpacing: '0.08em', fontWeight: '700' }}>***</span>
+                        ) : hasDifference ? (
                           <span style={{
                             fontWeight: 'bold',
                             fontSize: '1.1rem',
-                            color: difference > 0 ? '#10b981' : '#ef4444'
+                            color: difference! > 0 ? '#10b981' : '#ef4444'
                           }}>
-                            {difference > 0 ? '+' : ''}{difference}
+                            {difference! > 0 ? '+' : ''}{difference}
                           </span>
-                        ) : (
+                        ) : isCounted ? (
                           <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>
+                        ) : (
+                          <span style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: '600' }}>--</span>
                         )}
                       </td>
                     </tr>

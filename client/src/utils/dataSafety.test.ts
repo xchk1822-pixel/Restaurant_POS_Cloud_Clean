@@ -4771,6 +4771,53 @@ describe('production data safety guards', () => {
     expect(fridgeSource).not.toContain("localStorage.setItem('fridge_stocktake_history'");
   });
 
+  test('active warehouse and fridge stocktakes are blind for staff while manager history and printing stay unchanged', () => {
+    const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
+    const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
+    const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
+    const fridgeSource = fs.readFileSync(fridgePath, 'utf8');
+    const warehouseActiveTable = warehouseSource.slice(
+      warehouseSource.indexOf('{/* 商品列表 */}'),
+      warehouseSource.indexOf('{/* 盘点历史弹窗 */}')
+    );
+    const fridgeActiveTable = fridgeSource.slice(
+      fridgeSource.indexOf('{/* 商品列表 */}'),
+      fridgeSource.indexOf('{showAddFridgeModal &&')
+    );
+    const warehouseCompleteBlock = warehouseSource.slice(
+      warehouseSource.indexOf('const completeStocktake = async'),
+      warehouseSource.indexOf('const exportToCSV')
+    );
+    const fridgeCompleteBlock = fridgeSource.slice(
+      fridgeSource.indexOf('const completeStocktake = async'),
+      fridgeSource.indexOf('const moveItem')
+    );
+
+    [warehouseSource, fridgeSource].forEach(source => {
+      expect(source).toContain("import { useAuth } from '../../contexts/AuthContext'");
+      expect(source).toContain("user?.role === 'store_manager'");
+      expect(source).toContain("user?.role === 'multi_store_manager'");
+      expect(source).toContain("user?.role === 'super_admin'");
+    });
+
+    expect(warehouseActiveTable).toContain("canViewSystemStock ? item.currentStock : '***'");
+    expect(warehouseActiveTable).toContain("!canViewSystemStock ? (");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? totalStock : '***'");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? warehouseStock : '***'");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? fridgeStock : '***'");
+    expect(fridgeActiveTable).toContain("!canViewSystemStock ? (");
+
+    expect(warehouseCompleteBlock).toContain("actualQuantities[item.id] === undefined");
+    expect(warehouseCompleteBlock).toContain("t('warehouse.alert.finishAll')");
+    expect(warehouseCompleteBlock).toContain("t('warehouse.confirm.blind')");
+    expect(fridgeCompleteBlock).toContain("t('fridge.confirm.blind')");
+
+    expect(warehouseSource).toContain("printStocktakeHistory('warehouse-stocktake-print')");
+    expect(fridgeSource).toContain("printStocktakeHistory('fridge-stocktake-print')");
+    expect(warehouseSource).toContain('{item.systemStock}');
+    expect(fridgeSource).toContain('{item.systemStock}');
+  });
+
   test('stocktake completion awaits cloud writes before local success state', () => {
     const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');

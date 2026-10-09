@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
 import { smartAddDocument, smartGetDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument, smartTransferFridgeStock } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
@@ -37,7 +38,11 @@ const getFridgeQuantityKey = (fridgeId: string, itemId: string) => `${fridgeId}:
 
 const FridgeStocktake: React.FC = () => {
   const { fridges, setFridges, fridgeInventory, setFridgeInventory, inventoryItems, setInventoryItems } = useAppContext();
+  const { user } = useAuth();
   const { t } = useI18n();
+  const canViewSystemStock = user?.role === 'super_admin'
+    || user?.role === 'store_manager'
+    || user?.role === 'multi_store_manager';
   
   // 状态管理
   const [selectedFridge, setSelectedFridge] = useState<string>(fridges[0]?.id || '');
@@ -672,7 +677,11 @@ const FridgeStocktake: React.FC = () => {
       }
     });
 
-    if (!hasDifference) {
+    if (!canViewSystemStock) {
+      if (!window.confirm(t('fridge.confirm.blind'))) {
+        return;
+      }
+    } else if (!hasDifference) {
       if (!window.confirm(t('fridge.confirm.same'))) {
         return;
       }
@@ -1193,7 +1202,7 @@ const FridgeStocktake: React.FC = () => {
                         key={item.itemId}
                         style={{
                           borderBottom: '1px solid #f3f4f6',
-                          backgroundColor: hasDifference ? '#fef3c7' : 'white'
+                          backgroundColor: canViewSystemStock && hasDifference ? '#fef3c7' : 'white'
                         }}
                       >
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
@@ -1242,13 +1251,13 @@ const FridgeStocktake: React.FC = () => {
                           {item.barcode}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '700' }}>
-                          {totalStock}
+                          {canViewSystemStock ? totalStock : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#3b82f6' }}>
-                          {warehouseStock}
+                          {canViewSystemStock ? warehouseStock : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#8b5cf6' }}>
-                          {fridgeStock}
+                          {canViewSystemStock ? fridgeStock : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                           <input
@@ -1303,7 +1312,9 @@ const FridgeStocktake: React.FC = () => {
                             style={{
                               width: '80px',
                               padding: '0.4rem',
-                              border: isCounted ? (hasDifference ? '2px solid #f59e0b' : '1px solid #d1d5db') : '2px solid #f59e0b',
+                              border: isCounted
+                                ? (canViewSystemStock && hasDifference ? '2px solid #f59e0b' : '1px solid #d1d5db')
+                                : '2px solid #f59e0b',
                               borderRadius: '0.25rem',
                               textAlign: 'right',
                               fontSize: '0.9rem',
@@ -1313,7 +1324,9 @@ const FridgeStocktake: React.FC = () => {
                           />
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right' }}>
-                          {isCounted ? (
+                          {!canViewSystemStock ? (
+                            <span style={{ color: '#6b7280', letterSpacing: '0.08em', fontWeight: '700' }}>***</span>
+                          ) : isCounted ? (
                             hasDifference ? (
                               <span style={{
                                 fontWeight: 'bold',
