@@ -60,3 +60,11 @@ export const getVisibleLoanRecords = <T extends EmployeeLoanRecord>(
     return expenses.some(expense => loanMatchesExpense(loan, expense));
   });
 };
+
+export const getAuditableLoanRecords = <T extends EmployeeLoanRecord>(
+  loans: T[],
+  expenses: EmployeeLoanExpense[]
+): T[] => loans.filter(loan => (
+  loan.status !== 'cancelled'
+  && expenses.some(expense => loanMatchesExpense(loan, expense))
+));

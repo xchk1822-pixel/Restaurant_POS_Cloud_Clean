@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { smartAddDocument } from '../../services/smartSyncService';
-import { getVisibleLoanRecords } from '../../utils/employeeLoans';
+import { getAuditableLoanRecords, getVisibleLoanRecords } from '../../utils/employeeLoans';
 import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
@@ -285,6 +285,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   };
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
+  const auditableLoans = getAuditableLoanRecords(loanRecords, loanExpenseRecords);
   const positionLabels: Record<string, string> = {
     '收银员': t('employee.position.cashier'),
     '服务员': t('employee.position.waiter'),
@@ -327,7 +328,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       </div>
 
       <div style={styles.card}>
-        {activeLoans.length === 0 ? (
+        {auditableLoans.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💰</div>
             <div>{t('loan.empty')}</div>
@@ -345,8 +346,9 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {activeLoans.map((loan) => {
+                {auditableLoans.map((loan) => {
                   const emp = employees.find(e => e.id === loan.employeeId);
+                  const isDeducted = loan.status === 'deducted' || loan.remainingAmount <= 0;
                   return (
                     <tr key={loan.id}>
                       <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || t('loan.unknown')}</td>
@@ -358,9 +360,22 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                         C$ {loan.remainingAmount.toFixed(2)}
                       </td>
                       <td style={styles.td}>
-                        <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
-                          {t('loan.payrollDeduction')}
-                        </span>
+                        {isDeducted ? (
+                          <div>
+                            <span style={{ fontSize: font.caption, fontWeight: 700, color: colors.success }}>
+                              {t('loan.deducted')}
+                            </span>
+                            {loan.deductionPeriod && (
+                              <div style={{ marginTop: '0.2rem', fontSize: font.caption, color: colors.textMuted }}>
+                                {loan.deductionPeriod}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
+                            {t('loan.payrollDeduction')}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

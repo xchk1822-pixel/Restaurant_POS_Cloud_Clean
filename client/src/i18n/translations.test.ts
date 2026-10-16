@@ -118,6 +118,9 @@ describe('interface translations', () => {
     expect(translate('zh-CN', 'loan.title')).toBe('借款管理');
     expect(translate('es-NI', 'loan.title')).toBe('Préstamos al personal');
     expect(translate('es-NI', 'loan.payrollDeduction')).toBe('Descuento en planilla');
+    expect(translate('zh-CN', 'loan.deducted')).toBe('已扣除');
+    expect(translate('es-NI', 'loan.deducted')).toBe('Deducido');
+    expect(translate('es-NI', 'loan.action')).toBe('Estado');
     expect(translate('es-NI', 'loan.stat.outstanding')).toBe('Saldo pendiente');
   });
 

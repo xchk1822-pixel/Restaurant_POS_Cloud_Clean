@@ -1,4 +1,4 @@
-import { getVisibleLoanRecords } from './employeeLoans';
+import { getAuditableLoanRecords, getVisibleLoanRecords } from './employeeLoans';
 
 describe('employee loan helpers', () => {
   const linkedExpense = {
@@ -73,5 +73,42 @@ describe('employee loan helpers', () => {
     ];
 
     expect(getVisibleLoanRecords(loans, expenses).map(loan => loan.id)).toEqual(['legacy-loan']);
+  });
+
+  test('keeps deducted loans in the audit list without making them active again', () => {
+    const loans = [
+      {
+        id: 'loan-1',
+        employeeId: 'emp-1',
+        amount: 100,
+        remainingAmount: 60,
+        status: 'active',
+        date: '2026-06-12',
+      },
+      {
+        id: 'loan-2',
+        employeeId: 'emp-1',
+        amount: 100,
+        remainingAmount: 0,
+        status: 'deducted',
+        date: '2026-06-12',
+      },
+      {
+        id: 'loan-3',
+        employeeId: 'emp-1',
+        amount: 100,
+        remainingAmount: 0,
+        status: 'cancelled',
+        date: '2026-06-12',
+      },
+    ];
+    const expenses = loans.map((loan, index) => ({
+      ...linkedExpense,
+      id: `expense-${index + 1}`,
+      relatedLoanId: loan.id,
+    }));
+
+    expect(getAuditableLoanRecords(loans, expenses).map(loan => loan.id)).toEqual(['loan-1', 'loan-2']);
+    expect(getVisibleLoanRecords(loans, expenses).map(loan => loan.id)).toEqual(['loan-1']);
   });
 });
