@@ -1,4 +1,8 @@
-import { getAuditableLoanRecords, getVisibleLoanRecords } from './employeeLoans';
+import {
+  filterLoanRecordsByDateRange,
+  getAuditableLoanRecords,
+  getVisibleLoanRecords,
+} from './employeeLoans';
 
 describe('employee loan helpers', () => {
   const linkedExpense = {
@@ -110,5 +114,19 @@ describe('employee loan helpers', () => {
 
     expect(getAuditableLoanRecords(loans, expenses).map(loan => loan.id)).toEqual(['loan-1', 'loan-2']);
     expect(getVisibleLoanRecords(loans, expenses).map(loan => loan.id)).toEqual(['loan-1']);
+  });
+
+  test('filters audit records inclusively by the selected date range', () => {
+    const loans = [
+      { id: 'before', employeeId: 'emp-1', date: '2026-09-30' },
+      { id: 'start', employeeId: 'emp-1', date: '2026-10-01' },
+      { id: 'middle', employeeId: 'emp-1', date: '2026-10-10' },
+      { id: 'end', employeeId: 'emp-1', date: '2026-10-16' },
+      { id: 'after', employeeId: 'emp-1', date: '2026-10-17' },
+      { id: 'missing-date', employeeId: 'emp-1' },
+    ];
+
+    expect(filterLoanRecordsByDateRange(loans, '2026-10-01', '2026-10-16').map(loan => loan.id))
+      .toEqual(['start', 'middle', 'end']);
   });
 });

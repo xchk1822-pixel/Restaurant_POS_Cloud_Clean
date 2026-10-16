@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
 import { smartAddDocument } from '../../services/smartSyncService';
-import { getAuditableLoanRecords, getVisibleLoanRecords } from '../../utils/employeeLoans';
+import {
+  filterLoanRecordsByDateRange,
+  getAuditableLoanRecords,
+  getVisibleLoanRecords,
+} from '../../utils/employeeLoans';
 import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
@@ -66,6 +70,18 @@ interface LoanManagementProps {
   setCashFlowRecords: React.Dispatch<React.SetStateAction<CashFlowRecord[]>>;
 }
 
+const getDefaultLoanDateRange = () => {
+  const endDate = getLocalDateString();
+  return { startDate: `${endDate.slice(0, 7)}-01`, endDate };
+};
+
+const escapeHtml = (value: unknown): string => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
 const LoanManagement: React.FC<LoanManagementProps> = ({
   employees,
   loanRecords,
@@ -75,9 +91,10 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   cashFlowRecords,
   setCashFlowRecords,
 }) => {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [loanAmountInput, setLoanAmountInput] = useState('');
+  const [loanDateRange, setLoanDateRange] = useState(getDefaultLoanDateRange);
   const [loanFormData, setLoanFormData] = useState<Partial<LoanRecord>>({
     employeeId: '',
     date: getLocalDateString(),
@@ -286,7 +303,12 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
   const auditableLoans = getAuditableLoanRecords(loanRecords, loanExpenseRecords);
-  const auditableLoanGroups = auditableLoans.reduce<Array<{
+  const filteredAuditableLoans = filterLoanRecordsByDateRange(
+    auditableLoans,
+    loanDateRange.startDate,
+    loanDateRange.endDate
+  );
+  const auditableLoanGroups = filteredAuditableLoans.reduce<Array<{
     employeeId: string;
     employeeName: string;
     loans: LoanRecord[];
@@ -314,6 +336,114 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     '帮厨': t('employee.position.kitchenAssistant'),
     '店长': t('employee.position.manager'),
     '副店长': t('employee.position.assistantManager'),
+  };
+
+  const handlePrintLoanAudit = () => {
+    if (filteredAuditableLoans.length === 0) {
+      alert(t('loan.printNoRecords'));
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert(t('loan.printAllowPopup'));
+      return;
+    }
+
+    const totalAmount = filteredAuditableLoans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
+    const totalRemaining = filteredAuditableLoans.reduce((sum, loan) => sum + Number(loan.remainingAmount || 0), 0);
+    const printedAt = new Date().toLocaleString(language, { timeZone: 'America/Managua' });
+    const groupSections = auditableLoanGroups.map(group => {
+      const employeeTotal = group.loans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
+      const employeeRemaining = group.loans.reduce((sum, loan) => sum + Number(loan.remainingAmount || 0), 0);
+      const rows = group.loans.map(loan => {
+        const isDeducted = loan.status === 'deducted' || loan.remainingAmount <= 0;
+        return `
+          <tr>
+            <td>${escapeHtml(loan.date)}</td>
+            <td class="amount">${Number(loan.amount || 0).toFixed(2)}</td>
+            <td class="amount">${Number(loan.remainingAmount || 0).toFixed(2)}</td>
+            <td>${escapeHtml(isDeducted ? t('loan.deducted') : t('loan.payrollDeduction'))}</td>
+            <td>${escapeHtml(loan.deductionPeriod || '-')}</td>
+            <td>${escapeHtml(loan.notes || '-')}</td>
+          </tr>`;
+      }).join('');
+
+      return `
+        <section class="employee-section">
+          <div class="employee-heading">
+            <strong>${escapeHtml(group.employeeName)}</strong>
+            <span>${t('loan.printRecords')}: ${group.loans.length}</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>${t('loan.date')}</th>
+                <th class="amount">${t('loan.amount')} (C$)</th>
+                <th class="amount">${t('loan.remaining')} (C$)</th>
+                <th>${t('loan.action')}</th>
+                <th>${t('loan.printDeductionPeriod')}</th>
+                <th>${t('loan.notes')}</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+            <tfoot>
+              <tr>
+                <td><strong>${t('loan.printSubtotal')}</strong></td>
+                <td class="amount"><strong>${employeeTotal.toFixed(2)}</strong></td>
+                <td class="amount"><strong>${employeeRemaining.toFixed(2)}</strong></td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </section>`;
+    }).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="${language}">
+      <head>
+        <meta charset="utf-8" />
+        <title>${escapeHtml(t('loan.printTitle'))}</title>
+        <style>
+          @page { size: A4; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; color: #111827; font-family: Arial, sans-serif; font-size: 11px; }
+          .header { text-align: center; margin-bottom: 14px; }
+          .title { font-size: 22px; font-weight: 700; }
+          .period { margin-top: 5px; font-size: 12px; color: #374151; }
+          .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 16px; }
+          .summary-item { border: 1px solid #9ca3af; padding: 8px; }
+          .summary-label { color: #4b5563; margin-bottom: 4px; }
+          .summary-value { font-size: 15px; font-weight: 700; }
+          .employee-section { margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
+          .employee-heading { display: flex; justify-content: space-between; padding: 7px 8px; background: #dbeafe; border: 1px solid #93c5fd; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #9ca3af; padding: 6px; text-align: left; vertical-align: top; }
+          th { background: #f3f4f6; }
+          .amount { text-align: right; white-space: nowrap; }
+          .footer { margin-top: 12px; text-align: right; color: #4b5563; }
+          @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <header class="header">
+          <div class="title">${escapeHtml(t('loan.printTitle'))}</div>
+          <div class="period">${t('loan.printPeriod')}: ${escapeHtml(loanDateRange.startDate)} - ${escapeHtml(loanDateRange.endDate)}</div>
+        </header>
+        <div class="summary">
+          <div class="summary-item"><div class="summary-label">${t('loan.printRecords')}</div><div class="summary-value">${filteredAuditableLoans.length}</div></div>
+          <div class="summary-item"><div class="summary-label">${t('loan.printTotalAmount')}</div><div class="summary-value">C$ ${totalAmount.toFixed(2)}</div></div>
+          <div class="summary-item"><div class="summary-label">${t('loan.printTotalRemaining')}</div><div class="summary-value">C$ ${totalRemaining.toFixed(2)}</div></div>
+        </div>
+        ${groupSections}
+        <div class="footer">${t('loan.printGeneratedAt')}: ${escapeHtml(printedAt)}</div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 250);
   };
 
   return (
@@ -349,7 +479,55 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
       </div>
 
       <div style={styles.card}>
-        {auditableLoans.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap', paddingBottom: '1rem', marginBottom: '1rem', borderBottom: `1px solid ${colors.border}` }}>
+          <label style={{ display: 'grid', gap: '0.35rem', color: colors.textSecondary, fontSize: font.caption }}>
+            {t('loan.filter.startDate')}
+            <input
+              type="date"
+              value={loanDateRange.startDate}
+              max={loanDateRange.endDate}
+              onChange={(event) => {
+                const startDate = event.target.value;
+                setLoanDateRange(current => ({
+                  startDate,
+                  endDate: current.endDate && startDate > current.endDate ? startDate : current.endDate,
+                }));
+              }}
+              style={{ ...styles.input, width: '170px' }}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: '0.35rem', color: colors.textSecondary, fontSize: font.caption }}>
+            {t('loan.filter.endDate')}
+            <input
+              type="date"
+              value={loanDateRange.endDate}
+              min={loanDateRange.startDate}
+              onChange={(event) => {
+                const endDate = event.target.value;
+                setLoanDateRange(current => ({
+                  startDate: current.startDate && endDate < current.startDate ? endDate : current.startDate,
+                  endDate,
+                }));
+              }}
+              style={{ ...styles.input, width: '170px' }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handlePrintLoanAudit}
+            disabled={filteredAuditableLoans.length === 0}
+            style={{
+              ...styles.btn(colors.blue),
+              marginLeft: 'auto',
+              opacity: filteredAuditableLoans.length === 0 ? 0.55 : 1,
+              cursor: filteredAuditableLoans.length === 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            🖨 {t('loan.print')}
+          </button>
+        </div>
+
+        {filteredAuditableLoans.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem', color: colors.textMuted }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💰</div>
             <div>{t('loan.empty')}</div>

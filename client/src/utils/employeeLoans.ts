@@ -68,3 +68,13 @@ export const getAuditableLoanRecords = <T extends EmployeeLoanRecord>(
   loan.status !== 'cancelled'
   && expenses.some(expense => loanMatchesExpense(loan, expense))
 ));
+
+export const filterLoanRecordsByDateRange = <T extends EmployeeLoanRecord>(
+  loans: T[],
+  startDate: string,
+  endDate: string
+): T[] => loans.filter(loan => {
+  const loanDate = String(loan.date || '');
+  if (!loanDate) return false;
+  return (!startDate || loanDate >= startDate) && (!endDate || loanDate <= endDate);
+});

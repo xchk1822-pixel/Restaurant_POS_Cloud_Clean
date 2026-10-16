@@ -122,6 +122,10 @@ describe('interface translations', () => {
     expect(translate('es-NI', 'loan.deducted')).toBe('Deducido');
     expect(translate('es-NI', 'loan.action')).toBe('Estado');
     expect(translate('es-NI', 'loan.stat.outstanding')).toBe('Saldo pendiente');
+    expect(translate('zh-CN', 'loan.print')).toBe('打印核对单');
+    expect(translate('es-NI', 'loan.print')).toBe('Imprimir conciliación');
+    expect(translate('zh-CN', 'loan.printSubtotal')).toBe('员工小计');
+    expect(translate('es-NI', 'loan.printDeductionPeriod')).toBe('Período de deducción');
   });
 
   test('supports Chinese and Nicaraguan Spanish in payroll settlement', () => {
