@@ -286,6 +286,27 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
   const auditableLoans = getAuditableLoanRecords(loanRecords, loanExpenseRecords);
+  const auditableLoanGroups = auditableLoans.reduce<Array<{
+    employeeId: string;
+    employeeName: string;
+    loans: LoanRecord[];
+  }>>((groups, loan) => {
+    let group = groups.find(item => item.employeeId === loan.employeeId);
+    if (!group) {
+      const employee = employees.find(item => item.id === loan.employeeId);
+      group = {
+        employeeId: loan.employeeId,
+        employeeName: employee?.name || loan.employeeName || t('loan.unknown'),
+        loans: [],
+      };
+      groups.push(group);
+    }
+    group.loans.push(loan);
+    return groups;
+  }, []).map(group => ({
+    ...group,
+    loans: group.loans.sort((a, b) => b.date.localeCompare(a.date)),
+  })).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   const positionLabels: Record<string, string> = {
     '收银员': t('employee.position.cashier'),
     '服务员': t('employee.position.waiter'),
@@ -338,7 +359,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>{t('loan.employee')}</th>
                   <th style={styles.th}>{t('loan.date')}</th>
                   <th style={styles.th}>{t('loan.amount')}</th>
                   <th style={styles.th}>{t('loan.remaining')}</th>
@@ -346,40 +366,56 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {auditableLoans.map((loan) => {
-                  const emp = employees.find(e => e.id === loan.employeeId);
-                  const isDeducted = loan.status === 'deducted' || loan.remainingAmount <= 0;
-                  return (
-                    <tr key={loan.id}>
-                      <td style={{ ...styles.td, fontWeight: '600' }}>{emp?.name || t('loan.unknown')}</td>
-                      <td style={styles.td}>{loan.date}</td>
-                      <td style={{ ...styles.td, fontWeight: '600', color: colors.danger }}>
-                        C$ {loan.amount.toFixed(2)}
-                      </td>
-                      <td style={{ ...styles.td, fontWeight: 'bold', color: colors.amber }}>
-                        C$ {loan.remainingAmount.toFixed(2)}
-                      </td>
-                      <td style={styles.td}>
-                        {isDeducted ? (
-                          <div>
-                            <span style={{ fontSize: font.caption, fontWeight: 700, color: colors.success }}>
-                              {t('loan.deducted')}
-                            </span>
-                            {loan.deductionPeriod && (
-                              <div style={{ marginTop: '0.2rem', fontSize: font.caption, color: colors.textMuted }}>
-                                {loan.deductionPeriod}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
-                            {t('loan.payrollDeduction')}
-                          </span>
-                        )}
+                {auditableLoanGroups.map(group => (
+                  <React.Fragment key={group.employeeId}>
+                    <tr>
+                      <td
+                        colSpan={4}
+                        style={{
+                          ...styles.td,
+                          background: colors.blueSoft,
+                          color: colors.blue,
+                          fontWeight: 750,
+                          borderBottom: `1px solid ${colors.borderStrong}`,
+                        }}
+                      >
+                        {group.employeeName} ({group.loans.length})
                       </td>
                     </tr>
-                  );
-                })}
+                    {group.loans.map(loan => {
+                      const isDeducted = loan.status === 'deducted' || loan.remainingAmount <= 0;
+                      return (
+                        <tr key={loan.id}>
+                          <td style={styles.td}>{loan.date}</td>
+                          <td style={{ ...styles.td, fontWeight: '600', color: colors.danger }}>
+                            C$ {loan.amount.toFixed(2)}
+                          </td>
+                          <td style={{ ...styles.td, fontWeight: 'bold', color: colors.amber }}>
+                            C$ {loan.remainingAmount.toFixed(2)}
+                          </td>
+                          <td style={styles.td}>
+                            {isDeducted ? (
+                              <div>
+                                <span style={{ fontSize: font.caption, fontWeight: 700, color: colors.success }}>
+                                  {t('loan.deducted')}
+                                </span>
+                                {loan.deductionPeriod && (
+                                  <div style={{ marginTop: '0.2rem', fontSize: font.caption, color: colors.textMuted }}>
+                                    {loan.deductionPeriod}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: font.caption, color: colors.textSecondary }}>
+                                {t('loan.payrollDeduction')}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
               </tbody>
             </table>
           </div>

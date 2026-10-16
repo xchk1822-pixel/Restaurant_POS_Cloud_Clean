@@ -16,17 +16,19 @@ Salary settlement correctly changed a fully repaid loan to `deducted` with a zer
 - Loan management uses a separate audit list that keeps active and deducted loans with their original linked expense evidence.
 - Cancelled loans remain excluded.
 - Deducted rows show zero remaining balance, `已扣除` / `Deducido`, and the salary deduction period when available.
+- Audit history is grouped by employee, with each employee's loans kept in an independent section and newest records first.
 - Active-loan counters and outstanding totals remain unchanged.
 
 ## Verification
 
 - Focused employee loan and translation tests passed.
 - Full suite passed: 40 suites, 532 tests.
-- Production build passed: `main.150af586.js`.
+- Production build passed: `main.4253776d.js`.
 - Real browser loaded current cloud data and confirmed:
   - active counters remained zero for fully settled loans;
   - historical deducted loans remained visible;
+  - each employee had an independent group and group records were ordered newest first;
   - deduction periods were displayed;
-  - Spanish showed `Estado` and `Deducido`;
+  - Chinese and Spanish showed `已扣除` / `Deducido` correctly;
   - browser console had no errors or warnings.
 
