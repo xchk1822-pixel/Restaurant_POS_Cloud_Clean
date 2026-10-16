@@ -95,6 +95,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [loanAmountInput, setLoanAmountInput] = useState('');
   const [loanDateRange, setLoanDateRange] = useState(getDefaultLoanDateRange);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [loanFormData, setLoanFormData] = useState<Partial<LoanRecord>>({
     employeeId: '',
     date: getLocalDateString(),
@@ -303,11 +304,24 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
   const auditableLoans = getAuditableLoanRecords(loanRecords, loanExpenseRecords);
-  const filteredAuditableLoans = filterLoanRecordsByDateRange(
+  const auditableLoanEmployeeOptions = auditableLoans.reduce<Array<{ id: string; name: string }>>((options, loan) => {
+    if (options.some(option => option.id === loan.employeeId)) return options;
+    const employee = employees.find(item => item.id === loan.employeeId);
+    options.push({
+      id: loan.employeeId,
+      name: employee?.name || loan.employeeName || t('loan.unknown'),
+    });
+    return options;
+  }, []).sort((a, b) => a.name.localeCompare(b.name));
+  const dateFilteredAuditableLoans = filterLoanRecordsByDateRange(
     auditableLoans,
     loanDateRange.startDate,
     loanDateRange.endDate
   );
+  const filteredAuditableLoans = selectedEmployeeId
+    ? dateFilteredAuditableLoans.filter(loan => loan.employeeId === selectedEmployeeId)
+    : dateFilteredAuditableLoans;
+  const selectedEmployeeName = auditableLoanEmployeeOptions.find(option => option.id === selectedEmployeeId)?.name;
   const auditableLoanGroups = filteredAuditableLoans.reduce<Array<{
     employeeId: string;
     employeeName: string;
@@ -325,10 +339,15 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     }
     group.loans.push(loan);
     return groups;
-  }, []).map(group => ({
-    ...group,
-    loans: group.loans.sort((a, b) => b.date.localeCompare(a.date)),
-  })).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, []).map(group => {
+    const loans = group.loans.sort((a, b) => b.date.localeCompare(a.date));
+    return {
+      ...group,
+      loans,
+      totalAmount: loans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0),
+      totalRemaining: loans.reduce((sum, loan) => sum + Number(loan.remainingAmount || 0), 0),
+    };
+  }).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   const positionLabels: Record<string, string> = {
     '收银员': t('employee.position.cashier'),
     '服务员': t('employee.position.waiter'),
@@ -354,8 +373,6 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
     const totalRemaining = filteredAuditableLoans.reduce((sum, loan) => sum + Number(loan.remainingAmount || 0), 0);
     const printedAt = new Date().toLocaleString(language, { timeZone: 'America/Managua' });
     const groupSections = auditableLoanGroups.map(group => {
-      const employeeTotal = group.loans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
-      const employeeRemaining = group.loans.reduce((sum, loan) => sum + Number(loan.remainingAmount || 0), 0);
       const rows = group.loans.map(loan => {
         const isDeducted = loan.status === 'deducted' || loan.remainingAmount <= 0;
         return `
@@ -390,8 +407,8 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
             <tfoot>
               <tr>
                 <td><strong>${t('loan.printSubtotal')}</strong></td>
-                <td class="amount"><strong>${employeeTotal.toFixed(2)}</strong></td>
-                <td class="amount"><strong>${employeeRemaining.toFixed(2)}</strong></td>
+                <td class="amount"><strong>${group.totalAmount.toFixed(2)}</strong></td>
+                <td class="amount"><strong>${group.totalRemaining.toFixed(2)}</strong></td>
                 <td colspan="3"></td>
               </tr>
             </tfoot>
@@ -430,6 +447,7 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
         <header class="header">
           <div class="title">${escapeHtml(t('loan.printTitle'))}</div>
           <div class="period">${t('loan.printPeriod')}: ${escapeHtml(loanDateRange.startDate)} - ${escapeHtml(loanDateRange.endDate)}</div>
+          ${selectedEmployeeName ? `<div class="period">${t('loan.employee')}: ${escapeHtml(selectedEmployeeName)}</div>` : ''}
         </header>
         <div class="summary">
           <div class="summary-item"><div class="summary-label">${t('loan.printRecords')}</div><div class="summary-value">${filteredAuditableLoans.length}</div></div>
@@ -512,6 +530,19 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
               style={{ ...styles.input, width: '170px' }}
             />
           </label>
+          <label style={{ display: 'grid', gap: '0.35rem', color: colors.textSecondary, fontSize: font.caption }}>
+            {t('loan.filter.employee')}
+            <select
+              value={selectedEmployeeId}
+              onChange={(event) => setSelectedEmployeeId(event.target.value)}
+              style={{ ...styles.select, width: '210px' }}
+            >
+              <option value="">{t('loan.filter.allEmployees')}</option>
+              {auditableLoanEmployeeOptions.map(option => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             onClick={handlePrintLoanAudit}
@@ -557,7 +588,14 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
                           borderBottom: `1px solid ${colors.borderStrong}`,
                         }}
                       >
-                        {group.employeeName} ({group.loans.length})
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                          <span>{group.employeeName}</span>
+                          <span style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', color: colors.textSecondary, fontSize: font.caption, fontWeight: 600 }}>
+                            <span>{t('loan.printRecords')}: {group.loans.length}</span>
+                            <span>{t('loan.printTotalAmount')}: C$ {group.totalAmount.toFixed(2)}</span>
+                            <span>{t('loan.printTotalRemaining')}: C$ {group.totalRemaining.toFixed(2)}</span>
+                          </span>
+                        </div>
                       </td>
                     </tr>
                     {group.loans.map(loan => {

@@ -124,6 +124,8 @@ describe('interface translations', () => {
     expect(translate('es-NI', 'loan.stat.outstanding')).toBe('Saldo pendiente');
     expect(translate('zh-CN', 'loan.print')).toBe('打印核对单');
     expect(translate('es-NI', 'loan.print')).toBe('Imprimir conciliación');
+    expect(translate('zh-CN', 'loan.filter.allEmployees')).toBe('全部员工');
+    expect(translate('es-NI', 'loan.filter.employee')).toBe('Filtrar por empleado');
     expect(translate('zh-CN', 'loan.printSubtotal')).toBe('员工小计');
     expect(translate('es-NI', 'loan.printDeductionPeriod')).toBe('Período de deducción');
   });
