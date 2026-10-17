@@ -35,23 +35,13 @@ export const getDailySalaryForDate = (
   dateText: string
 ): number => resolveMonthlySalary(employee) / getCalendarDaysInMonth(dateText);
 
-export const getSemiMonthlySalaryDayRate = (
-  employee: SalaryEmployeeRate,
-  dateText: string
-): number => {
-  const day = Number(String(dateText).slice(8, 10));
-  const daysInMonth = getCalendarDaysInMonth(dateText);
-  const daysInHalf = day <= 15 ? 15 : Math.max(1, daysInMonth - 15);
-  return resolveMonthlySalary(employee) / 2 / daysInHalf;
-};
-
 export const calculateBaseSalary = (
   employee: SalaryEmployeeRate,
   attendances: SalaryAttendanceDay[]
 ): number => {
   const exactBaseSalary = attendances
     .filter(record => record.status === 'normal' || record.status === 'rest')
-    .reduce((sum, record) => sum + getSemiMonthlySalaryDayRate(employee, record.date), 0);
+    .reduce((sum, record) => sum + getDailySalaryForDate(employee, record.date), 0);
 
   return roundSalaryAmount(exactBaseSalary);
 };
@@ -84,7 +74,7 @@ export const calculatePeriodBaseSalary = (
   for (let date = effectiveStart; date <= endDate; date = addLocalDays(date, 1)) {
     const status = attendanceByDate.get(date);
     if (status !== 'absent' && status !== 'leave') {
-      exactBaseSalary += getSemiMonthlySalaryDayRate(employee, date);
+      exactBaseSalary += getDailySalaryForDate(employee, date);
     }
   }
 

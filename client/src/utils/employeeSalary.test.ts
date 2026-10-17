@@ -4,7 +4,6 @@ import {
   calculateLoanSettlement,
   calculateSalaryInstallment,
   getDailySalaryForDate,
-  getSemiMonthlySalaryDayRate,
   getSettledSalaryRecordsForRange,
   resolveMonthlySalary,
   roundSalaryAmount,
@@ -32,20 +31,18 @@ describe('employee monthly salary helpers', () => {
     expect(calculateBaseSalary({ monthlySalary: 10000 }, monthAttendance(2026, 2, 28))).toBe(10000);
   });
 
-  test('settles each complete half month to exactly half of the monthly salary', () => {
+  test('prorates each payroll period by the actual calendar days in its month', () => {
     const january = monthAttendance(2026, 1, 31);
     const february = monthAttendance(2026, 2, 28);
 
-    expect(calculateBaseSalary({ monthlySalary: 35000 }, january.slice(0, 15))).toBe(17500);
-    expect(calculateBaseSalary({ monthlySalary: 8000 }, january.slice(0, 15))).toBe(4000);
-    expect(calculateBaseSalary({ monthlySalary: 8000 }, january.slice(15))).toBe(4000);
-    expect(calculateBaseSalary({ monthlySalary: 8000 }, february.slice(15))).toBe(4000);
+    expect(calculateBaseSalary({ monthlySalary: 35000 }, january.slice(0, 15))).toBe(16935);
+    expect(calculateBaseSalary({ monthlySalary: 8000 }, january.slice(0, 15))).toBe(3871);
+    expect(calculateBaseSalary({ monthlySalary: 8000 }, january.slice(15))).toBe(4129);
+    expect(calculateBaseSalary({ monthlySalary: 8000 }, february.slice(15))).toBe(3714);
   });
 
-  test('prorates missing days within their own half month', () => {
-    expect(getSemiMonthlySalaryDayRate({ monthlySalary: 10000 }, '2026-01-01')).toBeCloseTo(333.33, 2);
-    expect(getSemiMonthlySalaryDayRate({ monthlySalary: 10000 }, '2026-01-16')).toBeCloseTo(312.5, 2);
-    expect(calculateBaseSalary({ monthlySalary: 10000 }, monthAttendance(2026, 1, 14))).toBe(4667);
+  test('rounds the accumulated daily salary once at the end of the period', () => {
+    expect(calculateBaseSalary({ monthlySalary: 10000 }, monthAttendance(2026, 1, 14))).toBe(4516);
   });
 
   test('monthly salary pays the selected calendar period and deducts only explicit unpaid days', () => {
@@ -58,13 +55,13 @@ describe('employee monthly salary helpers', () => {
       attendance,
       '2026-08-16',
       '2026-08-31'
-    )).toBe(16406);
+    )).toBe(16935);
     expect(calculatePeriodBaseSalary(
       { monthlySalary: 35000, hireDate: '2026-06-01' },
       attendance.filter(record => record.status !== 'absent'),
       '2026-08-16',
       '2026-08-31'
-    )).toBe(17500);
+    )).toBe(18065);
   });
 
   test('starts calendar salary from a mid-period hire date', () => {
@@ -73,7 +70,7 @@ describe('employee monthly salary helpers', () => {
       [],
       '2026-08-16',
       '2026-08-31'
-    )).toBe(3000);
+    )).toBe(3097);
   });
 
   test('history summary contains paid records inside the range once per employee period', () => {
@@ -96,7 +93,7 @@ describe('employee monthly salary helpers', () => {
         { date: '2026-01-02', status: 'rest' },
         { date: '2026-01-03', status: 'absent' },
       ]
-    )).toBe(667);
+    )).toBe(645);
   });
 
   test('settles the full loan unless the available wage is insufficient', () => {
