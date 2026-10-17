@@ -304,15 +304,10 @@ const LoanManagement: React.FC<LoanManagementProps> = ({
 
   const activeLoans = getVisibleLoanRecords(loanRecords, loanExpenseRecords);
   const auditableLoans = getAuditableLoanRecords(loanRecords, loanExpenseRecords);
-  const auditableLoanEmployeeOptions = auditableLoans.reduce<Array<{ id: string; name: string }>>((options, loan) => {
-    if (options.some(option => option.id === loan.employeeId)) return options;
-    const employee = employees.find(item => item.id === loan.employeeId);
-    options.push({
-      id: loan.employeeId,
-      name: employee?.name || loan.employeeName || t('loan.unknown'),
-    });
-    return options;
-  }, []).sort((a, b) => a.name.localeCompare(b.name));
+  const auditableLoanEmployeeOptions = employees
+    .filter(employee => employee.status === 'active')
+    .map(employee => ({ id: employee.id, name: employee.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const dateFilteredAuditableLoans = filterLoanRecordsByDateRange(
     auditableLoans,
     loanDateRange.startDate,

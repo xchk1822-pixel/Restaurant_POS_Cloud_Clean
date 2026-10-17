@@ -11,7 +11,8 @@
 - Loan history defaults to the first day of the current month through today.
 - Start and end dates filter the visible audit history and the printed reconciliation together.
 - Each employee group shows its record count, total loan amount, and remaining balance directly in the page header.
-- The employee selector defaults to all employees and can narrow both the history list and printout to one employee.
+- The employee selector follows the active employee archive, defaults to all employees, and can narrow both the history list and printout to one current employee.
+- Historical loans for departed employees remain available in the all-employees audit history but do not appear as selectable current personnel.
 - Outstanding-loan counters remain all-time so older unpaid loans are never hidden by the history filter.
 - Printing produces an A4 reconciliation grouped by employee with dates, amounts, remaining balances, status, deduction period, notes, employee subtotals, and filtered totals.
 - Loan creation, salary deductions, settlement, expenses, and cloud synchronization are unchanged.
