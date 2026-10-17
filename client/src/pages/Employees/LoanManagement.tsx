@@ -4,6 +4,7 @@ import { smartAddDocument } from '../../services/smartSyncService';
 import {
   filterLoanRecordsByDateRange,
   getAuditableLoanRecords,
+  getLoanHalfMonthDateRange,
   getVisibleLoanRecords,
 } from '../../utils/employeeLoans';
 import { parseOptionalMoneyInput } from '../../utils/employeeRecords';
@@ -71,8 +72,7 @@ interface LoanManagementProps {
 }
 
 const getDefaultLoanDateRange = () => {
-  const endDate = getLocalDateString();
-  return { startDate: `${endDate.slice(0, 7)}-01`, endDate };
+  return getLoanHalfMonthDateRange(getLocalDateString());
 };
 
 const escapeHtml = (value: unknown): string => String(value ?? '')

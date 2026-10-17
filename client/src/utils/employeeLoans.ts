@@ -78,3 +78,14 @@ export const filterLoanRecordsByDateRange = <T extends EmployeeLoanRecord>(
   if (!loanDate) return false;
   return (!startDate || loanDate >= startDate) && (!endDate || loanDate <= endDate);
 });
+
+export const getLoanHalfMonthDateRange = (dateText: string): { startDate: string; endDate: string } => {
+  const [year, month, day] = String(dateText).slice(0, 10).split('-').map(Number);
+  if (!year || !month || !day) return { startDate: '', endDate: '' };
+
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  if (day <= 15) return { startDate: `${monthPrefix}-01`, endDate: `${monthPrefix}-15` };
+
+  const lastDay = new Date(year, month, 0).getDate();
+  return { startDate: `${monthPrefix}-16`, endDate: `${monthPrefix}-${String(lastDay).padStart(2, '0')}` };
+};

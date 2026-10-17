@@ -1,6 +1,7 @@
 import {
   filterLoanRecordsByDateRange,
   getAuditableLoanRecords,
+  getLoanHalfMonthDateRange,
   getVisibleLoanRecords,
 } from './employeeLoans';
 
@@ -128,5 +129,20 @@ describe('employee loan helpers', () => {
 
     expect(filterLoanRecordsByDateRange(loans, '2026-10-01', '2026-10-16').map(loan => loan.id))
       .toEqual(['start', 'middle', 'end']);
+  });
+
+  test('defaults loan history to the current half-month period', () => {
+    expect(getLoanHalfMonthDateRange('2026-10-15')).toEqual({
+      startDate: '2026-10-01',
+      endDate: '2026-10-15',
+    });
+    expect(getLoanHalfMonthDateRange('2026-10-16')).toEqual({
+      startDate: '2026-10-16',
+      endDate: '2026-10-31',
+    });
+    expect(getLoanHalfMonthDateRange('2028-02-20')).toEqual({
+      startDate: '2028-02-16',
+      endDate: '2028-02-29',
+    });
   });
 });

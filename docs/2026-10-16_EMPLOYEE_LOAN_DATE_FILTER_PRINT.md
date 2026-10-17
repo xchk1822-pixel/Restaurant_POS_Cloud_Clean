@@ -8,7 +8,7 @@
 
 ## Behavior
 
-- Loan history defaults to the first day of the current month through today.
+- Loan history defaults to the current payroll half-month: days 1-15 or days 16 through month-end.
 - Start and end dates filter the visible audit history and the printed reconciliation together.
 - Each employee group shows its record count, total loan amount, and remaining balance directly in the page header.
 - The employee selector follows the active employee archive, defaults to all employees, and can narrow both the history list and printout to one current employee.
@@ -19,11 +19,12 @@
 
 ## Verification
 
-- Date-range helper test covers inclusive start and end boundaries.
+- Date-range helper tests cover inclusive filtering plus the 15/16 and leap-year month-end boundaries.
 - Full suite passed: 40 suites, 533 tests.
-- Production build passed: `main.a2c006b6.js`.
+- Production build passed: `main.f18a8db1.js`.
 - Real browser loaded current cloud data and confirmed:
-  - default range was `2026-10-01` through `2026-10-16`;
+  - on October 16 the default range was `2026-10-16` through `2026-10-31`;
+  - the employee selector contained only active employee archive entries and excluded the departed employee AARON;
   - all-employee mode displayed record count, total amount, and remaining amount for every employee group;
   - selecting Rafa reduced the history to four records with C$ 5000.00 total and C$ 0.00 remaining;
   - the Rafa printout identified the selected employee and contained only the same four records and totals;
