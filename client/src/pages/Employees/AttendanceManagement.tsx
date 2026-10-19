@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getLocalDateString } from '../../utils/exchangeRate';
-import { smartSetDocument } from '../../services/smartSyncService';
+import { smartGetDocumentsByDateRange, smartSetDocument } from '../../services/smartSyncService';
+import { dataService } from '../../services/DataService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../i18n/I18nContext';
 import { resolveMonthlySalary } from '../../utils/employeeSalary';
+import { getWeekRange } from '../../utils/employeeRestSchedule';
 
 interface Employee {
   id: string;
@@ -80,6 +82,39 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
   const canRepairAttendance = user?.role === 'store_manager' || user?.role === 'multi_store_manager' || user?.role === 'super_admin';
   const attendanceActionLocksRef = useRef<Set<string>>(new Set());
   const [attendanceActionKeys, setAttendanceActionKeys] = useState<Set<string>>(new Set());
+  const [scheduledRestEmployeeIds, setScheduledRestEmployeeIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let active = true;
+    const { startDate } = getWeekRange(selectedDate);
+    smartGetDocumentsByDateRange(
+      'employee_rest_schedules',
+      'weekStart',
+      startDate,
+      startDate,
+      false
+    ).then((records: any[]) => {
+      if (!active) return;
+      setScheduledRestEmployeeIds(new Set(
+        records
+          .filter(record => record?.restDate === selectedDate)
+          .map(record => String(record.employeeId))
+      ));
+      if (records.length > 0) {
+        const merged = new Map<string, any>();
+        [...dataService.getData('employee_rest_schedules'), ...records].forEach(record => {
+          if (record?.id) merged.set(String(record.id), record);
+        });
+        dataService.saveData('employee_rest_schedules', Array.from(merged.values()));
+      }
+    }).catch(error => {
+      console.warn('Weekly rest schedule hint unavailable:', error);
+      if (active) setScheduledRestEmployeeIds(new Set());
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedDate]);
 
   useEffect(() => {
     if (attendanceRangeTouchedRef.current) {
@@ -640,6 +675,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
               const checkInLocked = Boolean(todayRecord) || attendanceActionPending;
               const checkOutLocked = dayClosedByStatus || !todayRecord?.checkIn || Boolean(todayRecord?.checkOut) || attendanceActionPending;
               const quickMarkLocked = Boolean(todayRecord) || attendanceActionPending;
+              const hasScheduledRest = scheduledRestEmployeeIds.has(emp.id);
               return (
                 <div key={emp.id} style={{
                   padding: '1rem',
@@ -651,6 +687,11 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
                   <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.75rem' }}>
                     {positionLabels[emp.position] || emp.position}
                   </div>
+                  {hasScheduledRest && (
+                    <div style={{ marginBottom: '0.7rem', padding: '0.38rem 0.55rem', borderRadius: '0.4rem', background: '#ede9fe', color: '#6d28d9', fontSize: '0.75rem', fontWeight: 700 }}>
+                      {t('restSchedule.attendanceHint')}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     {/* 鎵撳崱鎸夐挳 */}
                     <div style={{ display: 'flex', gap: '0.5rem' }}>

@@ -60,6 +60,7 @@ const menuItems: NavItem[] = [
       { path: '/employees', icon: 'EP', labelKey: 'nav.employees.profile' },
       { path: '/employees/attendance', icon: 'AT', labelKey: 'nav.employees.attendance' },
       { path: '/employees/attendance-records', icon: 'AR', labelKey: 'nav.employees.attendanceRecords' },
+      { path: '/employees/rest-schedule', icon: 'RS', labelKey: 'nav.employees.restSchedule' },
       { path: '/employees/loans', icon: 'LN', labelKey: 'nav.employees.loans' },
       { path: '/employees/salary', icon: 'PY', labelKey: 'nav.employees.salary' },
     ],

@@ -8,6 +8,7 @@ const STORE_COLLECTIONS = [
   'employees',
   'employee_deletions',
   'attendance_records',
+  'employee_rest_schedules',
   'salary_records',
   'loan_records',
   'cash_flow_records',

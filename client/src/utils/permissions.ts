@@ -1,6 +1,6 @@
 import type { UserRole } from '../contexts/AuthContext';
 
-export const PERMISSION_SCHEMA_VERSION = 7;
+export const PERMISSION_SCHEMA_VERSION = 8;
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   super_admin: ['dashboard', 'customers:promotion-settings', 'settings', 'settings:stores', 'settings:exchange', 'settings:permissions', 'settings:backup'],
@@ -19,6 +19,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'employees:profile',
     'employees:attendance',
     'employees:attendance-records',
+    'employees:rest-schedule',
     'employees:loans',
     'employees:salary',
     'manager',
@@ -46,6 +47,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'employees:profile',
     'employees:attendance',
     'employees:attendance-records',
+    'employees:rest-schedule',
     'employees:loans',
     'employees:salary',
     'manager',
@@ -117,6 +119,15 @@ export const migrateRolePermissions = (
     !next.includes('employees:attendance-records')
   ) {
     next.push('employees:attendance-records');
+  }
+
+  if (
+    (role === 'store_manager' || role === 'multi_store_manager') &&
+    permissionSchemaVersion !== PERMISSION_SCHEMA_VERSION &&
+    permissions.includes('employees') &&
+    !next.includes('employees:rest-schedule')
+  ) {
+    next.push('employees:rest-schedule');
   }
 
   return next;

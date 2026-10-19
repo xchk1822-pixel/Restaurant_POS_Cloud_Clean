@@ -85,6 +85,11 @@ service cloud.firestore {
         || hasStorePermissionOrParent(storeId, 'employees:attendance', 'employees');
     }
 
+    function canManageRestSchedules(storeId) {
+      return canManageStore(storeId)
+        || hasStorePermissionOrParent(storeId, 'employees:rest-schedule', 'employees');
+    }
+
     function canManageEmployeeLoans(storeId) {
       return canManageStore(storeId)
         || hasStorePermissionOrParent(storeId, 'employees:loans', 'employees');
@@ -185,6 +190,11 @@ service cloud.firestore {
     match /stores/{storeId}/attendance_records/{recordId} {
       allow read: if hasStoreAccess(storeId);
       allow write: if canManageAttendance(storeId) || canManageEmployeeSalaries(storeId);
+    }
+
+    match /stores/{storeId}/employee_rest_schedules/{scheduleId} {
+      allow read: if hasStoreAccess(storeId);
+      allow write: if canManageRestSchedules(storeId);
     }
 
     match /stores/{storeId}/salary_records/{recordId} {

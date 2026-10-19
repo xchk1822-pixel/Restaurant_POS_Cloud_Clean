@@ -2587,6 +2587,7 @@ describe('production data safety guards', () => {
     expect(appSource).toContain('permissionId="inventory:purchase"');
     expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:profile', 'employees')");
     expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:attendance', 'employees')");
+    expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:rest-schedule', 'employees')");
     expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:loans', 'employees')");
     expect(rules).toContain("hasStorePermissionOrParent(storeId, 'employees:salary', 'employees')");
     expect(rules).toContain("hasStorePermissionOrParent(storeId, 'inventory:items', 'inventory')");
@@ -5276,7 +5277,7 @@ describe('production data safety guards', () => {
     const attendancePath = path.join(process.cwd(), 'src/pages/Employees/AttendanceManagement.tsx');
     const source = fs.readFileSync(attendancePath, 'utf8');
 
-    expect(source).toContain("import { smartSetDocument }");
+    expect(source).toContain('smartSetDocument');
     expect(source).toContain('const handleCheckIn = async');
     expect(source).toContain('const handleQuickMark = async');
     expect(source).toContain("await smartSetDocument('attendance_records', recordToSave.id, recordToSave)");

@@ -8,6 +8,7 @@ import EmployeeList from './EmployeeList';
 import AttendanceManagement from './AttendanceManagement';
 import LoanManagement from './LoanManagement';
 import SalarySettlement from './SalarySettlement';
+import WeeklyRestSchedule from './WeeklyRestSchedule';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
 
@@ -127,15 +128,16 @@ const EmployeesModule: React.FC = () => {
   const location = useLocation();
   const { t } = useI18n();
 
-  const getPathTab = (): 'employees' | 'attendance' | 'loans' | 'salary' => {
+  const getPathTab = (): 'employees' | 'attendance' | 'rest-schedule' | 'loans' | 'salary' => {
     const path = location.pathname;
+    if (path.includes('/rest-schedule')) return 'rest-schedule';
     if (path.includes('/attendance')) return 'attendance';
     if (path.includes('/loans')) return 'loans';
     if (path.includes('/salary')) return 'salary';
     return 'employees';
   };
 
-  const [activeTab, setActiveTab] = useState<'employees' | 'attendance' | 'loans' | 'salary'>(
+  const [activeTab, setActiveTab] = useState<'employees' | 'attendance' | 'rest-schedule' | 'loans' | 'salary'>(
     getPathTab()
   );
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -290,6 +292,9 @@ const EmployeesModule: React.FC = () => {
             setAttendanceRecords={setAttendanceRecords}
             view={location.pathname.includes('/attendance-records') ? 'records' : 'checkin'}
           />
+        )}
+        {activeTab === 'rest-schedule' && (
+          <WeeklyRestSchedule employees={employees} />
         )}
         {activeTab === 'loans' && (
           <LoanManagement

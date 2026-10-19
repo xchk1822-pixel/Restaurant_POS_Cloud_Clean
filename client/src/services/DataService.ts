@@ -14,6 +14,7 @@ class DataService {
     pos_orders: 1000,
     purchase_orders: 500,
     attendance_records: 800,
+    employee_rest_schedules: 500,
     salary_records: 500,
     handovers: 400,
     points_transactions: 800,

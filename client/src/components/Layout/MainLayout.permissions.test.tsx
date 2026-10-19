@@ -58,4 +58,16 @@ describe('permission-aware navigation', () => {
       '/employees/attendance-records',
     ]);
   });
+
+  test('shows weekly rest schedules as a standalone assigned child permission', () => {
+    cacheConfiguredRolePermissions('cashier', {
+      permissionSchemaVersion: 8,
+      permissions: ['employees:rest-schedule'],
+    });
+
+    const employeesMenu = getAccessibleMenuItems('cashier').find(item => item.path === '/employees');
+    expect(employeesMenu?.children?.map(child => child.path)).toEqual([
+      '/employees/rest-schedule',
+    ]);
+  });
 });

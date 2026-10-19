@@ -43,6 +43,7 @@ const PERMISSION_TREE: PermissionNode[] = [
       { id: 'employees:profile', name: '员工档案', icon: '👤' },
       { id: 'employees:attendance', name: '考勤管理', icon: '📅' },
       { id: 'employees:attendance-records', name: '考勤记录', icon: 'AR' },
+      { id: 'employees:rest-schedule', name: '每周休息安排', icon: 'RS' },
       { id: 'employees:loans', name: '借款管理', icon: '💸' },
       { id: 'employees:salary', name: '薪资结算', icon: '💰' },
     ]

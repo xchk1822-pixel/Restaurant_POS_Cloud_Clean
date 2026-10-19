@@ -111,6 +111,22 @@ describe('permissions compatibility', () => {
     expect(canAccessPermission('store_manager', 'employees:attendance-records')).toBe(true);
   });
 
+  test('weekly rest schedules are independently assignable and migrate for existing managers', () => {
+    cacheConfiguredRolePermissions('cashier', {
+      permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,
+      permissions: ['employees:rest-schedule'],
+    });
+    expect(canAccessPermission('cashier', 'employees:rest-schedule')).toBe(true);
+    expect(canAccessPermission('cashier', 'employees:attendance')).toBe(false);
+
+    localStorage.setItem('system_roles', JSON.stringify([{
+      id: 'store_manager',
+      permissionSchemaVersion: 7,
+      permissions: ['employees'],
+    }]));
+    expect(canAccessPermission('store_manager', 'employees:rest-schedule')).toBe(true);
+  });
+
   test('keeps wheel operation separate from manager-only probability settings', () => {
     cacheConfiguredRolePermissions('cashier', {
       permissionSchemaVersion: PERMISSION_SCHEMA_VERSION,

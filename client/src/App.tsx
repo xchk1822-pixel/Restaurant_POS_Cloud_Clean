@@ -92,6 +92,7 @@ function App() {
             <Route path="/employees" element={<ProtectedRoute permissionId="employees:profile"><Employees /></ProtectedRoute>} />
             <Route path="/employees/attendance" element={<ProtectedRoute permissionId="employees:attendance"><Employees /></ProtectedRoute>} />
             <Route path="/employees/attendance-records" element={<ProtectedRoute permissionId="employees:attendance-records"><Employees /></ProtectedRoute>} />
+            <Route path="/employees/rest-schedule" element={<ProtectedRoute permissionId="employees:rest-schedule"><Employees /></ProtectedRoute>} />
             <Route path="/employees/loans" element={<ProtectedRoute permissionId="employees:loans"><Employees /></ProtectedRoute>} />
             <Route path="/employees/salary" element={<ProtectedRoute permissionId="employees:salary"><Employees /></ProtectedRoute>} />
             <Route path="/manager" element={<ProtectedRoute permissionId="manager:overview"><ManagerOverview /></ProtectedRoute>} />
