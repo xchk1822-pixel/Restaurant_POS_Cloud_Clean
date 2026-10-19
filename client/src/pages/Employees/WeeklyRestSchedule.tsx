@@ -159,7 +159,6 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
     loadedRecords.map(record => [record.employeeId, normalizeRestDates(record.restDates, record.restDate)])
   ), [loadedRecords]);
 
-  const unassignedEmployees = activeEmployees.filter(employee => (selectedRestDates[employee.id] || []).length === 0);
   const hasChanges = activeEmployees.some(employee => (
     (loadedByEmployee.get(employee.id) || []).join('|') !== (selectedRestDates[employee.id] || []).join('|')
   ));
@@ -170,10 +169,6 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
 
   const handleSave = async () => {
     if (isPastWeek || isSaving) return;
-    if (unassignedEmployees.length > 0) {
-      alert(`${t('restSchedule.alert.incomplete')}: ${unassignedEmployees.map(employee => employee.name).join(', ')}`);
-      return;
-    }
     if (!window.confirm(t('restSchedule.confirmSave'))) return;
 
     const changedEmployees = activeEmployees.filter(employee => (
@@ -193,7 +188,7 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
           employeePosition: employee.position,
           weekStart: weekRange.startDate,
           weekEnd: weekRange.endDate,
-          restDate: restDates[0],
+          restDate: restDates[0] || '',
           restDates,
           status: 'saved',
           updatedAt,
@@ -326,8 +321,6 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
             </div>
 
             {isPastWeek && <div style={{ margin: '0.8rem 1rem 0', padding: '0.65rem 0.8rem', background: colors.amberSoft, color: colors.amber, borderRadius: radii.md, fontSize: font.body }}>{t('restSchedule.pastReadOnly')}</div>}
-            {!isPastWeek && unassignedEmployees.length > 0 && <div style={{ margin: '0.8rem 1rem 0', padding: '0.65rem 0.8rem', background: colors.amberSoft, color: colors.amber, borderRadius: radii.md, fontSize: font.body }}>{t('restSchedule.unassigned')}: {unassignedEmployees.map(employee => employee.name).join(', ')}</div>}
-
             <div style={{ overflowX: 'auto', padding: '1rem' }}>
               <table style={{ width: '100%', minWidth: 900, borderCollapse: 'separate', borderSpacing: 0, fontSize: font.body }}>
                 <thead><tr>
@@ -350,10 +343,6 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
                           disabled={isPastWeek || isLoading}
                           onChange={() => {
                             const next = toggleRestDate(employeeRestDates, date);
-                            if (!selected && employeeRestDates.length >= 2 && next.length === employeeRestDates.length) {
-                              alert(t('restSchedule.alert.maximum'));
-                              return;
-                            }
                             setSelectedRestDates(current => ({ ...current, [employee.id]: next }));
                           }}
                           style={{ width: 18, height: 18, accentColor: '#7c3aed', cursor: isPastWeek ? 'not-allowed' : 'pointer' }}

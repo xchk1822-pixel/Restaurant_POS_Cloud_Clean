@@ -42,11 +42,11 @@ describe('employee weekly rest schedule helpers', () => {
     expect(createRestScheduleId('2026-10-19', 'employee/1')).toBe('rest_2026-10-19_employee_1');
   });
 
-  test('supports one normal rest day and one additional exceptional day', () => {
+  test('supports any number of rest days without a hard-coded limit', () => {
     expect(toggleRestDate([], '2026-10-20')).toEqual(['2026-10-20']);
     expect(toggleRestDate(['2026-10-20'], '2026-10-22')).toEqual(['2026-10-20', '2026-10-22']);
-    expect(toggleRestDate(['2026-10-20', '2026-10-22'], '2026-10-24')).toEqual(['2026-10-20', '2026-10-22']);
-    expect(toggleRestDate(['2026-10-20', '2026-10-22'], '2026-10-20')).toEqual(['2026-10-22']);
+    expect(toggleRestDate(['2026-10-20', '2026-10-22'], '2026-10-24')).toEqual(['2026-10-20', '2026-10-22', '2026-10-24']);
+    expect(toggleRestDate(['2026-10-20', '2026-10-22', '2026-10-24'], '2026-10-20')).toEqual(['2026-10-22', '2026-10-24']);
   });
 
   test('keeps legacy single-day records readable', () => {
