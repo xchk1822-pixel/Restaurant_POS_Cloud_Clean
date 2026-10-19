@@ -5,7 +5,7 @@ import { dataService } from '../../services/DataService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../i18n/I18nContext';
 import { resolveMonthlySalary } from '../../utils/employeeSalary';
-import { getWeekRange } from '../../utils/employeeRestSchedule';
+import { getWeekRange, normalizeRestDates } from '../../utils/employeeRestSchedule';
 
 interface Employee {
   id: string;
@@ -97,7 +97,7 @@ const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
       if (!active) return;
       setScheduledRestEmployeeIds(new Set(
         records
-          .filter(record => record?.restDate === selectedDate)
+          .filter(record => normalizeRestDates(record?.restDates, record?.restDate).includes(selectedDate))
           .map(record => String(record.employeeId))
       ));
       if (records.length > 0) {

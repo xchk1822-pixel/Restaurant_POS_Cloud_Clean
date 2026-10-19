@@ -13,7 +13,9 @@ import {
   getMonthRange,
   getWeekDates,
   getWeekRange,
+  normalizeRestDates,
   shiftDateKey,
+  toggleRestDate,
 } from '../../utils/employeeRestSchedule';
 
 interface Employee {
@@ -31,6 +33,7 @@ export interface EmployeeRestScheduleRecord {
   weekStart: string;
   weekEnd: string;
   restDate: string;
+  restDates?: string[];
   status: 'saved';
   updatedAt?: string;
   updatedBy?: string;
@@ -68,7 +71,7 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
   );
   const [mode, setMode] = useState<'schedule' | 'history'>('schedule');
   const [referenceDate, setReferenceDate] = useState(today);
-  const [selectedRestDates, setSelectedRestDates] = useState<Record<string, string>>({});
+  const [selectedRestDates, setSelectedRestDates] = useState<Record<string, string[]>>({});
   const [loadedRecords, setLoadedRecords] = useState<EmployeeRestScheduleRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -104,10 +107,10 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
         true
       ) as EmployeeRestScheduleRecord[];
       if (requestId !== weekRequestRef.current) return;
-      const validRows = rows.filter(row => row.weekStart === weekRange.startDate && row.restDate);
-      const nextSelection: Record<string, string> = {};
+      const validRows = rows.filter(row => row.weekStart === weekRange.startDate && normalizeRestDates(row.restDates, row.restDate).length > 0);
+      const nextSelection: Record<string, string[]> = {};
       validRows.forEach(row => {
-        nextSelection[row.employeeId] = row.restDate;
+        nextSelection[row.employeeId] = normalizeRestDates(row.restDates, row.restDate);
       });
       setLoadedRecords(validRows);
       setSelectedRestDates(nextSelection);
@@ -128,14 +131,17 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
     try {
       const rows = await smartGetDocumentsByDateRange(
         COLLECTION,
-        'restDate',
-        range.startDate,
+        'weekStart',
+        shiftDateKey(range.startDate, -6),
         range.endDate,
         true
       ) as EmployeeRestScheduleRecord[];
       if (requestId !== historyRequestRef.current) return;
-      const sorted = [...rows].sort((left, right) => (
-        left.restDate.localeCompare(right.restDate)
+      const visibleRows = rows.filter(row => normalizeRestDates(row.restDates, row.restDate).some(
+        date => date >= range.startDate && date <= range.endDate
+      ));
+      const sorted = [...visibleRows].sort((left, right) => (
+        normalizeRestDates(left.restDates, left.restDate)[0].localeCompare(normalizeRestDates(right.restDates, right.restDate)[0])
         || left.employeeName.localeCompare(right.employeeName)
       ));
       setHistoryRecords(sorted);
@@ -150,16 +156,16 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
   }, [loadHistory, mode]);
 
   const loadedByEmployee = useMemo(() => new Map(
-    loadedRecords.map(record => [record.employeeId, record.restDate])
+    loadedRecords.map(record => [record.employeeId, normalizeRestDates(record.restDates, record.restDate)])
   ), [loadedRecords]);
 
-  const unassignedEmployees = activeEmployees.filter(employee => !selectedRestDates[employee.id]);
+  const unassignedEmployees = activeEmployees.filter(employee => (selectedRestDates[employee.id] || []).length === 0);
   const hasChanges = activeEmployees.some(employee => (
-    (loadedByEmployee.get(employee.id) || '') !== (selectedRestDates[employee.id] || '')
+    (loadedByEmployee.get(employee.id) || []).join('|') !== (selectedRestDates[employee.id] || []).join('|')
   ));
 
   const dailyCounts = weekDates.map(date => activeEmployees.filter(
-    employee => selectedRestDates[employee.id] === date
+    employee => (selectedRestDates[employee.id] || []).includes(date)
   ).length);
 
   const handleSave = async () => {
@@ -171,25 +177,29 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
     if (!window.confirm(t('restSchedule.confirmSave'))) return;
 
     const changedEmployees = activeEmployees.filter(employee => (
-      loadedByEmployee.get(employee.id) !== selectedRestDates[employee.id]
+      (loadedByEmployee.get(employee.id) || []).join('|') !== (selectedRestDates[employee.id] || []).join('|')
     ));
     if (changedEmployees.length === 0) return;
 
     setIsSaving(true);
     try {
       const updatedAt = new Date().toISOString();
-      const records = changedEmployees.map<EmployeeRestScheduleRecord>(employee => ({
-        id: createRestScheduleId(weekRange.startDate, employee.id),
-        employeeId: employee.id,
-        employeeName: employee.name,
-        employeePosition: employee.position,
-        weekStart: weekRange.startDate,
-        weekEnd: weekRange.endDate,
-        restDate: selectedRestDates[employee.id],
-        status: 'saved',
-        updatedAt,
-        updatedBy: user?.name || user?.username || 'system',
-      }));
+      const records = changedEmployees.map<EmployeeRestScheduleRecord>(employee => {
+        const restDates = selectedRestDates[employee.id];
+        return {
+          id: createRestScheduleId(weekRange.startDate, employee.id),
+          employeeId: employee.id,
+          employeeName: employee.name,
+          employeePosition: employee.position,
+          weekStart: weekRange.startDate,
+          weekEnd: weekRange.endDate,
+          restDate: restDates[0],
+          restDates,
+          status: 'saved',
+          updatedAt,
+          updatedBy: user?.name || user?.username || 'system',
+        };
+      });
       const results = await Promise.all(records.map(record => (
         smartSetDocument(COLLECTION, record.id, record)
       )));
@@ -222,11 +232,11 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
     const locale = language === 'es-NI' ? 'es-NI' : 'zh-CN';
     const printedAt = new Date().toLocaleString(locale);
     const rows = activeEmployees.map(employee => {
-      const restDate = selectedRestDates[employee.id];
+      const restDates = selectedRestDates[employee.id] || [];
       return `<tr>
         <td>${escapeHtml(employee.name)}</td>
         <td>${escapeHtml(employee.position || '-')}</td>
-        ${weekDates.map((date, index) => `<td class="${restDate === date ? 'rest' : ''}">${restDate === date ? escapeHtml(t('restSchedule.rest')) : ''}</td>`).join('')}
+        ${weekDates.map(date => `<td class="${restDates.includes(date) ? 'rest' : ''}">${restDates.includes(date) ? escapeHtml(t('restSchedule.rest')) : ''}</td>`).join('')}
       </tr>`;
     }).join('');
 
@@ -330,15 +340,22 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, fontWeight: 700, color: colors.textPrimary, background: colors.surface, position: 'sticky', left: 0, zIndex: 1 }}>{employee.name}</td>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, color: colors.textSecondary }}>{employee.position || '-'}</td>
                     {weekDates.map(date => {
-                      const selected = selectedRestDates[employee.id] === date;
+                      const employeeRestDates = selectedRestDates[employee.id] || [];
+                      const selected = employeeRestDates.includes(date);
                       return <td key={date} style={{ padding: '0.55rem 0.35rem', textAlign: 'center', borderBottom: `1px solid ${colors.border}`, background: selected ? '#f5f3ff' : colors.surface }}>
                         <input
-                          type="radio"
-                          name={`rest-${employee.id}`}
+                          type="checkbox"
                           aria-label={`${employee.name} ${date}`}
                           checked={selected}
                           disabled={isPastWeek || isLoading}
-                          onChange={() => setSelectedRestDates(current => ({ ...current, [employee.id]: date }))}
+                          onChange={() => {
+                            const next = toggleRestDate(employeeRestDates, date);
+                            if (!selected && employeeRestDates.length >= 2 && next.length === employeeRestDates.length) {
+                              alert(t('restSchedule.alert.maximum'));
+                              return;
+                            }
+                            setSelectedRestDates(current => ({ ...current, [employee.id]: next }));
+                          }}
                           style={{ width: 18, height: 18, accentColor: '#7c3aed', cursor: isPastWeek ? 'not-allowed' : 'pointer' }}
                         />
                       </td>;
@@ -375,7 +392,7 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, fontWeight: 700 }}>{record.employeeName}</td>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}` }}>{record.employeePosition || '-'}</td>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}` }}>{record.weekStart} - {record.weekEnd}</td>
-                    <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, color: '#7c3aed', fontWeight: 700 }}>{record.restDate}</td>
+                    <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}`, color: '#7c3aed', fontWeight: 700 }}>{normalizeRestDates(record.restDates, record.restDate).join(', ')}</td>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}` }}>{record.updatedBy || '-'}</td>
                     <td style={{ padding: '0.75rem', borderBottom: `1px solid ${colors.border}` }}>{record.updatedAt ? new Date(record.updatedAt).toLocaleString(language === 'es-NI' ? 'es-NI' : 'zh-CN') : '-'}</td>
                   </tr>)}

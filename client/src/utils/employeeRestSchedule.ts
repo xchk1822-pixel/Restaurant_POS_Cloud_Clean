@@ -54,3 +54,17 @@ export const getMonthRange = (monthKey: string): WeekRange => {
 export const createRestScheduleId = (weekStart: string, employeeId: string): string =>
   `rest_${weekStart}_${String(employeeId).replace(/\//g, '_')}`;
 
+export const normalizeRestDates = (restDates: unknown, legacyRestDate?: unknown): string[] => {
+  const candidates = Array.isArray(restDates) ? restDates : [legacyRestDate];
+  return Array.from(new Set(
+    candidates.filter((value): value is string => typeof value === 'string' && DATE_KEY_PATTERN.test(value))
+  )).sort().slice(0, 2);
+};
+
+export const toggleRestDate = (restDates: string[], dateKey: string): string[] => {
+  const current = normalizeRestDates(restDates);
+  if (current.includes(dateKey)) return current.filter(date => date !== dateKey);
+  if (current.length >= 2) return current;
+  return [...current, dateKey].sort();
+};
+
