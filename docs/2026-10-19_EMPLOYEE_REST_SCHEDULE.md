@@ -37,4 +37,6 @@
 - Production build passed with bundle `main.cf352eca.js`.
 - Real-browser local verification covered week navigation, one-day and two-day checkbox behavior, the two-day maximum, daily totals, history filters, and A4 print layout.
 - No rest schedule was saved during browser verification.
-- Final production verification is recorded after Firestore rules and Hosting deployment.
+- Firestore rules and Hosting deployed successfully to `restaurant-pos-1b420`.
+- Production loaded bundle `main.cf352eca.js`; Chinese and Spanish labels, one/two-day selection, two-day maximum, daily totals, and monthly history were verified in a real browser.
+- Production browser console: 0 errors, 0 warnings.
