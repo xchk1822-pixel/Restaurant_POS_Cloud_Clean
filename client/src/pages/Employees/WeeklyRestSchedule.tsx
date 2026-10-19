@@ -242,6 +242,7 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
         body { font-family: Arial, "Microsoft YaHei", sans-serif; color: #111827; margin: 0; }
         h1 { text-align: center; font-size: 20px; margin: 0 0 4px; }
         .meta { text-align: center; font-size: 11px; color: #4b5563; margin-bottom: 10px; }
+        .notice { text-align: center; font-size: 10px; font-weight: 700; margin: -5px 0 10px; }
         table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
         th, td { border: 1px solid #9ca3af; padding: 7px 4px; text-align: center; height: 34px; }
         th { background: #f3f4f6; font-weight: 700; }
@@ -255,6 +256,7 @@ const WeeklyRestSchedule: React.FC<WeeklyRestScheduleProps> = ({ employees }) =>
       </style></head><body>
       <h1>${escapeHtml(t('restSchedule.printTitle'))}</h1>
       <div class="meta">${escapeHtml(user?.storeName || '')} · ${weekRange.startDate} - ${weekRange.endDate}</div>
+      <div class="notice">${escapeHtml(t('restSchedule.referenceNote'))}</div>
       <table><thead><tr><th>${escapeHtml(t('restSchedule.employee'))}</th><th>${escapeHtml(t('restSchedule.position'))}</th>
       ${weekDates.map((date, index) => `<th>${escapeHtml(weekdayLabels[index])}<span class="date">${date.slice(5)}</span></th>`).join('')}</tr></thead>
       <tbody>${rows || `<tr><td colspan="9">${escapeHtml(t('restSchedule.emptyEmployees'))}</td></tr>`}</tbody>

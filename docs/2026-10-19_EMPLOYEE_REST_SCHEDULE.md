@@ -10,9 +10,10 @@
 
 - Rest days are assigned according to the real weekly need; an employee may have zero, one, or multiple selected days.
 - The module does not enforce a minimum or maximum and does not warn about employees without a selected rest day.
+- The schedule is planning reference only; actual rest is determined by attendance records.
 - The schedule records no work start or end time.
 - Past weeks are read-only; current and future weeks can be maintained.
-- Attendance displays a read-only planned-rest hint only. It does not create attendance, lock attendance actions, or change salary calculations.
+- Attendance displays a read-only planned-rest hint only. The schedule does not create attendance, lock attendance actions, establish actual rest, or change salary calculations.
 
 ## Data Safety
 
@@ -34,7 +35,7 @@
 ## Verification
 
 - Full client test suite passed: 41 suites, 542 tests.
-- Production build passed with bundle `main.cd2db961.js`.
+- Production build passed with bundle `main.93e41cbf.js`.
 - Real-browser local verification covered week navigation, unrestricted multi-day checkbox behavior, daily totals, history filters, and A4 print layout.
 - No rest schedule was saved during browser verification.
 - Firestore rules and Hosting deployed successfully to `restaurant-pos-1b420`.
