@@ -4448,7 +4448,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('setCollectionLocalCache(collectionName, updated);');
   });
 
-  test('inventory stock records tab supports local search filtering', () => {
+  test('inventory stock records tab supports search and item category filtering without location tabs', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');
 
@@ -4461,11 +4461,18 @@ describe('production data safety guards', () => {
     expect(source).toContain('value={stockRecordSearchTerm}');
     expect(source).toContain('onChange={(event) => setStockRecordSearchTerm(event.target.value)}');
     expect(source).toContain('filteredStockRecords.map(record =>');
-    expect(source).toContain("const [stockRecordLocationFilter, setStockRecordLocationFilter] = useState<'warehouse' | 'fridge' | 'all'>('all')");
-    expect(source).toContain("const [stockRecordFridgeFilter, setStockRecordFridgeFilter] = useState('all')");
+    expect(source).toContain("const [stockRecordCategoryFilter, setStockRecordCategoryFilter] = useState('all')");
+    expect(source).toContain('const stockRecordItemCategoryById = React.useMemo');
+    expect(source).toContain("stockRecordCategoryFilter !== 'all' && categoryKey !== stockRecordCategoryFilter");
+    expect(source).toContain("aria-label={t('inventory.filter.allCategories')}");
+    expect(source).toContain('inventoryCategories.map(category =>');
+    expect(source).not.toContain('stockRecordLocationFilter');
+    expect(source).not.toContain('stockRecordFridgeFilter');
+    expect(source).toContain('const refreshActiveInventoryView = React.useCallback');
+    expect(source).toContain('await Promise.all([refreshInventoryData(), loadStockRecords()])');
+    expect(source).toContain('onClick={() => void refreshActiveInventoryView()}');
+    expect(source).not.toContain('onClick={() => void loadStockRecords()} disabled={isLoadingStockRecords}');
     expect(source).toContain("getStockRecordLocationGroup(record)");
-    expect(source).toContain("aria-label={t('inventory.record.locationFilter')}");
-    expect(source).toContain("t('inventory.record.allFridges')");
   });
 
   test('inventory item list exposes negative stock visibility without mutating stock data', () => {
@@ -4513,7 +4520,8 @@ describe('production data safety guards', () => {
     expect(source).toContain("'number-timestamp'");
     expect(source).toContain("aria-label={t('inventory.record.startDate')}");
     expect(source).toContain("aria-label={t('inventory.record.endDate')}");
-    expect(source).toContain("isLoadingStockRecords ? t('inventory.record.loading') : t('inventory.record.refresh')");
+    expect(source).toContain("disabled={isRefreshingInventory || (activeTab === 'records' && isLoadingStockRecords)}");
+    expect(source).toContain("(isRefreshingInventory || (activeTab === 'records' && isLoadingStockRecords)) ? t('inventory.syncing') : t('inventory.refresh')");
   });
 
   test('inventory stock ledger displays location and authoritative before-after balances', () => {
@@ -4533,6 +4541,9 @@ describe('production data safety guards', () => {
     expect(source).toContain('{formatStockRecordLocation(record, fridgeNamesById, t)}');
     expect(source).toContain('{formatOptionalStockBalance(record.warehouseBeforeStock, record.warehouseAfterStock)}');
     expect(source).toContain('{formatOptionalStockBalance(record.fridgeBeforeStock, record.fridgeAfterStock)}');
+    expect(source).toContain('const formatStockRecordNumber = (value: number): string => `${Number(value.toFixed(6))}`');
+    expect(source).toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock)) ? '#ecfdf5'");
+    expect(source).toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock)) ? '#eff6ff'");
   });
 
   test('purchase stock ledger uses confirmed balances and deletion appends a reversal record', () => {
@@ -4648,7 +4659,17 @@ describe('production data safety guards', () => {
     expect(source).toContain('Number(record.afterStock) - Number(record.beforeStock)');
     expect(source).toContain('const formatStockRecordQuantity = (record: StockRecord): string =>');
     expect(source).toContain('{formatStockRecordDisplayQuantity(record)}');
-    expect(source).toContain('return formatStockRecordQuantity(record)');
+    expect(source).toContain('return formatStockRecordNumber(Math.abs(signedQuantity))');
+    expect(source).toContain('const transferQuantity = Math.max(');
+    expect(source).toContain("type StockRecordBusinessType = 'in' | 'out' | 'transfer' | 'stocktake'");
+    expect(source).toContain("source === 'fridge_transfer' || record.type === 'transfer'");
+    expect(source).toContain("source.endsWith('_stocktake')");
+    expect(source).toContain("getStockRecordSignedQuantity(record) < 0 ? 'out' : 'in'");
+    expect(source).toContain("transfer: { icon: '↔', translationKey: 'inventory.record.transfer'");
+    expect(source).toContain("stocktake: { icon: '✓', translationKey: 'inventory.record.stocktake'");
+    expect(source).toContain('stockRecordBusinessTypePresentation[getStockRecordBusinessType(record)]');
+    expect(source).toContain("minWidth: '5.5rem'");
+    expect(source).toContain("whiteSpace: 'nowrap'");
     expect(source).not.toContain("{record.type === 'in' ? '+' : '-'}{record.quantity}");
   });
 

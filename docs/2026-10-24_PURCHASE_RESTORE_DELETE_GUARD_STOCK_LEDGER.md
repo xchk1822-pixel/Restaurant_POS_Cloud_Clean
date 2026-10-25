@@ -30,7 +30,13 @@
 
 - The records table has separate `warehouse before -> after` and `fridge before -> after` columns.
 - A warehouse/fridge transfer is grouped into one visible row so both balances can be compared directly.
-- Location filters support warehouse, fridge, all locations, and a specific fridge.
+- Warehouse and fridge values always appear together in the same table; they are not split into separate views.
+- The top filter selects an item category, while free-text search continues to support item, order, reason, operator, and fridge.
+- Warehouse balances use green emphasis and fridge balances use blue emphasis. The quantity column shows one absolute movement amount; direction remains visible in the movement type and before/after balances.
+- Movement type is normalized into four business labels: inbound (green), outbound (red), transfer (purple), and stocktake (amber). Labels use a stable single-line width; historical technical record types remain unchanged.
+- Item category is an inline badge and table spacing is compact so more movement rows remain visible.
+- The duplicate records refresh button was removed. The main inventory refresh button refreshes the selected stock-record date range when the records tab is active.
+- Display formatting removes floating-point noise without changing stored inventory values.
 - New purchase, deletion, stocktake, and item-edit records store the authenticated account as operator.
 - Legacy records that contain `system` are labelled as an old record without a captured account; no account name is fabricated.
 
@@ -40,5 +46,8 @@
 - `npm run build`: compiled successfully.
 - Firestore rules and Firebase Hosting were deployed to `restaurant-pos-1b420`.
 - Real-browser verification confirmed the 2026-10-17 purchase at C$8,821 and the separate 2026-10-24 purchase at C$3,143 under the same merchant reference.
-- Real-browser verification confirmed one transfer row showing quantity `-7 / +7`, warehouse `7 -> 0`, fridge `5 -> 12`, and operator `belki`.
+- Real-browser verification confirmed one transfer row showing quantity `7`, warehouse `7 -> 0`, fridge `5 -> 12`, and operator `belki`.
 - Real-browser verification confirmed restored purchase ledger rows show operator `zeng`.
+- Production browser verification at 1440x900 confirmed the category filter, compact rows, same-table warehouse/fridge balances, and complete single-line type labels.
+- The `Cerveza` category displayed `5 / 33` records; after using the only top `刷新库存` action it remained `5 / 33`.
+- Production data contained and rendered all four business types with the intended green/red/purple/amber colors. Browser console result: 0 errors and 0 warnings.
