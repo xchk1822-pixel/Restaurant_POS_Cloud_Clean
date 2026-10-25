@@ -34,7 +34,7 @@
 - The top filter selects an item category, while free-text search continues to support item, order, reason, operator, and fridge.
 - Warehouse balances use green emphasis and fridge balances use blue emphasis. The quantity column shows one absolute movement amount; direction remains visible in the movement type and before/after balances.
 - Movement type is normalized into four business labels: inbound (green), outbound (red), transfer (purple), and stocktake (amber). Labels use a stable single-line width; historical technical record types remain unchanged.
-- Item category is an inline badge and table spacing is compact so more movement rows remain visible.
+- Item category remains available in the top filter but is not repeated beside every item name; compact table spacing keeps more movement rows visible.
 - The duplicate records refresh button was removed. The main inventory refresh button refreshes the selected stock-record date range when the records tab is active.
 - Display formatting removes floating-point noise without changing stored inventory values.
 - New purchase, deletion, stocktake, and item-edit records store the authenticated account as operator.

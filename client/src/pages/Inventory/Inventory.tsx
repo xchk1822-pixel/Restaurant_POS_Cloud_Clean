@@ -1805,14 +1805,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           {formatStockRecordTime(record, language === 'es-NI' ? 'es-NI' : 'zh-CN')}
                     </td>
                     <td style={{ padding: '0.5rem 0.65rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
-                        <span style={{ fontWeight: '600' }}>{record.itemName}</span>
-                      {stockRecordItemCategoryById[record.itemId] && (
-                        <span style={{ padding: '0.1rem 0.35rem', borderRadius: '0.25rem', backgroundColor: '#f3f4f6', color: '#6b7280', fontSize: '0.7rem' }}>
-                          {getCategoryName(stockRecordItemCategoryById[record.itemId])}
-                        </span>
-                      )}
-                      </div>
+                      <span style={{ fontWeight: '600', whiteSpace: 'nowrap' }}>{record.itemName}</span>
                     </td>
                     <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem' }}>
                       <span style={{

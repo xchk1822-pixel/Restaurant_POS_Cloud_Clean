@@ -4466,6 +4466,7 @@ describe('production data safety guards', () => {
     expect(source).toContain("stockRecordCategoryFilter !== 'all' && categoryKey !== stockRecordCategoryFilter");
     expect(source).toContain("aria-label={t('inventory.filter.allCategories')}");
     expect(source).toContain('inventoryCategories.map(category =>');
+    expect(source).not.toContain('getCategoryName(stockRecordItemCategoryById[record.itemId])');
     expect(source).not.toContain('stockRecordLocationFilter');
     expect(source).not.toContain('stockRecordFridgeFilter');
     expect(source).toContain('const refreshActiveInventoryView = React.useCallback');
