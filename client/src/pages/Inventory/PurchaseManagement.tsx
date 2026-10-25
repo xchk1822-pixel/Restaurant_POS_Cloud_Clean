@@ -6,6 +6,7 @@ import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本
 import { getPurchaseOrderDateKey, getPurchaseOrderTime } from '../../utils/purchaseDates';
 import { mergePurchaseOrderRange, type ReplenishmentPurchaseDraft } from '../../utils/purchaseReplenishment';
 import { useI18n } from '../../i18n/I18nContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface Supplier {
   id: string;
@@ -88,7 +89,12 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
   onInitialDraftConsumed
 }) => {
   const { t, language } = useI18n();
+  const { user } = useAuth();
   const dateLocale = language === 'es-NI' ? 'es-NI' : 'zh-CN';
+  const operatorAccount = user?.username || user?.name || user?.id || 'unknown';
+  const canDeletePurchaseOrders = user?.role === 'super_admin'
+    || user?.role === 'multi_store_manager'
+    || user?.role === 'store_manager';
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
@@ -267,9 +273,11 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
     setIsSubmittingPurchaseOrder(true);
 
     try {
-    const existingPurchaseOrder = purchaseOrders.find(
-      order => String(order.orderNumber || '').trim() === submittedOrderNumber
-    );
+    const purchaseDate = getLocalDateString();
+    const existingPurchaseOrder = purchaseOrders.find(order => (
+      String(order.orderNumber || '').trim() === submittedOrderNumber
+      && getPurchaseOrderDateKey(order) === purchaseDate
+    ));
     if (existingPurchaseOrder) {
       showExistingPurchaseOrder(existingPurchaseOrder);
       return;
@@ -367,7 +375,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
           createdAt: order.receivedDate || order.orderDate,
           createdAtMs: now,
           lastModified: now,
-          operator: 'system'
+          operator: operatorAccount
         };
       });
       const purchaseWriteResult = await smartSavePurchaseLocally({
@@ -458,6 +466,10 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
 
   // 入库操作
   const deletePurchaseOrder = async (order: PurchaseOrder) => {
+    if (!canDeletePurchaseOrders) {
+      alert(t('purchase.alert.deleteUnauthorized'));
+      return;
+    }
     if (deletingPurchaseOrderId) {
       return;
     }
@@ -522,7 +534,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
           createdAt: new Date(now),
           createdAtMs: now,
           lastModified: now,
-          operator: 'system'
+          operator: operatorAccount
         });
       }));
       await smartDeleteDocument('expenses', `purchase-expense-${order.id}`);
@@ -942,22 +954,24 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                     >
                       🖨️ {t('purchase.print')}
                     </button>
-                    <button
-                      onClick={() => deletePurchaseOrder(order)}
-                      disabled={deletingPurchaseOrderId === order.id}
-                      style={{
-                        padding: '0.4rem 0.8rem',
-                        backgroundColor: deletingPurchaseOrderId === order.id ? '#9ca3af' : '#dc2626',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '0.25rem',
-                        fontWeight: '600',
-                        cursor: deletingPurchaseOrderId === order.id ? 'not-allowed' : 'pointer',
-                        fontSize: '0.8rem'
-                      }}
-                    >
-                      {deletingPurchaseOrderId === order.id ? t('purchase.deleting') : t('purchase.delete')}
-                    </button>
+                    {canDeletePurchaseOrders && (
+                      <button
+                        onClick={() => deletePurchaseOrder(order)}
+                        disabled={deletingPurchaseOrderId === order.id}
+                        style={{
+                          padding: '0.4rem 0.8rem',
+                          backgroundColor: deletingPurchaseOrderId === order.id ? '#9ca3af' : '#dc2626',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          fontWeight: '600',
+                          cursor: deletingPurchaseOrderId === order.id ? 'not-allowed' : 'pointer',
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        {deletingPurchaseOrderId === order.id ? t('purchase.deleting') : t('purchase.delete')}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

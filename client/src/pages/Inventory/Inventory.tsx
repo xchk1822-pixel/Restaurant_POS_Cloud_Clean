@@ -81,6 +81,15 @@ interface StockRecord {
   fridgeName?: string;
 }
 
+interface StockRecordDisplay extends StockRecord {
+  warehouseBeforeStock?: number;
+  warehouseAfterStock?: number;
+  fridgeBeforeStock?: number;
+  fridgeAfterStock?: number;
+  warehouseSignedQuantity?: number;
+  fridgeSignedQuantity?: number;
+}
+
 const isLegacyDemoStockRecord = (record: Partial<StockRecord>): boolean => {
   return record.id === 'rec1' || record.id === 'rec2';
 };
@@ -174,6 +183,8 @@ const formatStockRecordReason = (record: StockRecord, t: (key: TranslationKey) =
       return record.orderNumber ? `${t('inventory.record.reason.purchase')} ${record.orderNumber}` : t('inventory.record.reason.purchase');
     case 'purchase order deleted':
       return record.orderNumber ? `${t('inventory.record.reason.purchaseDeleted')} ${record.orderNumber}` : t('inventory.record.reason.purchaseDeleted');
+    case 'purchase order restored':
+      return record.orderNumber ? `${t('inventory.record.reason.purchaseRestored')} ${record.orderNumber}` : t('inventory.record.reason.purchaseRestored');
     case 'deleted order stock restore':
       return record.orderNumber ? `${t('inventory.record.reason.orderRestored')} ${record.orderNumber}` : t('inventory.record.reason.orderRestored');
     case 'warehouse stocktake':
@@ -187,7 +198,17 @@ const formatStockRecordReason = (record: StockRecord, t: (key: TranslationKey) =
   }
 };
 
+const getStockRecordLocationGroup = (record: StockRecord): 'warehouse' | 'fridge' => {
+  if (record.locationType === 'warehouse') return 'warehouse';
+  if (record.locationType === 'fridge') return 'fridge';
+  return record.fridgeId ? 'fridge' : 'warehouse';
+};
+
 const formatStockRecordLocation = (record: StockRecord, fridgeNamesById: Record<string, string>, t: (key: TranslationKey) => string): string => {
+  if (record.source === 'fridge_transfer') {
+    const fridgeName = record.fridgeName || fridgeNamesById[record.fridgeId || ''] || t('inventory.location.fridge');
+    return `${t('inventory.location.warehouse')} ↔ ${fridgeName}`;
+  }
   if (record.locationType === 'fridge') {
     return record.fridgeName || fridgeNamesById[record.fridgeId || ''] || record.fridgeId || t('inventory.location.fridge');
   }
@@ -195,21 +216,63 @@ const formatStockRecordLocation = (record: StockRecord, fridgeNamesById: Record<
   return '-';
 };
 
-const formatStockRecordBalance = (record: StockRecord): string => {
-  const before = Number(record.beforeStock);
-  const after = Number(record.afterStock);
+const formatOptionalStockBalance = (beforeStock: number | undefined, afterStock: number | undefined): string => {
+  const before = Number(beforeStock);
+  const after = Number(afterStock);
   if (!Number.isFinite(before) || !Number.isFinite(after)) return '-';
   return `${before} → ${after}`;
 };
 
+const buildStockRecordDisplayRows = (records: StockRecord[]): StockRecordDisplay[] => {
+  const rows: StockRecordDisplay[] = [];
+  const transferRows = new Map<string, StockRecordDisplay>();
+
+  records.forEach(record => {
+    if (record.source !== 'fridge_transfer' || !record.sourceId) {
+      rows.push({
+        ...record,
+        ...(getStockRecordLocationGroup(record) === 'fridge'
+          ? { fridgeBeforeStock: record.beforeStock, fridgeAfterStock: record.afterStock }
+          : { warehouseBeforeStock: record.beforeStock, warehouseAfterStock: record.afterStock }),
+      });
+      return;
+    }
+
+    const existing = transferRows.get(record.sourceId) || {
+      ...record,
+      id: `transfer-${record.sourceId}`,
+    };
+    if (getStockRecordLocationGroup(record) === 'fridge') {
+      existing.fridgeBeforeStock = record.beforeStock;
+      existing.fridgeAfterStock = record.afterStock;
+      existing.fridgeSignedQuantity = getStockRecordSignedQuantity(record);
+    } else {
+      existing.warehouseBeforeStock = record.beforeStock;
+      existing.warehouseAfterStock = record.afterStock;
+      existing.warehouseSignedQuantity = getStockRecordSignedQuantity(record);
+    }
+    transferRows.set(record.sourceId, existing);
+  });
+
+  return [...rows, ...Array.from(transferRows.values())].sort((a, b) => b.date.getTime() - a.date.getTime());
+};
+
+const formatStockRecordDisplayQuantity = (record: StockRecordDisplay): string => {
+  if (record.source !== 'fridge_transfer') return formatStockRecordQuantity(record);
+  const formatSigned = (value: number | undefined) => Number.isFinite(Number(value))
+    ? `${Number(value) > 0 ? '+' : ''}${Number(value)}`
+    : '-';
+  return `${formatSigned(record.warehouseSignedQuantity)} / ${formatSigned(record.fridgeSignedQuantity)}`;
+};
+
 const formatStockRecordOperator = (operator: string | undefined, t: (key: TranslationKey) => string): string => {
-  if (!operator || operator === 'system' || operator === '系统' || operator === '系统操作') return t('inventory.operator.system');
+  if (!operator || operator === 'system' || operator === '系统' || operator === '系统操作') return t('inventory.operator.legacyUnknown');
   if (operator === 'pos') return t('inventory.operator.pos');
   if (operator === '店长' || operator === 'manager') return t('inventory.operator.manager');
   return operator;
 };
 
-const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem: InventoryItem, now: number): StockRecord | null => {
+const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem: InventoryItem, now: number, operator: string): StockRecord | null => {
   const stockDifference = Number(updatedItem.currentStock || 0) - Number(oldItem.currentStock || 0);
   if (stockDifference === 0) return null;
 
@@ -230,7 +293,7 @@ const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem:
     createdAt: new Date(now),
     createdAtMs: now,
     lastModified: now,
-    operator: 'system'
+    operator
   };
 };
 
@@ -387,6 +450,7 @@ const ensureRequiredFridgeInventoryCategories = (categories: InventoryCategory[]
 const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
   const { t, language } = useI18n();
   const { user } = useAuth();
+  const operatorAccount = user?.username || user?.name || user?.id || 'unknown';
   const {
     inventoryItems,
     setInventoryItems,
@@ -654,6 +718,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     return [];
   });
   const [stockRecordSearchTerm, setStockRecordSearchTerm] = useState('');
+  const [stockRecordLocationFilter, setStockRecordLocationFilter] = useState<'warehouse' | 'fridge' | 'all'>('all');
+  const [stockRecordFridgeFilter, setStockRecordFridgeFilter] = useState('all');
   const fridgeNamesById = React.useMemo(() => Object.fromEntries(
     fridges.map(fridge => [fridge.id, fridge.name])
   ), [fridges]);
@@ -693,11 +759,17 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
     void loadStockRecords();
   }, [loadStockRecords]);
 
+  const displayStockRecords = React.useMemo(() => buildStockRecordDisplayRows(stockRecords), [stockRecords]);
+
   const filteredStockRecords = React.useMemo(() => {
     const keyword = stockRecordSearchTerm.trim().toLowerCase();
-    if (!keyword) return stockRecords;
-
-    return stockRecords.filter(record => {
+    return displayStockRecords.filter(record => {
+      const hasWarehouseMovement = Number.isFinite(Number(record.warehouseBeforeStock)) && Number.isFinite(Number(record.warehouseAfterStock));
+      const hasFridgeMovement = Number.isFinite(Number(record.fridgeBeforeStock)) && Number.isFinite(Number(record.fridgeAfterStock));
+      if (stockRecordLocationFilter === 'warehouse' && !hasWarehouseMovement) return false;
+      if (stockRecordLocationFilter === 'fridge' && !hasFridgeMovement) return false;
+      if (hasFridgeMovement && stockRecordFridgeFilter !== 'all' && record.fridgeId !== stockRecordFridgeFilter) return false;
+      if (!keyword) return true;
       const searchableText = [
         record.itemName,
         record.itemId,
@@ -716,7 +788,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
 
       return searchableText.includes(keyword);
     });
-  }, [fridgeNamesById, stockRecords, stockRecordSearchTerm, t]);
+  }, [displayStockRecords, fridgeNamesById, stockRecordFridgeFilter, stockRecordLocationFilter, stockRecordSearchTerm, t]);
+
+  const stockRecordLocationCounts = React.useMemo(() => displayStockRecords.reduce((counts, record) => {
+    if (Number.isFinite(Number(record.warehouseBeforeStock)) && Number.isFinite(Number(record.warehouseAfterStock))) counts.warehouse += 1;
+    if (Number.isFinite(Number(record.fridgeBeforeStock)) && Number.isFinite(Number(record.fridgeAfterStock))) counts.fridge += 1;
+    return counts;
+  }, { warehouse: 0, fridge: 0 }), [displayStockRecords]);
 
   // 过滤库存物品
   // 获取类别名称 - 从 inventoryCategories 中动态查找
@@ -1622,6 +1700,41 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       {activeTab === 'records' && (
         <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '0.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div role="group" aria-label={t('inventory.record.locationFilter')} style={{ display: 'flex', gap: '0.35rem', padding: '0.2rem', backgroundColor: '#f3f4f6', borderRadius: '0.45rem' }}>
+              {([
+                ['warehouse', `${t('inventory.location.warehouse')} (${stockRecordLocationCounts.warehouse})`],
+                ['fridge', `${t('inventory.location.fridge')} (${stockRecordLocationCounts.fridge})`],
+                ['all', `${t('inventory.record.allLocations')} (${displayStockRecords.length})`],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setStockRecordLocationFilter(value);
+                    if (value !== 'fridge') setStockRecordFridgeFilter('all');
+                  }}
+                  aria-pressed={stockRecordLocationFilter === value}
+                  style={{
+                    padding: '0.48rem 0.75rem',
+                    border: 'none',
+                    borderRadius: '0.32rem',
+                    backgroundColor: stockRecordLocationFilter === value ? (value === 'fridge' ? '#2563eb' : value === 'warehouse' ? '#059669' : '#4b5563') : 'transparent',
+                    color: stockRecordLocationFilter === value ? 'white' : '#4b5563',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.84rem'
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {stockRecordLocationFilter === 'fridge' && (
+              <select value={stockRecordFridgeFilter} onChange={(event) => setStockRecordFridgeFilter(event.target.value)} style={inventoryInputStyle}>
+                <option value="all">{t('inventory.record.allFridges')}</option>
+                {fridges.map(fridge => <option key={fridge.id} value={fridge.id}>{fridge.name}</option>)}
+              </select>
+            )}
             <input
               type="text"
               value={stockRecordSearchTerm}
@@ -1657,22 +1770,22 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               {isLoadingStockRecords ? t('inventory.record.loading') : t('inventory.record.refresh')}
             </button>
             <span style={{ color: '#6b7280', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-              {t('inventory.record.showing')} {filteredStockRecords.length} / {stockRecords.length}
+              {t('inventory.record.showing')} {filteredStockRecords.length} / {displayStockRecords.length}
             </span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
-                  {[t('inventory.record.time'), t('inventory.record.item'), t('inventory.record.location'), t('inventory.record.type'), t('inventory.record.quantity'), t('inventory.record.balance'), t('inventory.record.reason'), t('inventory.record.operator')].map((title, index) => (
-                    <th key={title} style={{ padding: '0.75rem', textAlign: index === 3 ? 'center' : (index === 4 || index === 5 ? 'right' : 'left'), borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{title}</th>
+                  {[t('inventory.record.time'), t('inventory.record.item'), t('inventory.record.location'), t('inventory.record.type'), t('inventory.record.quantity'), t('inventory.record.warehouseBalance'), t('inventory.record.fridgeBalance'), t('inventory.record.reason'), t('inventory.record.operator')].map((title, index) => (
+                    <th key={title} style={{ padding: '0.75rem', textAlign: index === 3 ? 'center' : (index === 4 || index === 5 || index === 6 ? 'right' : 'left'), borderBottom: '2px solid #e5e7eb', fontSize: '0.85rem', fontWeight: '600' }}>{title}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filteredStockRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
+                    <td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af' }}>
                     {t('inventory.record.empty')}
                     </td>
                   </tr>
@@ -1682,7 +1795,20 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                           {formatStockRecordTime(record, language === 'es-NI' ? 'es-NI' : 'zh-CN')}
                     </td>
                     <td style={{ padding: '0.75rem', fontWeight: '600' }}>{record.itemName}</td>
-                        <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordLocation(record, fridgeNamesById, t)}</td>
+                    <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: '0.25rem',
+                        backgroundColor: getStockRecordLocationGroup(record) === 'fridge' ? '#dbeafe' : '#d1fae5',
+                        color: getStockRecordLocationGroup(record) === 'fridge' ? '#1d4ed8' : '#047857',
+                        fontWeight: '600',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {formatStockRecordLocation(record, fridgeNamesById, t)}
+                      </span>
+                    </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                       <span style={{
                         padding: '0.25rem 0.5rem',
@@ -1696,10 +1822,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                      {formatStockRecordQuantity(record)}
+                      {formatStockRecordDisplayQuantity(record)}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-                      {formatStockRecordBalance(record)}
+                      {formatOptionalStockBalance(record.warehouseBeforeStock, record.warehouseAfterStock)}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                      {formatOptionalStockBalance(record.fridgeBeforeStock, record.fridgeAfterStock)}
                     </td>
                         <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>{formatStockRecordReason(record, t)}</td>
                         <td style={{ padding: '0.75rem', fontSize: '0.85rem', color: '#6b7280' }}>{formatStockRecordOperator(record.operator, t)}</td>
@@ -2192,7 +2321,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       lastModified: now
                     };
                     const stockAdjustmentRecord = oldItem
-                      ? createInventoryItemEditStockRecord(oldItem, updatedInventoryItem, now)
+                      ? createInventoryItemEditStockRecord(oldItem, updatedInventoryItem, now, operatorAccount)
                       : null;
                     
                     let updatedMenuItem: any = null;

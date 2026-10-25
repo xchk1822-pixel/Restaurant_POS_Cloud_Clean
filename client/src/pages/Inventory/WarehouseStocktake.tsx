@@ -19,6 +19,7 @@ import { useI18n } from '../../i18n/I18nContext';
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
   const { user } = useAuth();
+  const operatorAccount = user?.username || user?.name || user?.id || 'unknown';
   const { t } = useI18n();
   const canViewSystemStock = user?.role === 'super_admin'
     || user?.role === 'store_manager'
@@ -266,7 +267,7 @@ const WarehouseStocktake: React.FC = () => {
               createdAt: stocktakeRecord.createdAt,
               createdAtMs: now,
               lastModified: now,
-              operator: 'system'
+              operator: operatorAccount
             };
             return smartAddDocument('inventory_stock_records', record);
           })

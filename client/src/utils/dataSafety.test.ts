@@ -2553,7 +2553,7 @@ describe('production data safety guards', () => {
     expect(createBlock).toContain("alert(t('purchase.alert.localSaveFailed'))");
   });
 
-  test('employee purchase permission matches the purchase UI and atomic cloud transaction rules', () => {
+  test('employee purchase permission allows creation but purchase deletion stays manager-only', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const permissionsPath = path.join(process.cwd(), 'src/pages/Settings/PermissionsModule.tsx');
     const rulesPath = path.join(process.cwd(), '../firestore.rules');
@@ -2565,7 +2565,8 @@ describe('production data safety guards', () => {
     expect(inventorySource).toContain("canAccessPermission(user.role, 'inventory:purchase')");
     expect(inventorySource).toContain("activeTab === 'purchase' && canManagePurchases");
     expect(rules).toContain('function canManagePurchases(storeId)');
-    expect(rules).toContain('allow create, delete: if canManagePurchases(storeId);');
+    expect(rules).toContain('allow create: if canManagePurchases(storeId);');
+    expect(rules).toContain('allow delete: if canManageStore(storeId);');
     expect(rules).toContain(".hasOnly(['balance', 'lastUpdated', 'lastModified', 'updatedAt'])");
   });
 
@@ -2694,7 +2695,7 @@ describe('production data safety guards', () => {
     expect(submitBlock.match(/persistLocal: false/g)).toHaveLength(2);
   });
 
-  test('duplicate purchase order numbers reveal the existing historical order without writing stock again', () => {
+  test('duplicate merchant numbers are blocked only within the same purchase date', () => {
     const purchasePath = path.join(process.cwd(), 'src/pages/Inventory/PurchaseManagement.tsx');
     const source = fs.readFileSync(purchasePath, 'utf8');
     const locateBlock = source.slice(
@@ -2710,6 +2711,8 @@ describe('production data safety guards', () => {
 
     expect(submitBlock).toContain('purchaseOrders.find(');
     expect(submitBlock).toContain("String(order.orderNumber || '').trim() === submittedOrderNumber");
+    expect(submitBlock).toContain('const purchaseDate = getLocalDateString();');
+    expect(submitBlock).toContain('getPurchaseOrderDateKey(order) === purchaseDate');
     expect(submitBlock).not.toContain('smartGetDocumentsWhereEqual');
     expect(locateBlock).toContain('const existingOrderDate = getPurchaseOrderDateKey(existingOrder);');
     expect(locateBlock).toContain("orderNumber: String(existingOrder.orderNumber || '').trim()");
@@ -2776,12 +2779,18 @@ describe('production data safety guards', () => {
     );
 
     expect(source).toContain('const [deletingPurchaseOrderId, setDeletingPurchaseOrderId] = useState<string | null>(null)');
+    expect(source).toContain("user?.role === 'super_admin'");
+    expect(source).toContain("user?.role === 'multi_store_manager'");
+    expect(source).toContain("user?.role === 'store_manager'");
+    expect(deleteBlock).toContain('if (!canDeletePurchaseOrders)');
+    expect(deleteBlock).toContain("alert(t('purchase.alert.deleteUnauthorized'))");
     expect(source).toContain("if (!window.confirm(`${t('purchase.alert.deleteConfirmPrefix')} ${order.orderNumber}? ${t('purchase.alert.deleteConfirmSuffix')}`))");
     expect(deleteBlock).toContain("await smartDeleteDocument('purchase_orders', order.id)");
     expect(deleteBlock).toContain("await smartIncrementField('inventory_items', orderItem.itemId, 'currentStock', -quantity");
     expect(deleteBlock).toContain("syncOperationId: `purchase-delete-stock-${order.id}-${orderItem.itemId}-${itemIndex}`");
     expect(deleteBlock).toContain('id: `stock-reversal-${order.id}-${orderItem.itemId}-${itemIndex}`');
     expect(deleteBlock).toContain("source: 'purchase_order_delete'");
+    expect(deleteBlock).toContain('operator: operatorAccount');
     expect(deleteBlock).not.toContain("await smartDeleteDocument('inventory_stock_records', `stock-record-${order.id}-${orderItem.itemId}-${itemIndex}`)");
     expect(deleteBlock).toContain("await smartDeleteDocument('expenses', `purchase-expense-${order.id}`)");
     expect(deleteBlock).toContain("await smartUpdateDocument('suppliers', order.supplierId, supplierCloudUpdate)");
@@ -2805,6 +2814,7 @@ describe('production data safety guards', () => {
     );
 
     expect(deleteButtonStart).toBeGreaterThan(-1);
+    expect(source).toContain('{canDeletePurchaseOrders && (');
     expect(deleteButtonBlock).toContain('disabled={deletingPurchaseOrderId === order.id}');
     expect(deleteButtonBlock).toContain("backgroundColor: deletingPurchaseOrderId === order.id ? '#9ca3af' : '#dc2626'");
     expect(deleteButtonBlock).toContain("cursor: deletingPurchaseOrderId === order.id ? 'not-allowed' : 'pointer'");
@@ -4451,6 +4461,11 @@ describe('production data safety guards', () => {
     expect(source).toContain('value={stockRecordSearchTerm}');
     expect(source).toContain('onChange={(event) => setStockRecordSearchTerm(event.target.value)}');
     expect(source).toContain('filteredStockRecords.map(record =>');
+    expect(source).toContain("const [stockRecordLocationFilter, setStockRecordLocationFilter] = useState<'warehouse' | 'fridge' | 'all'>('all')");
+    expect(source).toContain("const [stockRecordFridgeFilter, setStockRecordFridgeFilter] = useState('all')");
+    expect(source).toContain("getStockRecordLocationGroup(record)");
+    expect(source).toContain("aria-label={t('inventory.record.locationFilter')}");
+    expect(source).toContain("t('inventory.record.allFridges')");
   });
 
   test('inventory item list exposes negative stock visibility without mutating stock data', () => {
@@ -4472,7 +4487,7 @@ describe('production data safety guards', () => {
     const inventoryPath = path.join(process.cwd(), 'src/pages/Inventory/Inventory.tsx');
     const source = fs.readFileSync(inventoryPath, 'utf8');
 
-    expect(source).toContain('const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem: InventoryItem, now: number): StockRecord | null =>');
+    expect(source).toContain('const createInventoryItemEditStockRecord = (oldItem: InventoryItem, updatedItem: InventoryItem, now: number, operator: string): StockRecord | null =>');
     expect(source).toContain('const stockDifference = Number(updatedItem.currentStock || 0) - Number(oldItem.currentStock || 0)');
     expect(source).toContain("reason: 'inventory item edit'");
     expect(source).toContain("source: 'inventory_item_edit'");
@@ -4481,6 +4496,8 @@ describe('production data safety guards', () => {
     expect(source).toContain('signedQuantity: stockDifference');
     expect(source).toContain('beforeStock: Number(oldItem.currentStock || 0)');
     expect(source).toContain('afterStock: Number(updatedItem.currentStock || 0)');
+    expect(source).toContain('operatorAccount = user?.username || user?.name || user?.id');
+    expect(source).toContain('createInventoryItemEditStockRecord(oldItem, updatedInventoryItem, now, operatorAccount)');
     expect(source).toContain("await smartAddDocument('inventory_stock_records', stockAdjustmentRecord)");
     expect(source).toContain('setStockRecords(records => [stockAdjustmentRecord, ...records]');
   });
@@ -4505,10 +4522,17 @@ describe('production data safety guards', () => {
 
     expect(source).toContain('const formatStockRecordLocation = (record: StockRecord, fridgeNamesById: Record<string, string>, t: (key: TranslationKey) => string): string =>');
     expect(source).toContain("record.fridgeName || fridgeNamesById[record.fridgeId || ''] || record.fridgeId || t('inventory.location.fridge')");
-    expect(source).toContain('const formatStockRecordBalance = (record: StockRecord): string =>');
+    expect(source).toContain('const buildStockRecordDisplayRows = (records: StockRecord[]): StockRecordDisplay[] =>');
+    expect(source).toContain("record.source !== 'fridge_transfer'");
+    expect(source).toContain("if (record.locationType === 'warehouse') return 'warehouse'");
+    expect(source).toContain("if (record.locationType === 'fridge') return 'fridge'");
+    expect(source).toContain('warehouseBeforeStock: record.beforeStock');
+    expect(source).toContain('fridgeBeforeStock: record.beforeStock');
+    expect(source).toContain("t('inventory.record.warehouseBalance')");
+    expect(source).toContain("t('inventory.record.fridgeBalance')");
     expect(source).toContain('{formatStockRecordLocation(record, fridgeNamesById, t)}');
-    expect(source).toContain('{formatStockRecordBalance(record)}');
-    expect(source).toContain("t('inventory.record.balance')");
+    expect(source).toContain('{formatOptionalStockBalance(record.warehouseBeforeStock, record.warehouseAfterStock)}');
+    expect(source).toContain('{formatOptionalStockBalance(record.fridgeBeforeStock, record.fridgeAfterStock)}');
   });
 
   test('purchase stock ledger uses confirmed balances and deletion appends a reversal record', () => {
@@ -4591,11 +4615,27 @@ describe('production data safety guards', () => {
     expect(source).toContain("return t('inventory.record.reason.fridgeToWarehouse');");
     expect(source).toContain('const formatStockRecordOperator = (operator: string | undefined, t: (key: TranslationKey) => string): string =>');
     expect(source).toContain("operator === '系统操作'");
+    expect(source).toContain("return t('inventory.operator.legacyUnknown')");
     expect(source).toContain("operator === '店长' || operator === 'manager'");
     expect(source).toContain('{formatStockRecordReason(record, t)}');
     expect(source).toContain('{formatStockRecordOperator(record.operator, t)}');
     expect(source).not.toContain('{record.reason}</td>');
     expect(source).not.toContain('{record.operator}</td>');
+  });
+
+  test('inventory movement writers record the authenticated account instead of system', () => {
+    const files = [
+      'src/pages/Inventory/Inventory.tsx',
+      'src/pages/Inventory/PurchaseManagement.tsx',
+      'src/pages/Inventory/WarehouseStocktake.tsx',
+      'src/pages/Inventory/FridgeStocktake.tsx',
+    ];
+
+    files.forEach(file => {
+      const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+      expect(source).toContain("operatorAccount = user?.username || user?.name || user?.id || 'unknown'");
+      expect(source).not.toContain("operator: 'system'");
+    });
   });
 
   test('inventory stock records display stocktake adjustment quantities with the real signed direction', () => {
@@ -4607,7 +4647,8 @@ describe('production data safety guards', () => {
     expect(source).toContain("record.type === 'adjust'");
     expect(source).toContain('Number(record.afterStock) - Number(record.beforeStock)');
     expect(source).toContain('const formatStockRecordQuantity = (record: StockRecord): string =>');
-    expect(source).toContain('{formatStockRecordQuantity(record)}');
+    expect(source).toContain('{formatStockRecordDisplayQuantity(record)}');
+    expect(source).toContain('return formatStockRecordQuantity(record)');
     expect(source).not.toContain("{record.type === 'in' ? '+' : '-'}{record.quantity}");
   });
 

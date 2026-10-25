@@ -313,7 +313,8 @@ service cloud.firestore {
 
     match /stores/{storeId}/purchase_orders/{orderId} {
       allow read: if hasStoreAccess(storeId);
-      allow create, delete: if canManagePurchases(storeId);
+      allow create: if canManagePurchases(storeId);
+      allow delete: if canManageStore(storeId);
       allow update: if canManagePurchases(storeId) || canManageSuppliers(storeId);
     }
 

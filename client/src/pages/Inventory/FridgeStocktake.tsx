@@ -39,6 +39,7 @@ const getFridgeQuantityKey = (fridgeId: string, itemId: string) => `${fridgeId}:
 const FridgeStocktake: React.FC = () => {
   const { fridges, setFridges, fridgeInventory, setFridgeInventory, inventoryItems, setInventoryItems } = useAppContext();
   const { user } = useAuth();
+  const operatorAccount = user?.username || user?.name || user?.id || 'unknown';
   const { t } = useI18n();
   const canViewSystemStock = user?.role === 'super_admin'
     || user?.role === 'store_manager'
@@ -823,7 +824,7 @@ const FridgeStocktake: React.FC = () => {
                 createdAt: historyRecord.createdAt,
                 createdAtMs: now,
                 lastModified: now,
-                operator: 'system'
+                operator: operatorAccount
               };
               return smartAddDocument('inventory_stock_records', record);
             })
