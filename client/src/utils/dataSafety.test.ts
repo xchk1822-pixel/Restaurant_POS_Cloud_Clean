@@ -4546,8 +4546,9 @@ describe('production data safety guards', () => {
     expect(source).toContain('{formatOptionalStockValue(record.warehouseAfterStock)}');
     expect(source).toContain('{formatOptionalStockValue(record.fridgeBeforeStock)}');
     expect(source).toContain('{formatOptionalStockValue(record.fridgeAfterStock)}');
-    expect(source).toContain('const formatStockRecordNumber = (value: number): string => `${Number(value.toFixed(6))}`');
-    expect(source).toContain("gridTemplateColumns: '1fr 1fr'");
+    expect(source).toContain('const formatStockRecordNumber = formatInventoryQuantity');
+    expect(source).toContain("gridTemplateColumns: '1fr auto 1fr'");
+    expect(source).toContain('<span style={{ color: typePresentation.color }}>→</span>');
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock))");
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock))");
     expect(source).not.toContain("getStockRecordLocationGroup(record) === 'fridge' ? '#dbeafe'");
@@ -4870,11 +4871,11 @@ describe('production data safety guards', () => {
       expect(source).toContain("user?.role === 'super_admin'");
     });
 
-    expect(warehouseActiveTable).toContain("canViewSystemStock ? baselineStock : '***'");
+    expect(warehouseActiveTable).toContain("canViewSystemStock ? formatInventoryQuantity(baselineStock) : '***'");
     expect(warehouseActiveTable).toContain("!canViewSystemStock ? (");
-    expect(fridgeActiveTable).toContain("canViewSystemStock ? totalStock : '***'");
-    expect(fridgeActiveTable).toContain("canViewSystemStock ? warehouseStock : '***'");
-    expect(fridgeActiveTable).toContain("canViewSystemStock ? fridgeStock : '***'");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? formatInventoryQuantity(totalStock) : '***'");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? formatInventoryQuantity(warehouseStock) : '***'");
+    expect(fridgeActiveTable).toContain("canViewSystemStock ? formatInventoryQuantity(fridgeStock) : '***'");
     expect(fridgeActiveTable).toContain("!canViewSystemStock ? (");
 
     expect(warehouseCompleteBlock).toContain("actualQuantities[item.id] === undefined");
@@ -4884,8 +4885,8 @@ describe('production data safety guards', () => {
 
     expect(warehouseSource).toContain("printStocktakeHistory('warehouse-stocktake-print')");
     expect(fridgeSource).toContain("printStocktakeHistory('fridge-stocktake-print')");
-    expect(warehouseSource).toContain('{item.systemStock}');
-    expect(fridgeSource).toContain('{item.systemStock}');
+    expect(warehouseSource).toContain('{formatInventoryQuantity(item.systemStock)}');
+    expect(fridgeSource).toContain('{formatInventoryQuantity(item.systemStock)}');
   });
 
   test('stocktake completion uses one atomic cloud commit before local success state', () => {

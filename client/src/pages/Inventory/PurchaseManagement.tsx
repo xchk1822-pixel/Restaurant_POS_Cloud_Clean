@@ -7,6 +7,7 @@ import { getPurchaseOrderDateKey, getPurchaseOrderTime } from '../../utils/purch
 import { mergePurchaseOrderRange, type ReplenishmentPurchaseDraft } from '../../utils/purchaseReplenishment';
 import { useI18n } from '../../i18n/I18nContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatInventoryQuantity } from '../../utils/inventoryQuantity';
 
 interface Supplier {
   id: string;
@@ -665,7 +666,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
               <tr>
                 <td>${idx + 1}</td>
                 <td>${item.itemName}</td>
-                <td class="amount">${item.quantity}</td>
+                <td class="amount">${formatInventoryQuantity(item.quantity)}</td>
           <td class="amount">C$ ${item.unitPrice.toFixed(2)}</td>
           <td class="amount" style="font-weight: bold;">C$ ${item.subtotal.toFixed(2)}</td>
               </tr>
@@ -905,7 +906,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                 <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>
                   {order.items.map((item, idx) => (
                     <div key={idx} style={{ padding: '0.35rem 0', borderBottom: '1px solid #f3f4f6' }}>
-                      {item.itemName} × {item.quantity} @ C$ {item.unitPrice.toFixed(2)} = C$ {item.subtotal.toFixed(2)}
+                      {item.itemName} × {formatInventoryQuantity(item.quantity)} @ C$ {item.unitPrice.toFixed(2)} = C$ {item.subtotal.toFixed(2)}
                     </div>
                   ))}
                 </div>
@@ -1067,7 +1068,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                     <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                       <td style={{ padding: '0.6rem' }}>{idx + 1}</td>
                       <td style={{ padding: '0.6rem' }}>{item.itemName}</td>
-                      <td style={{ padding: '0.6rem', textAlign: 'right' }}>{item.quantity}</td>
+                      <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatInventoryQuantity(item.quantity)}</td>
                       <td style={{ padding: '0.6rem', textAlign: 'right' }}>C$ {item.unitPrice.toFixed(2)}</td>
                       <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: '600' }}>C$ {item.subtotal.toFixed(2)}</td>
                     </tr>
@@ -1306,7 +1307,7 @@ const PurchaseManagement: React.FC<PurchaseManagementProps> = ({
                                 })
                                 .map(inv => (
                                   <option key={inv.id} value={inv.id}>
-                                {inv.name} ({t('purchase.currentStock')}: {inv.currentStock}{inv.unit}) C$ {inv.costPrice}/{inv.unit}
+                                {inv.name} ({t('purchase.currentStock')}: {formatInventoryQuantity(inv.currentStock)}{inv.unit}) C$ {inv.costPrice}/{inv.unit}
                                   </option>
                                 ))
                               }

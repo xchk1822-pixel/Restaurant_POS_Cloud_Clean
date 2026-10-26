@@ -21,6 +21,7 @@ import {
   loadStocktakeDraft,
   saveStocktakeDraft,
 } from '../../utils/stocktakeDraft';
+import { formatInventoryQuantity } from '../../utils/inventoryQuantity';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -374,7 +375,7 @@ const WarehouseStocktake: React.FC = () => {
       const date = formatStocktakeRecordDateTime(record);
       
       record.items.forEach((item: any) => {
-        csv += `${date},${item.itemName},${item.category || ''},${item.unit || ''},${item.systemStock},${item.actualStock},${item.difference}\n`;
+        csv += `${date},${item.itemName},${item.category || ''},${item.unit || ''},${formatInventoryQuantity(item.systemStock)},${formatInventoryQuantity(item.actualStock)},${formatInventoryQuantity(item.difference)}\n`;
       });
     });
     
@@ -577,7 +578,7 @@ const WarehouseStocktake: React.FC = () => {
                         {item.unit}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#3b82f6' }}>
-                        {canViewSystemStock ? baselineStock : '***'}
+                        {canViewSystemStock ? formatInventoryQuantity(baselineStock) : '***'}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                         <input
@@ -586,7 +587,7 @@ const WarehouseStocktake: React.FC = () => {
                           inputMode="decimal"
                           min="0"
                           step="any"
-                          value={isCounted ? actualCount.toString() : ''}
+                          value={isCounted ? formatInventoryQuantity(actualCount) : ''}
                           onChange={(e) => {
                             const inputValue = e.target.value;
                             if (inputValue === '') {
@@ -632,7 +633,7 @@ const WarehouseStocktake: React.FC = () => {
                             fontSize: '1.1rem',
                             color: difference! > 0 ? '#10b981' : '#ef4444'
                           }}>
-                            {difference! > 0 ? '+' : ''}{difference}
+                            {difference! > 0 ? '+' : ''}{formatInventoryQuantity(difference)}
                           </span>
                         ) : isCounted ? (
                           <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>
@@ -816,10 +817,10 @@ const WarehouseStocktake: React.FC = () => {
                                           {item.unit || ''}
                                         </td>
                                         <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', color: '#3b82f6' }}>
-                                          {item.systemStock}
+                                          {formatInventoryQuantity(item.systemStock)}
                                         </td>
                                         <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', fontWeight: '600' }}>
-                                          {item.actualStock}
+                                          {formatInventoryQuantity(item.actualStock)}
                                         </td>
                                         <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6' }}>
                                           {hasDiff ? (
@@ -828,7 +829,7 @@ const WarehouseStocktake: React.FC = () => {
                                               fontSize: '1.1rem',
                                               color: item.difference > 0 ? '#10b981' : '#ef4444'
                                             }}>
-                                              {item.difference > 0 ? '+' : ''}{item.difference}
+                                              {item.difference > 0 ? '+' : ''}{formatInventoryQuantity(item.difference)}
                                             </span>
                                           ) : (
                                             <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>

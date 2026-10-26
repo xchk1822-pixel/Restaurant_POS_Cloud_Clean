@@ -7,6 +7,7 @@ import { processAndUploadMenuImage } from '../../services/menuImageService';
 import { dataService } from '../../services/DataService';
 import { colors, font, radii, shadows } from '../../styles/uiTokens';
 import { useI18n } from '../../i18n/I18nContext';
+import { formatInventoryQuantity } from '../../utils/inventoryQuantity';
 
 interface RecipeIngredient {
   itemId: string;
@@ -452,7 +453,7 @@ const MenuManagement: React.FC = () => {
                         fontSize: font.caption,
                         color: colors.textSecondary
                       }}>
-                        {ing.itemName} - {ing.quantity}{ing.unit}
+                        {ing.itemName} - {formatInventoryQuantity(ing.quantity)}{ing.unit}
                       </div>
                     ))}
                   </div>
@@ -750,7 +751,7 @@ const MenuManagement: React.FC = () => {
                   >
                     <option value="">{t('menu.direct.selectStockItem')}</option>
                     {directDeductionInventoryItems.map(item => (
-                      <option key={item.id} value={item.id}>{item.name} ({t('menu.currentStock')}: {item.currentStock} {item.unit})</option>
+                      <option key={item.id} value={item.id}>{item.name} ({t('menu.currentStock')}: {formatInventoryQuantity(item.currentStock)} {item.unit})</option>
                     ))}
                   </select>
                 </div>
@@ -837,7 +838,7 @@ const MenuManagement: React.FC = () => {
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={ingredientQuantityDrafts[idx] ?? (ing.quantity ? String(ing.quantity) : '')}
+                        value={ingredientQuantityDrafts[idx] ?? (ing.quantity ? formatInventoryQuantity(ing.quantity) : '')}
                         onChange={(e) => {
                           const inputValue = e.target.value;
                           if (!isValidIngredientQuantityInput(inputValue)) return;

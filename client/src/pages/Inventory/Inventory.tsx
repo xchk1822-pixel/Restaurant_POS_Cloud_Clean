@@ -12,6 +12,7 @@ import { useI18n } from '../../i18n/I18nContext';
 import type { TranslationKey } from '../../i18n/translations';
 import { useAuth } from '../../contexts/AuthContext';
 import { canAccessPermission } from '../../utils/permissions';
+import { formatInventoryQuantity } from '../../utils/inventoryQuantity';
 
 // 本地类型定义（与AppContext保持一致）
 interface InventoryItem {
@@ -164,7 +165,7 @@ const getStockRecordSignedQuantity = (record: StockRecord): number => {
   return quantity;
 };
 
-const formatStockRecordNumber = (value: number): string => `${Number(value.toFixed(6))}`;
+const formatStockRecordNumber = formatInventoryQuantity;
 
 const formatStockRecordQuantity = (record: StockRecord): string => {
   const signedQuantity = getStockRecordSignedQuantity(record);
@@ -894,7 +895,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
       setSearchTerm(barcode);
       const found = inventoryItems.find(item => item.barcode === barcode);
       if (found) {
-      alert(`${t('inventory.barcode.found')}: ${found.name}\n${t('inventory.field.barcode')}: ${found.barcode}\n${t('inventory.table.totalStock')}: ${getTotalStock(found)} ${found.unit}\n${t('inventory.location.warehouse')}: ${found.currentStock} ${found.unit}\n${t('inventory.location.fridge')}: ${getFridgeStock(found.id)} ${found.unit}`);
+      alert(`${t('inventory.barcode.found')}: ${found.name}\n${t('inventory.field.barcode')}: ${found.barcode}\n${t('inventory.table.totalStock')}: ${formatInventoryQuantity(getTotalStock(found))} ${found.unit}\n${t('inventory.location.warehouse')}: ${formatInventoryQuantity(found.currentStock)} ${found.unit}\n${t('inventory.location.fridge')}: ${formatInventoryQuantity(getFridgeStock(found.id))} ${found.unit}`);
     } else {
       alert(t('inventory.barcode.notFound'));
       }
@@ -1207,7 +1208,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         C$ {data.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                        {data.quantity.toLocaleString()} {t('inventory.summary.units')}
+                        {formatInventoryQuantity(data.quantity)} {t('inventory.summary.units')}
                       </div>
                     </div>
                   ))}
@@ -1340,16 +1341,16 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                      {totalStock.toLocaleString()}
+                      {formatInventoryQuantity(totalStock)}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', color: '#6b7280' }}>
-                      {item.currentStock.toLocaleString()}
+                      {formatInventoryQuantity(item.currentStock)}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', color: fridgeStock > 0 ? '#2563eb' : '#9ca3af', fontWeight: fridgeStock > 0 ? '600' : '400' }}>
-                      {fridgeStock.toLocaleString()}
+                      {formatInventoryQuantity(fridgeStock)}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', color: '#6b7280' }}>
-                      {item.minStock.toLocaleString()}
+                      {formatInventoryQuantity(item.minStock)}
                     </td>
                     <td style={{ padding: '0.75rem', color: '#6b7280' }}>{item.unit}</td>
                     <td style={{ padding: '0.75rem', textAlign: 'right', color: '#6b7280' }}>C$ {item.costPrice.toFixed(2)}</td>
@@ -1476,10 +1477,10 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                 {filteredReorderSuggestions.map(suggestion => (
                   <tr key={suggestion.itemId} style={{ borderBottom: `1px solid ${colors.border}` }}>
                     <td style={{ padding: '0.75rem', fontWeight: 700 }}>{suggestion.itemName}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right', color: suggestion.currentStock < 0 ? colors.danger : colors.textPrimary }}>{suggestion.currentStock.toLocaleString()} {suggestion.unit}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>{suggestion.minStock.toLocaleString()} {suggestion.unit}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.textSecondary }}>{suggestion.targetStock.toLocaleString()} {suggestion.unit}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.teal, fontWeight: 800 }}>{suggestion.suggestedQuantity.toLocaleString()} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: suggestion.currentStock < 0 ? colors.danger : colors.textPrimary }}>{formatInventoryQuantity(suggestion.currentStock)} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatInventoryQuantity(suggestion.minStock)} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.textSecondary }}>{formatInventoryQuantity(suggestion.targetStock)} {suggestion.unit}</td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: colors.teal, fontWeight: 800 }}>{formatInventoryQuantity(suggestion.suggestedQuantity)} {suggestion.unit}</td>
                     <td style={{ padding: '0.75rem' }}>
                       <div style={{ color: suggestion.supplierSource === 'unlinked' ? colors.danger : colors.textPrimary, fontWeight: 650 }}>{suggestion.supplierName}</div>
                       <div style={{ color: colors.textMuted, fontSize: font.caption, marginTop: 2 }}>
@@ -1640,7 +1641,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         fontSize: '0.85rem',
                         color: '#6b7280'
                       }}>
-                        {ing.itemName} - {ing.quantity}{ing.unit}
+                        {ing.itemName} - {formatInventoryQuantity(ing.quantity)}{ing.unit}
                       </div>
                     ))}
                   </div>
@@ -1841,14 +1842,16 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       {formatStockRecordDisplayQuantity(record)}
                     </td>
                     <td style={{ padding: '0.5rem 0.4rem', fontSize: '0.82rem', fontWeight: '600', minWidth: '6.25rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.15rem', color: '#111827' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.15rem', color: '#111827', alignItems: 'center' }}>
                         <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.warehouseBeforeStock)}</span>
+                        <span style={{ color: typePresentation.color }}>→</span>
                         <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.warehouseAfterStock)}</span>
                       </div>
                     </td>
                     <td style={{ padding: '0.5rem 0.4rem', fontSize: '0.82rem', fontWeight: '600', minWidth: '6.25rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.15rem', color: '#111827' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.15rem', color: '#111827', alignItems: 'center' }}>
                         <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.fridgeBeforeStock)}</span>
+                        <span style={{ color: typePresentation.color }}>→</span>
                         <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.fridgeAfterStock)}</span>
                       </div>
                     </td>
@@ -2033,7 +2036,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   </label>
                   <input
                     type="number"
-                    value={editingItem.currentStock || ''}
+                    value={editingItem.currentStock ? formatInventoryQuantity(editingItem.currentStock) : ''}
                     onChange={(e) => setEditingItem({...editingItem, currentStock: e.target.value ? parseFloat(e.target.value) : 0})}
                     placeholder="0"
                     style={{
@@ -2712,7 +2715,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                       .filter(item => item.category !== 'ingredient') // 排除食材，只显示成品
                       .map(item => (
                         <option key={item.id} value={item.id}>
-                          {item.name} (库存: {item.currentStock} {item.unit})
+                          {item.name} (库存: {formatInventoryQuantity(item.currentStock)} {item.unit})
                         </option>
                       ))
                     }
@@ -2754,7 +2757,7 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         <option value="">请选择原料</option>
                         {inventoryItems.map(item => (
                           <option key={item.id} value={item.id}>
-                            {item.name} (库存: {item.currentStock} {item.unit})
+                            {item.name} (库存: {formatInventoryQuantity(item.currentStock)} {item.unit})
                           </option>
                         ))}
                       </select>

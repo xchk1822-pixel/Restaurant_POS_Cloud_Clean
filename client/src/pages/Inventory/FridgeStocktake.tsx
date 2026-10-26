@@ -28,6 +28,7 @@ import {
   loadStocktakeDraft,
   saveStocktakeDraft,
 } from '../../utils/stocktakeDraft';
+import { formatInventoryQuantity } from '../../utils/inventoryQuantity';
 
 interface FridgeItem {
   fridgeId: string;
@@ -507,12 +508,12 @@ const FridgeStocktake: React.FC = () => {
     const fridgeName = fridges.find(f => f.id === selectedFridge)?.name || '';
 
     if (direction === 'warehouse_to_fridge' && item.currentStock < transferQuantity) {
-      alert(`${t('fridge.alert.warehouseInsufficient')}: ${item.currentStock} ${item.unit}`);
+      alert(`${t('fridge.alert.warehouseInsufficient')}: ${formatInventoryQuantity(item.currentStock)} ${item.unit}`);
       return;
     }
 
     if (direction === 'fridge_to_warehouse' && (!existingFridgeRecord || existingFridgeRecord.quantity < transferQuantity)) {
-      alert(`${t('fridge.alert.fridgeInsufficient')}: ${existingFridgeRecord?.quantity || 0} ${item.unit}`);
+      alert(`${t('fridge.alert.fridgeInsufficient')}: ${formatInventoryQuantity(existingFridgeRecord?.quantity || 0)} ${item.unit}`);
       return;
     }
 
@@ -583,7 +584,7 @@ const FridgeStocktake: React.FC = () => {
         }];
       });
 
-      alert(`${isPendingTransfer ? t('fridge.alert.localPending') : (direction === 'warehouse_to_fridge' ? t('fridge.alert.transferSuccess') : t('fridge.alert.returnSuccess'))}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${transferQuantity} ${item.unit}\n${direction === 'warehouse_to_fridge' ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}\n${isPendingTransfer ? t('fridge.alert.pendingHint') : t('fridge.alert.auditSaved')}`);
+      alert(`${isPendingTransfer ? t('fridge.alert.localPending') : (direction === 'warehouse_to_fridge' ? t('fridge.alert.transferSuccess') : t('fridge.alert.returnSuccess'))}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${formatInventoryQuantity(transferQuantity)} ${item.unit}\n${direction === 'warehouse_to_fridge' ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}\n${isPendingTransfer ? t('fridge.alert.pendingHint') : t('fridge.alert.auditSaved')}`);
       setTransferModal({ show: false, itemId: '', type: 'add' });
       setTransferQuantity(0);
     } catch (error) {
@@ -611,7 +612,7 @@ const FridgeStocktake: React.FC = () => {
     }
 
     if (item.currentStock < newItemData.quantity) {
-      alert(`${t('fridge.alert.warehouseInsufficient')}: ${item.currentStock} ${item.unit}`);
+      alert(`${t('fridge.alert.warehouseInsufficient')}: ${formatInventoryQuantity(item.currentStock)} ${item.unit}`);
       return;
     }
 
@@ -668,7 +669,7 @@ const FridgeStocktake: React.FC = () => {
     }]);
     setItemOrder(prev => [...prev.filter(id => id !== item.id), item.id]);
 
-    alert(`${t('fridge.alert.addSuccess')}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${newItemData.quantity} ${item.unit}\n${t('fridge.alert.addedTo')}: ${fridges.find(f => f.id === selectedFridge)?.name}`);
+    alert(`${t('fridge.alert.addSuccess')}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${formatInventoryQuantity(newItemData.quantity)} ${item.unit}\n${t('fridge.alert.addedTo')}: ${fridges.find(f => f.id === selectedFridge)?.name}`);
     setShowAddItemModal(false);
     setNewItemData({ itemId: '', quantity: 1 });
     setAddSearchTerm('');
@@ -947,7 +948,7 @@ const FridgeStocktake: React.FC = () => {
       const date = formatStocktakeRecordDateTime(record);
       
       record.items.forEach((item: any) => {
-        csv += `${fridgeName},${date},${item.itemName},${item.unit || ''},${item.totalStock},${item.warehouseStock},${item.systemStock},${item.actualStock},${item.difference}\n`;
+        csv += `${fridgeName},${date},${item.itemName},${item.unit || ''},${formatInventoryQuantity(item.totalStock)},${formatInventoryQuantity(item.warehouseStock)},${formatInventoryQuantity(item.systemStock)},${formatInventoryQuantity(item.actualStock)},${formatInventoryQuantity(item.difference)}\n`;
       });
     });
     
@@ -1268,13 +1269,13 @@ const FridgeStocktake: React.FC = () => {
                           {item.barcode}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '700' }}>
-                          {canViewSystemStock ? totalStock : '***'}
+                          {canViewSystemStock ? formatInventoryQuantity(totalStock) : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#3b82f6' }}>
-                          {canViewSystemStock ? warehouseStock : '***'}
+                          {canViewSystemStock ? formatInventoryQuantity(warehouseStock) : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#8b5cf6' }}>
-                          {canViewSystemStock ? fridgeStock : '***'}
+                          {canViewSystemStock ? formatInventoryQuantity(fridgeStock) : '***'}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                           <input
@@ -1282,7 +1283,7 @@ const FridgeStocktake: React.FC = () => {
                             type="text"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            value={isCounted ? actualCount.toString() : ''}
+                            value={isCounted ? formatInventoryQuantity(actualCount) : ''}
                             onChange={(e) => {
                               const inputValue = e.target.value;
                               
@@ -1354,7 +1355,7 @@ const FridgeStocktake: React.FC = () => {
                                 fontSize: '1.1rem',
                                 color: difference! > 0 ? '#10b981' : '#ef4444'
                               }}>
-                                {difference! > 0 ? '+' : ''}{difference}
+                                {difference! > 0 ? '+' : ''}{formatInventoryQuantity(difference)}
                               </span>
                             ) : (
                               <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>
@@ -1421,7 +1422,7 @@ const FridgeStocktake: React.FC = () => {
                             {/* 删除商品 */}
                             <button
                               onClick={async () => {
-                                if (window.confirm(`${t('fridge.confirm.removePrefix')}${item.itemName}${t('fridge.confirm.removeMiddle')} ${fridgeStock} ${warehouseItem?.unit || ''} ${t('fridge.confirm.removeSuffix')}`)) {
+                                if (window.confirm(`${t('fridge.confirm.removePrefix')}${item.itemName}${t('fridge.confirm.removeMiddle')} ${formatInventoryQuantity(fridgeStock)} ${warehouseItem?.unit || ''} ${t('fridge.confirm.removeSuffix')}`)) {
                                   const now = Date.now();
                                   const fridgeInventoryId = `${selectedFridge}-${item.itemId}`;
 
@@ -1787,7 +1788,7 @@ const FridgeStocktake: React.FC = () => {
                         <div>
                           <div style={{ fontWeight: '600' }}>{item.name}</div>
                           <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
-                            {item.unit} | {t('fridge.add.warehouseStock')}: {item.currentStock}
+                            {item.unit} | {t('fridge.add.warehouseStock')}: {formatInventoryQuantity(item.currentStock)}
                           </div>
                         </div>
                         {newItemData.itemId === item.id && (
@@ -1849,7 +1850,7 @@ const FridgeStocktake: React.FC = () => {
                     }}
                   />
                   <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.3rem' }}>
-                    {t('fridge.add.maxTransfer')} {selectedItem?.currentStock || 0} {selectedItem?.unit || ''}
+                    {t('fridge.add.maxTransfer')} {formatInventoryQuantity(selectedItem?.currentStock || 0)} {selectedItem?.unit || ''}
                   </div>
                 </div>
               );
@@ -1932,13 +1933,13 @@ const FridgeStocktake: React.FC = () => {
                 <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
                   {isAdd ? (
                     <>
-                      <div>{t('fridge.transfer.currentFridgeStock')}: {fridgeStock} {item.unit}</div>
-                      <div>{t('fridge.transfer.warehouseStock')}: {warehouseStock} {item.unit}</div>
+                      <div>{t('fridge.transfer.currentFridgeStock')}: {formatInventoryQuantity(fridgeStock)} {item.unit}</div>
+                      <div>{t('fridge.transfer.warehouseStock')}: {formatInventoryQuantity(warehouseStock)} {item.unit}</div>
                     </>
                   ) : (
                     <>
-                      <div>{t('fridge.transfer.currentFridgeStock')}: {fridgeStock} {item.unit}</div>
-                      <div>{t('fridge.transfer.warehouseAfter')}: {warehouseStock + transferQuantity} {item.unit}</div>
+                      <div>{t('fridge.transfer.currentFridgeStock')}: {formatInventoryQuantity(fridgeStock)} {item.unit}</div>
+                      <div>{t('fridge.transfer.warehouseAfter')}: {formatInventoryQuantity(warehouseStock + transferQuantity)} {item.unit}</div>
                     </>
                   )}
                 </div>
@@ -1978,7 +1979,7 @@ const FridgeStocktake: React.FC = () => {
                   }}
                 />
                 <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.3rem' }}>
-                  {isAdd ? `${t('fridge.transfer.maxTransfer')} ${warehouseStock} ${item.unit}` : `${t('fridge.transfer.maxReturn')} ${fridgeStock} ${item.unit}`}
+                  {isAdd ? `${t('fridge.transfer.maxTransfer')} ${formatInventoryQuantity(warehouseStock)} ${item.unit}` : `${t('fridge.transfer.maxReturn')} ${formatInventoryQuantity(fridgeStock)} ${item.unit}`}
                 </div>
               </div>
 
@@ -2176,13 +2177,13 @@ const FridgeStocktake: React.FC = () => {
                             {isToFridge ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'right', fontWeight: 700 }}>
-                            {record.quantity || 0}
+                            {formatInventoryQuantity(record.quantity || 0)}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'right', fontFamily: 'monospace' }}>
-                            {record.beforeWarehouseStock ?? '--'} / {record.afterWarehouseStock ?? '--'}
+                            {record.beforeWarehouseStock == null ? '--' : formatInventoryQuantity(record.beforeWarehouseStock)} / {record.afterWarehouseStock == null ? '--' : formatInventoryQuantity(record.afterWarehouseStock)}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'right', fontFamily: 'monospace' }}>
-                            {record.beforeFridgeStock ?? '--'} / {record.afterFridgeStock ?? '--'}
+                            {record.beforeFridgeStock == null ? '--' : formatInventoryQuantity(record.beforeFridgeStock)} / {record.afterFridgeStock == null ? '--' : formatInventoryQuantity(record.afterFridgeStock)}
                           </td>
                           <td style={{ padding: '0.65rem', borderBottom: '1px solid #f3f4f6', textAlign: 'center', color: pending ? '#c2410c' : '#15803d', fontWeight: 700 }}>
                             {pending ? t('fridge.transferHistory.pending') : t('fridge.transferHistory.posted')}
@@ -2365,16 +2366,16 @@ const FridgeStocktake: React.FC = () => {
                                       </div>
                                     </td>
                                     <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', fontWeight: '700' }}>
-                                      {item.totalStock}
+                                      {formatInventoryQuantity(item.totalStock)}
                                     </td>
                                     <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', color: '#3b82f6' }}>
-                                      {item.warehouseStock}
+                                      {formatInventoryQuantity(item.warehouseStock)}
                                     </td>
                                     <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', color: '#8b5cf6' }}>
-                                      {item.systemStock}
+                                      {formatInventoryQuantity(item.systemStock)}
                                     </td>
                                     <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6', fontWeight: '600' }}>
-                                      {item.actualStock}
+                                      {formatInventoryQuantity(item.actualStock)}
                                     </td>
                                     <td style={{ padding: '0.6rem', textAlign: 'right', borderBottom: '1px solid #f3f4f6' }}>
                                       {hasDiff ? (
@@ -2383,7 +2384,7 @@ const FridgeStocktake: React.FC = () => {
                                           fontSize: '1.1rem',
                                           color: item.difference > 0 ? '#10b981' : '#ef4444'
                                         }}>
-                                          {item.difference > 0 ? '+' : ''}{item.difference}
+                                          {item.difference > 0 ? '+' : ''}{formatInventoryQuantity(item.difference)}
                                         </span>
                                       ) : (
                                         <span style={{ color: '#10b981', fontSize: '1.2rem', fontWeight: 'bold' }}>✓</span>
