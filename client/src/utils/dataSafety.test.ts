@@ -4540,11 +4540,17 @@ describe('production data safety guards', () => {
     expect(source).toContain("t('inventory.record.warehouseBalance')");
     expect(source).toContain("t('inventory.record.fridgeBalance')");
     expect(source).toContain('{formatStockRecordLocation(record, fridgeNamesById, t)}');
-    expect(source).toContain('{formatOptionalStockBalance(record.warehouseBeforeStock, record.warehouseAfterStock)}');
-    expect(source).toContain('{formatOptionalStockBalance(record.fridgeBeforeStock, record.fridgeAfterStock)}');
+    expect(source).toContain("t('inventory.record.balanceBefore')");
+    expect(source).toContain("t('inventory.record.balanceAfter')");
+    expect(source).toContain('{formatOptionalStockValue(record.warehouseBeforeStock)}');
+    expect(source).toContain('{formatOptionalStockValue(record.warehouseAfterStock)}');
+    expect(source).toContain('{formatOptionalStockValue(record.fridgeBeforeStock)}');
+    expect(source).toContain('{formatOptionalStockValue(record.fridgeAfterStock)}');
     expect(source).toContain('const formatStockRecordNumber = (value: number): string => `${Number(value.toFixed(6))}`');
-    expect(source).toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock)) ? '#ecfdf5'");
-    expect(source).toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock)) ? '#eff6ff'");
+    expect(source).toContain("gridTemplateColumns: '1fr 1fr'");
+    expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock))");
+    expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock))");
+    expect(source).not.toContain("getStockRecordLocationGroup(record) === 'fridge' ? '#dbeafe'");
   });
 
   test('purchase stock ledger uses confirmed balances and deletion appends a reversal record', () => {
