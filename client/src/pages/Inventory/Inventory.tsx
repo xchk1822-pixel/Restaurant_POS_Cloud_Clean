@@ -1780,19 +1780,31 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               {t('inventory.record.showing')} {filteredStockRecords.length} / {displayStockRecords.length}
             </span>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+            <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+              <colgroup>
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '7%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '7%' }} />
+              </colgroup>
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
                   {[t('inventory.record.time'), t('inventory.record.item'), t('inventory.record.location'), t('inventory.record.type'), t('inventory.record.quantity')].map((title, index) => (
-                    <th key={title} style={{ padding: '0.5rem 0.65rem', textAlign: index === 3 ? 'center' : (index === 4 ? 'right' : 'left'), borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
+                    <th key={title} style={{ padding: '0.5rem 0.65rem', textAlign: index >= 2 ? 'center' : 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
                   ))}
                   {[t('inventory.record.warehouseBalance'), t('inventory.record.fridgeBalance')].map(title => (
-                    <th key={title} style={{ padding: '0.45rem 0.4rem', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600', minWidth: '6.25rem' }}>
+                    <th key={title} style={{ padding: '0.45rem 0.6rem', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>
                       <div style={{ textAlign: 'center' }}>{title}</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.15rem', marginTop: '0.25rem', color: '#6b7280', fontSize: '0.72rem', fontWeight: '500' }}>
-                        <span style={{ textAlign: 'center' }}>{t('inventory.record.balanceBefore')}</span>
-                        <span style={{ textAlign: 'center' }}>{t('inventory.record.balanceAfter')}</span>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.55rem', marginTop: '0.25rem', color: '#6b7280', fontSize: '0.72rem', fontWeight: '500' }}>
+                        <span>{t('inventory.record.balanceBefore')}</span>
+                        <span aria-hidden="true" style={{ display: 'inline-block', fontSize: '0.85rem', fontWeight: 800, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span>{t('inventory.record.balanceAfter')}</span>
                       </div>
                     </th>
                   ))}
@@ -1812,13 +1824,13 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                   const typePresentation = stockRecordBusinessTypePresentation[getStockRecordBusinessType(record)];
                   return (
                   <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem', color: '#6b7280' }}>
+                    <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
                           {formatStockRecordTime(record, language === 'es-NI' ? 'es-NI' : 'zh-CN')}
                     </td>
-                    <td style={{ padding: '0.5rem 0.65rem' }}>
-                      <span style={{ fontWeight: '600', whiteSpace: 'nowrap' }}>{record.itemName}</span>
+                    <td style={{ padding: '0.5rem 0.65rem', overflow: 'hidden' }} title={record.itemName}>
+                      <span style={{ display: 'block', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.itemName}</span>
                     </td>
-                    <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem' }}>
+                    <td style={{ padding: '0.5rem 0.5rem', fontSize: '0.82rem', textAlign: 'center' }}>
                       <span style={{ fontWeight: '600', whiteSpace: 'nowrap' }}>
                         {formatStockRecordLocation(record, fridgeNamesById, t)}
                       </span>
@@ -1838,25 +1850,25 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                         {typePresentation.icon} {t(typePresentation.translationKey)}
                       </span>
                     </td>
-                    <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '600' }}>
+                    <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center', fontWeight: '600', whiteSpace: 'nowrap' }}>
                       {formatStockRecordDisplayQuantity(record)}
                     </td>
-                    <td style={{ padding: '0.5rem 0.4rem', fontSize: '0.82rem', fontWeight: '600', minWidth: '6.25rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.15rem', color: '#111827', alignItems: 'center' }}>
-                        <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.warehouseBeforeStock)}</span>
-                        <span style={{ color: typePresentation.color }}>→</span>
-                        <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.warehouseAfterStock)}</span>
+                    <td style={{ padding: '0.5rem 0.35rem', fontSize: '0.82rem', fontWeight: '600' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.25rem', color: '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        <span>{formatOptionalStockValue(record.warehouseBeforeStock)}</span>
+                        <span style={{ display: 'inline-block', color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span>{formatOptionalStockValue(record.warehouseAfterStock)}</span>
                       </div>
                     </td>
-                    <td style={{ padding: '0.5rem 0.4rem', fontSize: '0.82rem', fontWeight: '600', minWidth: '6.25rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.15rem', color: '#111827', alignItems: 'center' }}>
-                        <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.fridgeBeforeStock)}</span>
-                        <span style={{ color: typePresentation.color }}>→</span>
-                        <span style={{ textAlign: 'center' }}>{formatOptionalStockValue(record.fridgeAfterStock)}</span>
+                    <td style={{ padding: '0.5rem 0.35rem', fontSize: '0.82rem', fontWeight: '600' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.25rem', color: '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        <span>{formatOptionalStockValue(record.fridgeBeforeStock)}</span>
+                        <span style={{ display: 'inline-block', color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span>{formatOptionalStockValue(record.fridgeAfterStock)}</span>
                       </div>
                     </td>
-                        <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem' }}>{formatStockRecordReason(record, t)}</td>
-                        <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem', color: '#6b7280' }}>{formatStockRecordOperator(record.operator, t)}</td>
+                        <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={formatStockRecordReason(record, t)}>{formatStockRecordReason(record, t)}</td>
+                        <td style={{ padding: '0.5rem 0.5rem', fontSize: '0.82rem', color: '#6b7280', textAlign: 'center', whiteSpace: 'nowrap' }}>{formatStockRecordOperator(record.operator, t)}</td>
                   </tr>
                   );
                 })}

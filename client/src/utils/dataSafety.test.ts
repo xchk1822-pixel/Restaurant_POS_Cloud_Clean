@@ -4547,8 +4547,9 @@ describe('production data safety guards', () => {
     expect(source).toContain('{formatOptionalStockValue(record.fridgeBeforeStock)}');
     expect(source).toContain('{formatOptionalStockValue(record.fridgeAfterStock)}');
     expect(source).toContain('const formatStockRecordNumber = formatInventoryQuantity');
-    expect(source).toContain("gridTemplateColumns: '1fr auto 1fr'");
-    expect(source).toContain('<span style={{ color: typePresentation.color }}>→</span>');
+    expect(source).toContain("fontVariantNumeric: 'tabular-nums'");
+    expect(source).toContain("overflowY: 'auto', overflowX: 'hidden'");
+    expect(source).toContain("fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>");
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock))");
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock))");
     expect(source).not.toContain("getStockRecordLocationGroup(record) === 'fridge' ? '#dbeafe'");
