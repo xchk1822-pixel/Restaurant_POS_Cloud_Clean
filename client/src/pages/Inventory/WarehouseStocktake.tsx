@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartGetDocuments, smartUpdateDocument } from '../../services/smartSyncService';
+import { smartCommitStocktake, smartGetDocuments } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import {
@@ -15,6 +15,12 @@ import {
   sortStocktakeHistoryRecords,
 } from '../../utils/stocktakeRefresh';
 import { useI18n } from '../../i18n/I18nContext';
+import {
+  clearStocktakeDraft,
+  createStocktakeSubmissionId,
+  loadStocktakeDraft,
+  saveStocktakeDraft,
+} from '../../utils/stocktakeDraft';
 
 const WarehouseStocktake: React.FC = () => {
   const { inventoryItems, setInventoryItems } = useAppContext();
@@ -28,7 +34,17 @@ const WarehouseStocktake: React.FC = () => {
   // 状态管理
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
-  const [actualQuantities, setActualQuantities] = useState<Record<string, number>>({});
+  const stocktakeDraftStorageKey = dataService.getStoreKey('warehouse_stocktake_draft');
+  const initialDraftRef = useRef(loadStocktakeDraft(stocktakeDraftStorageKey, getLocalDateString()));
+  const [actualQuantities, setActualQuantities] = useState<Record<string, number>>(
+    initialDraftRef.current?.actualQuantities || {}
+  );
+  const [baselineQuantities, setBaselineQuantities] = useState<Record<string, number>>(
+    initialDraftRef.current?.baselineQuantities || {}
+  );
+  const submissionIdRef = useRef(
+    initialDraftRef.current?.submissionId || createStocktakeSubmissionId('warehouse')
+  );
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(getLocalDateString());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -123,6 +139,10 @@ const WarehouseStocktake: React.FC = () => {
 
       mergeAndCacheStocktakeHistory(cloudHistory);
 
+      setActualQuantities({});
+      setBaselineQuantities({});
+      clearStocktakeDraft(stocktakeDraftStorageKey);
+      submissionIdRef.current = createStocktakeSubmissionId('warehouse');
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新仓库盘点数据失败:', error);
@@ -134,6 +154,13 @@ const WarehouseStocktake: React.FC = () => {
 
   // 初始化实际数量
   useEffect(() => {
+    setBaselineQuantities(previousBaselines => {
+      const next = { ...previousBaselines };
+      filteredItems.forEach(item => {
+        if (canViewSystemStock && next[item.id] === undefined) next[item.id] = item.currentStock;
+      });
+      return next;
+    });
     setActualQuantities(previousQuantities => {
       const initial: Record<string, number> = {};
       filteredItems.forEach(item => {
@@ -147,6 +174,19 @@ const WarehouseStocktake: React.FC = () => {
       return initial;
     });
   }, [canViewSystemStock, filteredItems]);
+
+  useEffect(() => {
+    if (Object.keys(actualQuantities).length === 0 && Object.keys(baselineQuantities).length === 0) {
+      clearStocktakeDraft(stocktakeDraftStorageKey);
+      return;
+    }
+    saveStocktakeDraft(stocktakeDraftStorageKey, {
+      date: getLocalDateString(),
+      submissionId: submissionIdRef.current,
+      actualQuantities,
+      baselineQuantities,
+    });
+  }, [actualQuantities, baselineQuantities, stocktakeDraftStorageKey]);
 
   // 扫码处理
   const handleScan = (barcode: string) => {
@@ -173,11 +213,12 @@ const WarehouseStocktake: React.FC = () => {
 
     filteredItems.forEach(item => {
       const actual = actualQuantities[item.id] ?? 0;
-      const difference = actual - item.currentStock;
+      const systemStock = baselineQuantities[item.id] ?? item.currentStock;
+      const difference = actual - systemStock;
       if (difference !== 0) {
         discrepancies.push({
           itemName: item.name,
-          systemStock: item.currentStock,
+          systemStock,
           actualStock: actual,
           difference,
           unit: item.unit
@@ -210,80 +251,99 @@ const WarehouseStocktake: React.FC = () => {
 
     try {
       const now = Date.now();
-      const updatedItems = filteredItems
-        .filter(item => actualQuantities[item.id] !== undefined)
-        .map(item => ({
-          ...item,
-          currentStock: actualQuantities[item.id],
-          lastUpdated: new Date(),
-          lastModified: now
-        }));
-
-      await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)));
-
-      // 保存盘点历史
+      const submissionId = submissionIdRef.current;
       const saved = localStorage.getItem(stocktakeHistoryStorageKey);
       const history = saved ? JSON.parse(saved) : [];
       const stocktakeRecord = {
-        id: `stocktake-${Date.now()}`,
+        id: submissionId,
+        submissionId,
         date: getLocalDateString(), // 🔥 使用本地时间
         createdAt: new Date(),
         lastModified: now,
         items: filteredItems.map(item => {
-          const actualStock = actualQuantities[item.id] || 0;
+          const actualStock = actualQuantities[item.id] ?? 0;
+          const systemStock = baselineQuantities[item.id] ?? item.currentStock;
           
           return {
             itemId: item.id,
             itemName: item.name,
             unit: item.unit,
             category: item.category,
-            systemStock: item.currentStock,
+            systemStock,
             actualStock,
-            difference: actualStock - item.currentStock
+            difference: actualStock - systemStock
           };
         }),
         totalDiscrepancies: discrepancies.length
       };
-      await smartAddDocument('warehouse_stocktake_history', stocktakeRecord);
-      await Promise.all(
-        stocktakeRecord.items
-          .filter((record: any) => record.difference !== 0)
-          .map((item: any) => {
-            const record = {
-              id: `stock-record-${stocktakeRecord.id}-${item.itemId}`,
-              itemId: item.itemId,
-              itemName: item.itemName,
-              type: 'adjust',
-              quantity: Math.abs(item.difference),
-              signedQuantity: item.difference,
-              reason: 'warehouse stocktake',
-              source: 'warehouse_stocktake',
-              sourceId: stocktakeRecord.id,
-              locationType: 'warehouse',
-              beforeStock: item.systemStock,
-              afterStock: item.actualStock,
-              unit: item.unit,
-              date: stocktakeRecord.createdAt,
-              createdAt: stocktakeRecord.createdAt,
-              createdAtMs: now,
-              lastModified: now,
-              operator: operatorAccount
-            };
-            return smartAddDocument('inventory_stock_records', record);
-          })
-      );
+      const stockRecords = stocktakeRecord.items
+        .filter((record: any) => record.difference !== 0)
+        .map((item: any) => ({
+          id: `stock-record-${stocktakeRecord.id}-${item.itemId}`,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          type: 'adjust',
+          quantity: Math.abs(item.difference),
+          signedQuantity: item.difference,
+          reason: 'warehouse stocktake',
+          source: 'warehouse_stocktake',
+          sourceId: stocktakeRecord.id,
+          locationType: 'warehouse',
+          beforeStock: item.systemStock,
+          afterStock: item.actualStock,
+          unit: item.unit,
+          date: stocktakeRecord.createdAt,
+          createdAt: stocktakeRecord.createdAt,
+          createdAtMs: now,
+          lastModified: now,
+          operator: operatorAccount
+        }));
+      const commitResult = await smartCommitStocktake({
+        locationType: 'warehouse',
+        historyRecord: stocktakeRecord,
+        items: stocktakeRecord.items.map((item: any) => ({
+          documentId: item.itemId,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          unit: item.unit,
+          expectedStock: item.systemStock,
+          actualStock: item.actualStock,
+        })),
+        stockRecords,
+      });
+      if (!commitResult.success) {
+        if ((commitResult as any).conflict) {
+          const conflicts = (commitResult as any).conflicts || [];
+          alert(`${t('warehouse.alert.conflict')}\n\n${conflicts.slice(0, 8).map((item: any) => `• ${item.itemName}: ${item.expectedStock} → ${item.cloudStock}`).join('\n')}`);
+        } else if ((commitResult as any).offline) {
+          alert(t('warehouse.alert.offlineDraft'));
+        } else if ((commitResult as any).uncertain) {
+          alert(t('warehouse.alert.unconfirmed'));
+        } else {
+          alert(t('warehouse.alert.saveFailed'));
+        }
+        return;
+      }
 
       // 更新库存
       setInventoryItems(items => {
         return items.map(item => {
           if (actualQuantities[item.id] !== undefined) {
-            const updatedItem = updatedItems.find(nextItem => nextItem.id === item.id);
-            return updatedItem || item;
+            return {
+              ...item,
+              currentStock: actualQuantities[item.id],
+              lastUpdated: new Date(),
+              lastModified: now,
+            };
           }
           return item;
         });
       });
       cacheStocktakeHistory([stocktakeRecord, ...history]);
+      setActualQuantities({});
+      setBaselineQuantities({});
+      clearStocktakeDraft(stocktakeDraftStorageKey);
+      submissionIdRef.current = createStocktakeSubmissionId('warehouse');
 
       alert(t('warehouse.alert.completed'));
     } catch (error) {
@@ -489,7 +549,8 @@ const WarehouseStocktake: React.FC = () => {
                 {filteredItems.map((item) => {
                   const actualCount = actualQuantities[item.id];
                   const isCounted = actualCount !== undefined;
-                  const difference = isCounted ? actualCount - item.currentStock : null;
+                  const baselineStock = baselineQuantities[item.id] ?? item.currentStock;
+                  const difference = isCounted ? actualCount - baselineStock : null;
                   const hasDifference = isCounted && difference !== 0;
 
                   return (
@@ -516,7 +577,7 @@ const WarehouseStocktake: React.FC = () => {
                         {item.unit}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: '#3b82f6' }}>
-                        {canViewSystemStock ? item.currentStock : '***'}
+                        {canViewSystemStock ? baselineStock : '***'}
                       </td>
                       <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                         <input
@@ -537,6 +598,10 @@ const WarehouseStocktake: React.FC = () => {
                             } else {
                               const value = Number(inputValue);
                               if (!Number.isFinite(value) || value < 0) return;
+                              setBaselineQuantities(prev => prev[item.id] === undefined
+                                ? { ...prev, [item.id]: item.currentStock }
+                                : prev
+                              );
                               setActualQuantities(prev => ({
                                 ...prev,
                                 [item.id]: value

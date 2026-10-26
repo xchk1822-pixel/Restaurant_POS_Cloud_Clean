@@ -1421,6 +1421,131 @@ export const smartSavePurchaseLocally = async ({
 
 export const getStableStockDeductionOperationId = (orderId: string) => `stock-${orderId}`;
 
+export interface StocktakeCommitItem {
+  documentId: string;
+  itemId: string;
+  itemName: string;
+  unit?: string;
+  expectedStock: number;
+  actualStock: number;
+}
+
+export interface StocktakeConflict {
+  itemId: string;
+  itemName: string;
+  expectedStock: number;
+  cloudStock: number;
+}
+
+export const smartCommitStocktake = async ({
+  locationType,
+  historyRecord,
+  items,
+  stockRecords,
+}: {
+  locationType: 'warehouse' | 'fridge';
+  historyRecord: any;
+  items: StocktakeCommitItem[];
+  stockRecords: any[];
+}) => {
+  const storeId = getCurrentStoreId();
+  if (!storeId) return { success: false, error: 'missing-store-id' };
+  if (!FIRESTORE_ENABLED) return { success: false, error: 'firestore-disabled' };
+  const browserIsOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (browserIsOffline) return { success: false, offline: true, error: 'offline-stocktake-draft' };
+  if (!historyRecord?.id || items.length === 0) {
+    return { success: false, error: 'invalid-stocktake' };
+  }
+
+  const stockCollection = locationType === 'warehouse' ? 'inventory_items' : 'fridge_inventory';
+  const historyCollection = locationType === 'warehouse'
+    ? 'warehouse_stocktake_history'
+    : 'fridge_stocktake_history';
+  const stockField = locationType === 'warehouse' ? 'currentStock' : 'quantity';
+  const basePath = `stores/${storeId}`;
+  const historyRef = doc(db, `${basePath}/${historyCollection}`, historyRecord.id);
+  const stockRefs = items.map(item => doc(db, `${basePath}/${stockCollection}`, item.documentId));
+
+  try {
+    const result = await withWeakNetworkTimeout(
+      () => runTransaction(db, async transaction => {
+        const [historySnapshot, ...stockSnapshots] = await Promise.all([
+          transaction.get(historyRef),
+          ...stockRefs.map(stockRef => transaction.get(stockRef)),
+        ]);
+
+        if (historySnapshot.exists()) {
+          return { success: true, duplicate: true, conflicts: [] as StocktakeConflict[] };
+        }
+
+        const conflicts = items.flatMap((item, index) => {
+          const cloudData: any = stockSnapshots[index]?.exists() ? (stockSnapshots[index].data() || {}) : {};
+          const cloudStock = Number(cloudData[stockField]) || 0;
+          return Math.abs(cloudStock - item.expectedStock) > 0.000001
+            ? [{
+                itemId: item.itemId,
+                itemName: item.itemName,
+                expectedStock: item.expectedStock,
+                cloudStock,
+              }]
+            : [];
+        });
+
+        if (conflicts.length > 0) {
+          return { success: false, conflict: true, conflicts };
+        }
+
+        const committedAt = Number(historyRecord.lastModified) || Date.now();
+        items.forEach((item, index) => {
+          if (Math.abs(item.actualStock - item.expectedStock) <= 0.000001) return;
+          transaction.set(stockRefs[index], toFirestoreData({
+            id: item.documentId,
+            [stockField]: item.actualStock,
+            lastModified: committedAt,
+            lastUpdated: new Date(committedAt),
+          }), { merge: true });
+        });
+        transaction.set(historyRef, toFirestoreData({ ...historyRecord, id: historyRecord.id }, true));
+        stockRecords.forEach(record => {
+          const recordRef = doc(db, `${basePath}/inventory_stock_records`, record.id);
+          transaction.set(recordRef, toFirestoreData({ ...record, id: record.id }, true));
+        });
+
+        return { success: true, duplicate: false, conflicts: [] as StocktakeConflict[] };
+      }),
+      `stocktake:${locationType}/${historyRecord.id}`,
+      15000
+    );
+
+    if (!result.success) return result;
+
+    try {
+      const committedAt = Number(historyRecord.lastModified) || Date.now();
+      items.forEach(item => updateInLocalStorage(stockCollection, item.documentId, {
+        id: item.documentId,
+        [stockField]: item.actualStock,
+        lastModified: committedAt,
+        lastUpdated: new Date(committedAt),
+      }));
+      saveToLocalStorage(historyCollection, historyRecord, historyRecord.id);
+      stockRecords.forEach(record => saveToLocalStorage('inventory_stock_records', record, record.id));
+    } catch (cacheError) {
+      console.warn('Stocktake committed to cloud but local cache update failed:', cacheError);
+    }
+    isOnline = true;
+    return { ...result, cloudSynced: true };
+  } catch (error) {
+    if (!isWeakNetworkTimeout(error)) {
+      console.error('Atomic stocktake commit failed:', error);
+    }
+    return {
+      success: false,
+      uncertain: isWeakNetworkTimeout(error),
+      error: isWeakNetworkTimeout(error) ? 'stocktake-cloud-unconfirmed' : error,
+    };
+  }
+};
+
 type FridgeTransferDirection = 'warehouse_to_fridge' | 'fridge_to_warehouse';
 
 const formatManaguaDate = (timestamp: number) => {

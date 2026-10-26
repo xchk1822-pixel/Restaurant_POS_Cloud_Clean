@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useAppContext } from '../../contexts/AppContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { getLocalDateString } from '../../utils/exchangeRate'; // 🔥 导入本地日期工具
-import { smartAddDocument, smartGetDocument, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument, smartTransferFridgeStock } from '../../services/smartSyncService';
+import { smartCommitStocktake, smartGetDocuments, smartIncrementField, smartUpdateDocument, smartDeleteDocument, smartSetDocument, smartTransferFridgeStock } from '../../services/smartSyncService';
 import { mergeRecordsByVersion } from '../../utils/syncMerge';
 import { dataService } from '../../services/DataService';
 import {
   buildFridgeStocktakeHistoryRecords,
-  buildFridgeStocktakeSubmissionId,
   buildFridgeStocktakeViewItems,
   formatStocktakeRecordDateTime,
   getStocktakeRecordDateKey,
@@ -23,6 +22,12 @@ import {
 } from '../../utils/stocktakeRefresh';
 import { canItemEnterFridge, resolveFridgeItemOrder } from '../../utils/fridgeInventory';
 import { useI18n } from '../../i18n/I18nContext';
+import {
+  clearStocktakeDraft,
+  createStocktakeSubmissionId,
+  loadStocktakeDraft,
+  saveStocktakeDraft,
+} from '../../utils/stocktakeDraft';
 
 interface FridgeItem {
   fridgeId: string;
@@ -46,9 +51,19 @@ const FridgeStocktake: React.FC = () => {
     || user?.role === 'multi_store_manager';
   
   // 状态管理
+  const stocktakeDraftStorageKey = dataService.getStoreKey('fridge_stocktake_draft');
+  const initialDraftRef = useRef(loadStocktakeDraft(stocktakeDraftStorageKey, getLocalDateString()));
   const [selectedFridge, setSelectedFridge] = useState<string>(fridges[0]?.id || '');
   const [searchTerm, setSearchTerm] = useState('');
-  const [actualQuantities, setActualQuantities] = useState<Record<string, number>>({});
+  const [actualQuantities, setActualQuantities] = useState<Record<string, number>>(
+    initialDraftRef.current?.actualQuantities || {}
+  );
+  const [baselineQuantities, setBaselineQuantities] = useState<Record<string, number>>(
+    initialDraftRef.current?.baselineQuantities || {}
+  );
+  const submissionIdRef = useRef(
+    initialDraftRef.current?.submissionId || createStocktakeSubmissionId('fridge')
+  );
   const [itemOrder, setItemOrder] = useState<string[]>([]);
   
   // 弹窗状态
@@ -64,7 +79,7 @@ const FridgeStocktake: React.FC = () => {
   
   // ✅ 简化版调拨弹窗
   const [transferModal, setTransferModal] = useState<{ show: boolean; itemId: string; type: 'add' | 'remove' }>({ show: false, itemId: '', type: 'add' });
-  const [transferQuantity, setTransferQuantity] = useState<number>(1);
+  const [transferQuantity, setTransferQuantity] = useState<number>(0);
   const [isTransferSubmitting, setIsTransferSubmitting] = useState(false);
   const isTransferSubmittingRef = useRef(false);
   const [isStocktakeSubmitting, setIsStocktakeSubmitting] = useState(false);
@@ -142,6 +157,20 @@ const FridgeStocktake: React.FC = () => {
   const fridgeItemOrderSignature = fridgeItems
     .map(item => `${item.itemId}:${item.sortOrder ?? ''}`)
     .join('|');
+
+  useEffect(() => {
+    if (Object.keys(actualQuantities).length === 0 && Object.keys(baselineQuantities).length === 0) {
+      clearStocktakeDraft(stocktakeDraftStorageKey);
+      return;
+    }
+    saveStocktakeDraft(stocktakeDraftStorageKey, {
+      date: getLocalDateString(),
+      submissionId: submissionIdRef.current,
+      actualQuantities,
+      baselineQuantities,
+    });
+  }, [actualQuantities, baselineQuantities, stocktakeDraftStorageKey]);
+
   const cacheStocktakeHistory = (records: any[]) => {
     const sortedHistory = sortStocktakeHistoryRecords(records).slice(0, 50);
     setStocktakeHistory(sortedHistory);
@@ -269,6 +298,12 @@ const FridgeStocktake: React.FC = () => {
       const cloudHistory = await smartGetDocuments('fridge_stocktake_history', true);
       mergeAndCacheStocktakeHistory(cloudHistory);
 
+      if (showFailureAlert) {
+        setActualQuantities({});
+        setBaselineQuantities({});
+        clearStocktakeDraft(stocktakeDraftStorageKey);
+        submissionIdRef.current = createStocktakeSubmissionId('fridge');
+      }
       setLastSyncedAt(new Date());
     } catch (error) {
       console.error('刷新冰箱盘点数据失败:', error);
@@ -550,7 +585,7 @@ const FridgeStocktake: React.FC = () => {
 
       alert(`${isPendingTransfer ? t('fridge.alert.localPending') : (direction === 'warehouse_to_fridge' ? t('fridge.alert.transferSuccess') : t('fridge.alert.returnSuccess'))}\n\n${t('fridge.alert.item')}: ${item.name}\n${t('fridge.alert.quantity')}: ${transferQuantity} ${item.unit}\n${direction === 'warehouse_to_fridge' ? t('fridge.transferHistory.toFridge') : t('fridge.transferHistory.toWarehouse')}\n${isPendingTransfer ? t('fridge.alert.pendingHint') : t('fridge.alert.auditSaved')}`);
       setTransferModal({ show: false, itemId: '', type: 'add' });
-      setTransferQuantity(1);
+      setTransferQuantity(0);
     } catch (error) {
       console.error('\u51b0\u7bb1\u8c03\u62e8\u4fdd\u5b58\u5931\u8d25:', error);
       alert(t('fridge.alert.transferFailed'));
@@ -665,12 +700,14 @@ const FridgeStocktake: React.FC = () => {
     let hasDifference = false;
 
     stocktakeFridgeItems.forEach(item => {
-      const actual = actualQuantities[getFridgeQuantityKey(item.fridgeId, item.itemId)] ?? 0;
-      const difference = actual - item.quantity;
+      const quantityKey = getFridgeQuantityKey(item.fridgeId, item.itemId);
+      const actual = actualQuantities[quantityKey] ?? 0;
+      const systemStock = baselineQuantities[quantityKey] ?? item.quantity;
+      const difference = actual - systemStock;
       if (difference !== 0) {
         discrepancies.push({
           itemName: `${item.fridgeName} - ${item.itemName}`,
-          systemStock: item.quantity,
+          systemStock,
           actualStock: actual,
           difference
         });
@@ -700,31 +737,11 @@ const FridgeStocktake: React.FC = () => {
     isStocktakeSubmittingRef.current = true;
     setIsStocktakeSubmitting(true);
 
-    let submittedRecord: any = null;
-    let nextInventoryAfterStocktake: any[] = [];
-    let historyBeforeStocktake: any[] = [];
-
-    const finishAcceptedStocktake = (pendingCloudSync: boolean) => {
-      setFridgeInventory(nextInventoryAfterStocktake);
-      cacheStocktakeHistory([
-        submittedRecord,
-        ...historyBeforeStocktake.filter(record => record?.id !== submittedRecord?.id),
-      ]);
-      setActualQuantities(prev => {
-        const next = { ...prev };
-        stocktakeFridgeItems.forEach(item => {
-          delete next[getFridgeQuantityKey(item.fridgeId, item.itemId)];
-        });
-        return next;
-      });
-      alert(t(pendingCloudSync ? 'fridge.alert.pendingSync' : 'fridge.alert.completed'));
-    };
-
     try {
       const now = Date.now();
       const stocktakeDate = getLocalDateString();
+      const submissionId = `${submissionIdRef.current}-${selectedFridge}`;
 
-      // 更新冰箱库存
       const newInventory = fridgeInventory.map(inv => {
         if (inv.fridgeId === selectedFridge && actualQuantities[getFridgeQuantityKey(inv.fridgeId, inv.itemId)] !== undefined) {
           return {
@@ -736,18 +753,7 @@ const FridgeStocktake: React.FC = () => {
         }
         return inv;
       });
-      nextInventoryAfterStocktake = newInventory;
 
-      const updatedFridgeRecords = newInventory.filter(inv =>
-        inv.fridgeId === selectedFridge && actualQuantities[getFridgeQuantityKey(inv.fridgeId, inv.itemId)] !== undefined
-      );
-      const inventoryWriteResults = await Promise.all(
-        updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))
-      );
-
-      // 保存盘点历史
-      const history = stocktakeHistory;
-      historyBeforeStocktake = history;
       const stocktakeActualQuantities = stocktakeFridgeItems.reduce<Record<string, number>>((acc, item) => {
         acc[item.itemId] = actualQuantities[getFridgeQuantityKey(item.fridgeId, item.itemId)] ?? 0;
         return acc;
@@ -760,99 +766,109 @@ const FridgeStocktake: React.FC = () => {
         now,
         date: stocktakeDate,
       });
-      const stocktakeRecord = stocktakeRecords[0] || {
-        id: `stocktake-${Date.now()}`,
+      const generatedRecord = stocktakeRecords[0] || {};
+      const stocktakeRecord = {
+        ...generatedRecord,
+        id: submissionId,
+        submissionId,
         fridgeId: selectedFridge,
         fridgeName: fridges.find(fridge => fridge.id === selectedFridge)?.name || selectedFridge,
         date: stocktakeDate,
         createdAt: new Date(),
         lastModified: now,
-        items: fridgeItems.map(item => {
+        items: stocktakeFridgeItems.map(item => {
           const warehouseItem = inventoryItems.find(i => i.id === item.itemId);
           const warehouseStock = warehouseItem?.currentStock || 0;
-          const fridgeStock = item.quantity;
-          const totalStock = warehouseStock + fridgeStock;
-          
+          const quantityKey = getFridgeQuantityKey(item.fridgeId, item.itemId);
+          const systemStock = baselineQuantities[quantityKey] ?? item.quantity;
+          const actualStock = actualQuantities[quantityKey] ?? 0;
           return {
             itemId: item.itemId,
             itemName: item.itemName,
             unit: item.unit,
-            totalStock,
+            totalStock: warehouseStock + systemStock,
             warehouseStock,
-            systemStock: fridgeStock,
-            actualStock: actualQuantities[getFridgeQuantityKey(selectedFridge, item.itemId)] || 0,
-            difference: (actualQuantities[getFridgeQuantityKey(selectedFridge, item.itemId)] || 0) - fridgeStock
+            systemStock,
+            actualStock,
+            difference: actualStock - systemStock
           };
         }),
         totalDiscrepancies: discrepancies.length
       };
-      const initialRecords = stocktakeRecords.length > 0 ? stocktakeRecords : [stocktakeRecord];
-      const recordsToSave = initialRecords.map(record => {
-        const id = buildFridgeStocktakeSubmissionId({
-          date: stocktakeDate,
-          fridgeId: record.fridgeId,
-          items: record.items,
-        });
-        return { ...record, id, submissionId: id };
+      const stockRecordsToSave = stocktakeRecord.items
+        .filter((item: any) => item.difference !== 0)
+        .map((item: any) => ({
+          id: `stock-record-${stocktakeRecord.id}-${item.itemId}`,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          type: 'adjust',
+          quantity: Math.abs(item.difference),
+          signedQuantity: item.difference,
+          reason: 'fridge stocktake',
+          source: 'fridge_stocktake',
+          sourceId: stocktakeRecord.id,
+          locationType: 'fridge',
+          fridgeId: stocktakeRecord.fridgeId,
+          fridgeName: stocktakeRecord.fridgeName,
+          beforeStock: item.systemStock,
+          afterStock: item.actualStock,
+          unit: item.unit,
+          date: stocktakeRecord.createdAt,
+          createdAt: stocktakeRecord.createdAt,
+          createdAtMs: now,
+          lastModified: now,
+          operator: operatorAccount
+        }));
+      const commitResult = await smartCommitStocktake({
+        locationType: 'fridge',
+        historyRecord: stocktakeRecord,
+        items: stocktakeFridgeItems.map(item => {
+          const quantityKey = getFridgeQuantityKey(item.fridgeId, item.itemId);
+          return {
+            documentId: item.id || `${item.fridgeId}-${item.itemId}`,
+            itemId: item.itemId,
+            itemName: item.itemName,
+            unit: item.unit,
+            expectedStock: baselineQuantities[quantityKey] ?? item.quantity,
+            actualStock: actualQuantities[quantityKey] ?? 0,
+          };
+        }),
+        stockRecords: stockRecordsToSave,
       });
-      submittedRecord = recordsToSave[0];
-      const historyWriteResults = await Promise.all(
-        recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))
-      );
-      const stockRecordWriteResults = await Promise.all(
-        recordsToSave.flatMap(historyRecord =>
-          historyRecord.items
-            .filter((item: any) => item.difference !== 0)
-            .map((item: any) => {
-              const record = {
-                id: `stock-record-${historyRecord.id}-${item.itemId}`,
-                itemId: item.itemId,
-                itemName: item.itemName,
-                type: 'adjust',
-                quantity: Math.abs(item.difference),
-                signedQuantity: item.difference,
-                reason: 'fridge stocktake',
-                source: 'fridge_stocktake',
-                sourceId: historyRecord.id,
-                locationType: 'fridge',
-                fridgeId: historyRecord.fridgeId,
-                fridgeName: historyRecord.fridgeName,
-                beforeStock: item.systemStock,
-                afterStock: item.actualStock,
-                unit: item.unit,
-                date: historyRecord.createdAt,
-                createdAt: historyRecord.createdAt,
-                createdAtMs: now,
-                lastModified: now,
-                operator: operatorAccount
-              };
-              return smartAddDocument('inventory_stock_records', record);
-            })
-        )
-      );
-
-      const writeResults = [
-        ...inventoryWriteResults,
-        ...historyWriteResults,
-        ...stockRecordWriteResults,
-      ];
-      const rejectedWrite = writeResults.find(result => !result?.success && !result?.pending);
-      if (rejectedWrite) {
-        throw new Error(`fridge-stocktake-write-rejected:${String(rejectedWrite.error || 'unknown')}`);
+      if (!commitResult.success) {
+        if ((commitResult as any).conflict) {
+          const conflicts = (commitResult as any).conflicts || [];
+          alert(`${t('fridge.alert.conflict')}\n\n${conflicts.slice(0, 8).map((item: any) => `• ${item.itemName}: ${item.expectedStock} → ${item.cloudStock}`).join('\n')}`);
+        } else if ((commitResult as any).offline) {
+          alert(t('fridge.alert.offlineDraft'));
+        } else if ((commitResult as any).uncertain) {
+          alert(t('fridge.alert.unconfirmed'));
+        } else {
+          alert(t('fridge.alert.saveFailed'));
+        }
+        return;
       }
 
-      finishAcceptedStocktake(writeResults.some(result => result?.pending));
+      setFridgeInventory(newInventory);
+      cacheStocktakeHistory([
+        stocktakeRecord,
+        ...stocktakeHistory.filter(record => record?.id !== stocktakeRecord.id),
+      ]);
+      setActualQuantities(prev => {
+        const next = { ...prev };
+        stocktakeFridgeItems.forEach(item => delete next[getFridgeQuantityKey(item.fridgeId, item.itemId)]);
+        return next;
+      });
+      setBaselineQuantities(prev => {
+        const next = { ...prev };
+        stocktakeFridgeItems.forEach(item => delete next[getFridgeQuantityKey(item.fridgeId, item.itemId)]);
+        return next;
+      });
+      submissionIdRef.current = createStocktakeSubmissionId('fridge');
+      alert(t('fridge.alert.completed'));
     } catch (error) {
       console.error('保存盘点历史失败:', error);
-      const confirmedRecord = submittedRecord?.id
-        ? await smartGetDocument('fridge_stocktake_history', submittedRecord.id, true)
-        : null;
-      if (confirmedRecord) {
-        submittedRecord = confirmedRecord;
-          finishAcceptedStocktake(true);
-      } else {
-        alert(t('fridge.alert.saveFailed'));
-      }
+      alert(t('fridge.alert.saveFailed'));
     } finally {
       isStocktakeSubmittingRef.current = false;
       setIsStocktakeSubmitting(false);
@@ -1190,9 +1206,9 @@ const FridgeStocktake: React.FC = () => {
                     const warehouseItem = inventoryItems.find(i => i.id === item.itemId);
                     const parsedWarehouseStock = Number(warehouseItem?.currentStock);
                     const warehouseStock = Number.isFinite(parsedWarehouseStock) ? parsedWarehouseStock : 0;
-                    const fridgeStock = item.quantity;
-                    const totalStock = warehouseStock + fridgeStock;
                     const quantityKey = getFridgeQuantityKey(item.fridgeId, item.itemId);
+                    const fridgeStock = baselineQuantities[quantityKey] ?? item.quantity;
+                    const totalStock = warehouseStock + fridgeStock;
                     const actualCount = actualQuantities[quantityKey];
                     const isCounted = actualCount !== undefined;
                     const difference = isCounted ? actualCount - fridgeStock : null;
@@ -1284,6 +1300,10 @@ const FridgeStocktake: React.FC = () => {
                               if (/^\d+$/.test(inputValue)) {
                                 const value = parseInt(inputValue);
                                 if (value >= 0) {
+                                  setBaselineQuantities(prev => prev[quantityKey] === undefined
+                                    ? { ...prev, [quantityKey]: item.quantity }
+                                    : prev
+                                  );
                                   setActualQuantities(prev => ({
                                     ...prev,
                                     [quantityKey]: value
@@ -1354,7 +1374,7 @@ const FridgeStocktake: React.FC = () => {
                                   return;
                                 }
                                 setTransferModal({ show: true, itemId: item.itemId, type: 'add' });
-                                setTransferQuantity(1);
+                                setTransferQuantity(0);
                               }}
                               style={{
                                 padding: '0.3rem 0.6rem',
@@ -1380,7 +1400,7 @@ const FridgeStocktake: React.FC = () => {
                                   return;
                                 }
                                 setTransferModal({ show: true, itemId: item.itemId, type: 'remove' });
-                                setTransferQuantity(1);
+                                setTransferQuantity(0);
                               }}
                               style={{
                                 padding: '0.3rem 0.6rem',
@@ -1930,7 +1950,9 @@ const FridgeStocktake: React.FC = () => {
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
+                  autoFocus
                   value={transferQuantity > 0 ? transferQuantity.toString() : ''}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => {
                     const inputValue = e.target.value;
                     
@@ -1942,22 +1964,7 @@ const FridgeStocktake: React.FC = () => {
                     
                     // ✅ 只允许数字
                     if (/^\d+$/.test(inputValue)) {
-                      const value = parseInt(inputValue);
-                      const maxQty = isAdd ? warehouseStock : fridgeStock;
-                      if (value >= 0 && value <= maxQty) {
-                        setTransferQuantity(value);
-                      }
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    // ✅ 允许 Backspace 和 Delete 清空
-                    if ((e.key === 'Backspace' || e.key === 'Delete') && transferQuantity.toString().length === 1) {
-                      setTimeout(() => {
-                        const el = e.target as HTMLInputElement;
-                        if (el.value === '') {
-                          setTransferQuantity(0);
-                        }
-                      }, 0);
+                      setTransferQuantity(parseInt(inputValue, 10));
                     }
                   }}
                   placeholder={t('fridge.transfer.quantityPlaceholder')}
@@ -1980,7 +1987,7 @@ const FridgeStocktake: React.FC = () => {
                   onClick={() => {
                     if (isTransferSubmitting) return;
                     setTransferModal({ show: false, itemId: '', type: 'add' });
-                    setTransferQuantity(1);
+                    setTransferQuantity(0);
                   }}
                   disabled={isTransferSubmitting}
                   style={{

@@ -4864,7 +4864,7 @@ describe('production data safety guards', () => {
       expect(source).toContain("user?.role === 'super_admin'");
     });
 
-    expect(warehouseActiveTable).toContain("canViewSystemStock ? item.currentStock : '***'");
+    expect(warehouseActiveTable).toContain("canViewSystemStock ? baselineStock : '***'");
     expect(warehouseActiveTable).toContain("!canViewSystemStock ? (");
     expect(fridgeActiveTable).toContain("canViewSystemStock ? totalStock : '***'");
     expect(fridgeActiveTable).toContain("canViewSystemStock ? warehouseStock : '***'");
@@ -4882,7 +4882,7 @@ describe('production data safety guards', () => {
     expect(fridgeSource).toContain('{item.systemStock}');
   });
 
-  test('stocktake completion awaits cloud writes before local success state', () => {
+  test('stocktake completion uses one atomic cloud commit before local success state', () => {
     const warehousePath = path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx');
     const fridgePath = path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx');
     const warehouseSource = fs.readFileSync(warehousePath, 'utf8');
@@ -4896,18 +4896,48 @@ describe('production data safety guards', () => {
       fridgeSource.indexOf('const moveItem')
     );
 
-    expect(warehouseCompleteBlock).not.toContain('Promise.allSettled');
-    expect(fridgeCompleteBlock).not.toContain('Promise.allSettled');
-    expect(warehouseCompleteBlock).toContain("await Promise.all(updatedItems.map(item => smartUpdateDocument('inventory_items', item.id, item)))");
-    expect(fridgeCompleteBlock).toContain("updatedFridgeRecords.map(inv => smartUpdateDocument('fridge_inventory', inv.id || `${inv.fridgeId}-${inv.itemId}`, inv))");
-    expect(warehouseCompleteBlock).toContain("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)");
-    expect(fridgeCompleteBlock).toContain("recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))");
-    expect(warehouseCompleteBlock.indexOf("await smartAddDocument('warehouse_stocktake_history', stocktakeRecord)")).toBeLessThan(
+    expect(warehouseCompleteBlock).toContain('const commitResult = await smartCommitStocktake({');
+    expect(fridgeCompleteBlock).toContain('const commitResult = await smartCommitStocktake({');
+    expect(warehouseCompleteBlock).toContain("locationType: 'warehouse'");
+    expect(fridgeCompleteBlock).toContain("locationType: 'fridge'");
+    expect(warehouseCompleteBlock.indexOf('const commitResult = await smartCommitStocktake({')).toBeLessThan(
       warehouseCompleteBlock.indexOf('cacheStocktakeHistory([stocktakeRecord, ...history])')
     );
-    expect(fridgeCompleteBlock.indexOf("recordsToSave.map(record => smartAddDocument('fridge_stocktake_history', record))")).toBeLessThan(
-      fridgeCompleteBlock.indexOf('finishAcceptedStocktake(writeResults.some(result => result?.pending))')
+    expect(fridgeCompleteBlock.indexOf('const commitResult = await smartCommitStocktake({')).toBeLessThan(
+      fridgeCompleteBlock.indexOf('setFridgeInventory(newInventory)')
     );
+    expect(warehouseCompleteBlock).not.toContain("smartUpdateDocument('inventory_items'");
+    expect(fridgeCompleteBlock).not.toContain("smartUpdateDocument('fridge_inventory'");
+  });
+
+  test('stocktake commit rejects stale baselines atomically and keeps offline counts as drafts', () => {
+    const syncSource = fs.readFileSync(path.join(process.cwd(), 'src/services/smartSyncService.ts'), 'utf8');
+    const warehouseSource = fs.readFileSync(path.join(process.cwd(), 'src/pages/Inventory/WarehouseStocktake.tsx'), 'utf8');
+    const fridgeSource = fs.readFileSync(path.join(process.cwd(), 'src/pages/Inventory/FridgeStocktake.tsx'), 'utf8');
+    const commitBlock = syncSource.slice(
+      syncSource.indexOf('export const smartCommitStocktake = async'),
+      syncSource.indexOf("type FridgeTransferDirection")
+    );
+
+    expect(commitBlock).toContain("navigator.onLine === false");
+    expect(commitBlock).toContain("if (browserIsOffline) return { success: false, offline: true, error: 'offline-stocktake-draft' }");
+    expect(commitBlock).not.toContain("if (!isOnline) return { success: false, offline: true");
+    expect(commitBlock).toContain('transaction.get(historyRef)');
+    expect(commitBlock).toContain('...stockRefs.map(stockRef => transaction.get(stockRef))');
+    expect(commitBlock).toContain('Math.abs(cloudStock - item.expectedStock) > 0.000001');
+    expect(commitBlock).toContain('if (conflicts.length > 0)');
+    expect(commitBlock.indexOf('if (conflicts.length > 0)')).toBeLessThan(commitBlock.indexOf('transaction.set(stockRefs[index]'));
+    expect(commitBlock).toContain('transaction.set(historyRef');
+    expect(commitBlock).toContain('transaction.set(recordRef');
+
+    [warehouseSource, fridgeSource].forEach(source => {
+      expect(source).toContain('loadStocktakeDraft(');
+      expect(source).toContain('saveStocktakeDraft(');
+      expect(source).toContain('baselineQuantities');
+      expect(source).toContain("alert(t(");
+    });
+    expect(warehouseSource).toContain("t('warehouse.alert.offlineDraft')");
+    expect(fridgeSource).toContain("t('fridge.alert.offlineDraft')");
   });
 
   test('stocktake completion buttons block duplicate submits while cloud writes are pending', () => {
@@ -4954,14 +4984,13 @@ describe('production data safety guards', () => {
     expect(completeBlock).toContain('const stocktakeFridgeItems = fridgeInventory');
     expect(completeBlock).toContain('.filter(inv => inv.fridgeId === selectedFridge)');
     expect(completeBlock).toContain('buildFridgeStocktakeHistoryRecords({');
-    expect(completeBlock).toContain('buildFridgeStocktakeSubmissionId({');
-    expect(completeBlock).toContain('submissionId: id');
-    expect(completeBlock).toContain("result => !result?.success && !result?.pending");
-    expect(completeBlock).toContain("smartGetDocument('fridge_stocktake_history', submittedRecord.id, true)");
+    expect(completeBlock).toContain('const submissionId = `${submissionIdRef.current}-${selectedFridge}`');
+    expect(completeBlock).toContain('submissionId,');
+    expect(completeBlock).toContain('const commitResult = await smartCommitStocktake({');
+    expect(completeBlock).toContain('if ((commitResult as any).conflict)');
     expect(completeBlock).not.toContain('const allFridgeItems = fridgeInventory.map');
     expect(completeBlock).not.toContain('actualQuantities[item.itemId]');
     expect(completeBlock).not.toContain('actualQuantities[inv.itemId]');
-    expect(completeBlock).toContain('actualQuantities[getFridgeQuantityKey(selectedFridge, item.itemId)]');
     expect(completeBlock).toContain('inv.fridgeId === selectedFridge && actualQuantities[getFridgeQuantityKey(inv.fridgeId, inv.itemId)] !== undefined');
     expect(source).not.toContain('setActualQuantities(initial)');
   });
@@ -5024,9 +5053,9 @@ describe('production data safety guards', () => {
     expect(inventorySource).toMatch(/smartGetDocumentsByDateRange\(\s*'inventory_stock_records',\s*'createdAtMs'/);
     expect(inventorySource).toContain("'number-timestamp'");
     expect(inventorySource).toContain('setStockRecords(sortedRecords)');
-    expect(warehouseSource).toContain("smartAddDocument('inventory_stock_records', record)");
+    expect(warehouseSource).toContain('stockRecords,');
     expect(warehouseSource).toContain("source: 'warehouse_stocktake'");
-    expect(fridgeSource).toContain("smartAddDocument('inventory_stock_records', record)");
+    expect(fridgeSource).toContain('stockRecords: stockRecordsToSave');
     expect(fridgeSource).toContain("source: 'fridge_stocktake'");
     expect(backupSource).toContain("'inventory_stock_records'");
     expect(auditSource).toContain("getRows(`stores/${storeId}/inventory_stock_records`)");
@@ -5100,6 +5129,10 @@ describe('production data safety guards', () => {
       source.indexOf('const handleAddNewItem = async'),
       source.indexOf('const completeStocktake = async')
     );
+    const transferInputBlock = source.slice(
+      source.indexOf('{transferModal.show &&'),
+      source.indexOf('{/* 调拨记录弹窗 */}')
+    );
 
     expect(source).toContain('const handleSimpleTransfer = async');
     expect(source).toContain('const handleAddNewItem = async');
@@ -5113,6 +5146,12 @@ describe('production data safety guards', () => {
       transferBlock.indexOf('setFridgeInventory(inv =>')
     );
     expect(transferBlock).not.toContain('.catch(error =>');
+    expect(source).toContain('onFocus={(e) => e.currentTarget.select()}');
+    expect(source).toContain('const [transferQuantity, setTransferQuantity] = useState<number>(0)');
+    expect(source).toContain('pattern="[0-9]*"');
+    expect(source).toContain('autoFocus');
+    expect(source).toContain('setTransferQuantity(parseInt(inputValue, 10))');
+    expect(transferInputBlock).not.toContain('if (value >= 0 && value <= maxQty)');
 
     expect(addItemBlock).toContain("await smartIncrementField('inventory_items', item.id");
     expect(addItemBlock).toContain("await smartIncrementField('fridge_inventory', fridgeInventoryId");
