@@ -4549,7 +4549,15 @@ describe('production data safety guards', () => {
     expect(source).toContain('const formatStockRecordNumber = formatInventoryQuantity');
     expect(source).toContain("fontVariantNumeric: 'tabular-nums'");
     expect(source).toContain("overflowY: 'auto', overflowX: 'hidden'");
-    expect(source).toContain("fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>");
+    expect(source).toContain("<th key={title} style={{ position: 'sticky', top: 0, zIndex: 2");
+    expect(source).toContain("businessType === 'stocktake' && Number.isFinite(Number(before)) && Number.isFinite(Number(after)) && Number(after) < Number(before)");
+    expect(source).toContain("? '←'");
+    expect(source).toContain('getStockRecordBalanceArrow(businessType, record.warehouseBeforeStock, record.warehouseAfterStock)');
+    expect(source).toContain('getStockRecordBalanceArrow(businessType, record.fridgeBeforeStock, record.fridgeAfterStock)');
+    expect(source).toContain('color: typePresentation.color');
+    expect(source).toContain('backgroundColor: typePresentation.backgroundColor');
+    expect(source).toContain('formatSignedStockRecordNumber(getStockRecordSignedQuantity(record))');
+    expect(source).toContain("transferQuantity === 0 ? '0' : `±${formatStockRecordNumber(transferQuantity)}`");
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.warehouseBeforeStock))");
     expect(source).not.toContain("backgroundColor: Number.isFinite(Number(record.fridgeBeforeStock))");
     expect(source).not.toContain("getStockRecordLocationGroup(record) === 'fridge' ? '#dbeafe'");
@@ -4668,7 +4676,7 @@ describe('production data safety guards', () => {
     expect(source).toContain('Number(record.afterStock) - Number(record.beforeStock)');
     expect(source).toContain('const formatStockRecordQuantity = (record: StockRecord): string =>');
     expect(source).toContain('{formatStockRecordDisplayQuantity(record)}');
-    expect(source).toContain('return formatStockRecordNumber(Math.abs(signedQuantity))');
+    expect(source).toContain('return formatSignedStockRecordNumber(getStockRecordSignedQuantity(record))');
     expect(source).toContain('const transferQuantity = Math.max(');
     expect(source).toContain("type StockRecordBusinessType = 'in' | 'out' | 'transfer' | 'stocktake'");
     expect(source).toContain("source === 'fridge_transfer' || record.type === 'transfer'");
@@ -4676,10 +4684,10 @@ describe('production data safety guards', () => {
     expect(source).toContain("getStockRecordSignedQuantity(record) < 0 ? 'out' : 'in'");
     expect(source).toContain("transfer: { icon: '↔', translationKey: 'inventory.record.transfer'");
     expect(source).toContain("stocktake: { icon: '✓', translationKey: 'inventory.record.stocktake'");
-    expect(source).toContain('stockRecordBusinessTypePresentation[getStockRecordBusinessType(record)]');
+    expect(source).toContain('stockRecordBusinessTypePresentation[businessType]');
     expect(source).toContain("minWidth: '5.5rem'");
     expect(source).toContain("whiteSpace: 'nowrap'");
-    expect(source).not.toContain("{record.type === 'in' ? '+' : '-'}{record.quantity}");
+    expect(source).toContain("return transferQuantity === 0 ? '0' : `±${formatStockRecordNumber(transferQuantity)}`");
   });
 
   test('purchase orders default to today, sort newest first, and never render invalid dates', () => {

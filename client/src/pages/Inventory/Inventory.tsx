@@ -167,9 +167,15 @@ const getStockRecordSignedQuantity = (record: StockRecord): number => {
 
 const formatStockRecordNumber = formatInventoryQuantity;
 
+const formatSignedStockRecordNumber = (value: number): string => {
+  const formatted = formatStockRecordNumber(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+};
+
 const formatStockRecordQuantity = (record: StockRecord): string => {
-  const signedQuantity = getStockRecordSignedQuantity(record);
-  return formatStockRecordNumber(Math.abs(signedQuantity));
+  return formatSignedStockRecordNumber(getStockRecordSignedQuantity(record));
 };
 
 type StockRecordBusinessType = 'in' | 'out' | 'transfer' | 'stocktake';
@@ -197,6 +203,12 @@ const stockRecordBusinessTypePresentation: Record<StockRecordBusinessType, {
   transfer: { icon: '↔', translationKey: 'inventory.record.transfer', backgroundColor: '#ede9fe', color: '#6d28d9' },
   stocktake: { icon: '✓', translationKey: 'inventory.record.stocktake', backgroundColor: '#fef3c7', color: '#b45309' }
 };
+
+const getStockRecordBalanceArrow = (businessType: StockRecordBusinessType, before?: number, after?: number): '←' | '→' => (
+  businessType === 'stocktake' && Number.isFinite(Number(before)) && Number.isFinite(Number(after)) && Number(after) < Number(before)
+    ? '←'
+    : '→'
+);
 
 const formatStockRecordReason = (record: StockRecord, t: (key: TranslationKey) => string): string => {
   switch (record.reason) {
@@ -292,7 +304,7 @@ const formatStockRecordDisplayQuantity = (record: StockRecordDisplay): string =>
     Math.abs(Number(record.warehouseSignedQuantity) || 0),
     Math.abs(Number(record.fridgeSignedQuantity) || 0)
   );
-  return formatStockRecordNumber(transferQuantity);
+  return transferQuantity === 0 ? '0' : `±${formatStockRecordNumber(transferQuantity)}`;
 };
 
 const formatStockRecordOperator = (operator: string | undefined, t: (key: TranslationKey) => string): string => {
@@ -1796,20 +1808,20 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
               <thead style={{ backgroundColor: '#f9fafb', position: 'sticky', top: 0 }}>
                 <tr>
                   {[t('inventory.record.time'), t('inventory.record.item'), t('inventory.record.location'), t('inventory.record.type'), t('inventory.record.quantity')].map((title, index) => (
-                    <th key={title} style={{ padding: '0.5rem 0.65rem', textAlign: index >= 2 ? 'center' : 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
+                    <th key={title} style={{ position: 'sticky', top: 0, zIndex: 2, padding: '0.5rem 0.65rem', textAlign: index >= 2 ? 'center' : 'left', borderBottom: '2px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
                   ))}
                   {[t('inventory.record.warehouseBalance'), t('inventory.record.fridgeBalance')].map(title => (
-                    <th key={title} style={{ padding: '0.45rem 0.6rem', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>
+                    <th key={title} style={{ position: 'sticky', top: 0, zIndex: 2, padding: '0.45rem 0.6rem', borderBottom: '2px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.82rem', fontWeight: '600' }}>
                       <div style={{ textAlign: 'center' }}>{title}</div>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.55rem', marginTop: '0.25rem', color: '#6b7280', fontSize: '0.72rem', fontWeight: '500' }}>
                         <span>{t('inventory.record.balanceBefore')}</span>
-                        <span aria-hidden="true" style={{ display: 'inline-block', fontSize: '0.85rem', fontWeight: 800, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span aria-hidden="true" style={{ fontSize: '1rem', fontWeight: 900 }}>→</span>
                         <span>{t('inventory.record.balanceAfter')}</span>
                       </div>
                     </th>
                   ))}
                   {[t('inventory.record.reason'), t('inventory.record.operator')].map(title => (
-                    <th key={title} style={{ padding: '0.5rem 0.65rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
+                    <th key={title} style={{ position: 'sticky', top: 0, zIndex: 2, padding: '0.5rem 0.65rem', textAlign: 'left', borderBottom: '2px solid #e5e7eb', backgroundColor: '#f9fafb', fontSize: '0.82rem', fontWeight: '600' }}>{title}</th>
                   ))}
                 </tr>
               </thead>
@@ -1821,7 +1833,8 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     </td>
                   </tr>
                 ) : filteredStockRecords.map(record => {
-                  const typePresentation = stockRecordBusinessTypePresentation[getStockRecordBusinessType(record)];
+                  const businessType = getStockRecordBusinessType(record);
+                  const typePresentation = stockRecordBusinessTypePresentation[businessType];
                   return (
                   <tr key={record.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.5rem 0.65rem', fontSize: '0.82rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
@@ -1856,14 +1869,14 @@ const Inventory: React.FC<InventoryProps> = ({ defaultTab = 'items' }) => {
                     <td style={{ padding: '0.5rem 0.35rem', fontSize: '0.82rem', fontWeight: '600' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.25rem', color: '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                         <span>{formatOptionalStockValue(record.warehouseBeforeStock)}</span>
-                        <span style={{ display: 'inline-block', color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span style={{ color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1 }}>{getStockRecordBalanceArrow(businessType, record.warehouseBeforeStock, record.warehouseAfterStock)}</span>
                         <span>{formatOptionalStockValue(record.warehouseAfterStock)}</span>
                       </div>
                     </td>
                     <td style={{ padding: '0.5rem 0.35rem', fontSize: '0.82rem', fontWeight: '600' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.25rem', color: '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                         <span>{formatOptionalStockValue(record.fridgeBeforeStock)}</span>
-                        <span style={{ display: 'inline-block', color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1, transform: 'scaleX(1.15)' }}>➜</span>
+                        <span style={{ color: typePresentation.color, fontSize: '1rem', fontWeight: 800, lineHeight: 1 }}>{getStockRecordBalanceArrow(businessType, record.fridgeBeforeStock, record.fridgeAfterStock)}</span>
                         <span>{formatOptionalStockValue(record.fridgeAfterStock)}</span>
                       </div>
                     </td>
